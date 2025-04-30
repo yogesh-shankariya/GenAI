@@ -1,33 +1,67 @@
-import os
-import requests
+To create a **virtual environment** in **VS Code** using `python -m venv venv` and ensure it's **reusable across projects** or at least detected correctly as a **kernel**, follow these steps:
 
-def process_files_from_api_sequential(base_path, search_texts, start_seq=1):
-    all_results = {}
-    seq_num = start_seq
+---
 
-    chart_path = os.path.dirname(base_path)
-    folder_name = os.path.basename(chart_path)
+### ✅ **Step-by-Step to Create & Use Virtual Environment in VS Code**
 
-    while True:
-        url = f"https://document.synthesisuat.awsdns.internal.das/api/document/download?filePath={chart_path}/{folder_name}docXtrOutput-encounter-{seq_num}.txt"
+#### **1. Create the virtual environment**
+Open your terminal and run:
+```bash
+python -m venv ~/my_envs/rag_env
+```
+- This creates a virtual environment named `rag_env` inside a reusable directory `~/my_envs/`.
 
-        try:
-            response = requests.get(url, verify=False, stream=True)
-            response.raise_for_status()
+> You can keep multiple reusable environments in this `my_envs` directory.
 
-            # Save to file (adjust extension based on content-type if needed)
-            file_name = f"downloaded_file_{seq_num}.pdf"
-            with open(file_name, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
+---
 
-            print(f"Saved file: {file_name}")
+#### **2. Activate the environment**
 
-            seq_num += 1
+**Windows (PowerShell):**
+```bash
+~/my_envs/rag_env/Scripts/Activate.ps1
+```
 
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 404:
-                print(f"File not found at {url}. Stopping.")
-                break
-            else:
-                raise
+**macOS/Linux:**
+```bash
+source ~/my_envs/rag_env/bin/activate
+```
+
+---
+
+#### **3. Install required packages**
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+#### **4. Make it visible to Jupyter/VS Code Kernels**
+
+Run:
+```bash
+pip install ipykernel
+python -m ipykernel install --user --name=rag_env --display-name "Python (rag_env)"
+```
+- This registers the environment as a selectable **kernel** in VS Code and Jupyter.
+
+---
+
+#### **5. Use the environment in VS Code**
+
+- Open VS Code.
+- Open any folder (your RAG project).
+- Press `Ctrl + Shift + P` → search for **"Python: Select Interpreter"**
+- Choose: **"Python (rag_env)"**
+
+---
+
+### 💡 Tips for Reuse
+
+- You **do not need to recreate venv** for each folder.
+- Just **activate the same environment** and use it across folders.
+- Alternatively, use **`.env`** files or VS Code settings (`.vscode/settings.json`) to point to a shared venv.
+
+---
+
+Would you like a reusable `.vscode/settings.json` template to always pick your shared environment?
