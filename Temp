@@ -1,67 +1,40 @@
-To create a **virtual environment** in **VS Code** using `python -m venv venv` and ensure it's **reusable across projects** or at least detected correctly as a **kernel**, follow these steps:
+That's because `~` (tilde) is a shortcut **only recognized in Unix-like shells** (like bash or zsh), not in **Windows Command Prompt or PowerShell**.
+
+Here’s how you can correctly activate a virtual environment in **PowerShell** or **Command Prompt**:
 
 ---
 
-### ✅ **Step-by-Step to Create & Use Virtual Environment in VS Code**
+### ✅ **Proper Activation in Windows (PowerShell)**
 
-#### **1. Create the virtual environment**
-Open your terminal and run:
-```bash
-python -m venv ~/my_envs/rag_env
-```
-- This creates a virtual environment named `rag_env` inside a reusable directory `~/my_envs/`.
-
-> You can keep multiple reusable environments in this `my_envs` directory.
-
----
-
-#### **2. Activate the environment**
-
-**Windows (PowerShell):**
-```bash
-~/my_envs/rag_env/Scripts/Activate.ps1
+If your environment is at `C:\Users\Yogesh\my_envs\rag_env`, use:
+```powershell
+C:\Users\Yogesh\my_envs\rag_env\Scripts\Activate.ps1
 ```
 
-**macOS/Linux:**
-```bash
-source ~/my_envs/rag_env/bin/activate
+Or navigate into the folder first:
+```powershell
+cd C:\Users\Yogesh\my_envs\rag_env\Scripts
+.\Activate.ps1
 ```
 
 ---
 
-#### **3. Install required packages**
-```bash
-pip install -r requirements.txt
+### ✅ **Proper Activation in Windows (Command Prompt)**
+
+```cmd
+C:\Users\Yogesh\my_envs\rag_env\Scripts\activate.bat
 ```
 
 ---
 
-#### **4. Make it visible to Jupyter/VS Code Kernels**
+### ✅ Tip: Allow Script Execution (If Needed in PowerShell)
 
-Run:
-```bash
-pip install ipykernel
-python -m ipykernel install --user --name=rag_env --display-name "Python (rag_env)"
+Sometimes PowerShell blocks scripts by default. You may need to run:
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
-- This registers the environment as a selectable **kernel** in VS Code and Jupyter.
+Then try activation again.
 
 ---
 
-#### **5. Use the environment in VS Code**
-
-- Open VS Code.
-- Open any folder (your RAG project).
-- Press `Ctrl + Shift + P` → search for **"Python: Select Interpreter"**
-- Choose: **"Python (rag_env)"**
-
----
-
-### 💡 Tips for Reuse
-
-- You **do not need to recreate venv** for each folder.
-- Just **activate the same environment** and use it across folders.
-- Alternatively, use **`.env`** files or VS Code settings (`.vscode/settings.json`) to point to a shared venv.
-
----
-
-Would you like a reusable `.vscode/settings.json` template to always pick your shared environment?
+Would you like a reusable VS Code config that always auto-selects this environment in your projects?
