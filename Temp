@@ -1,69 +1,48 @@
-Sure! Here’s a **from-scratch guide** to create, activate, and use a **Python virtual environment** in **PowerShell inside VS Code**, step-by-step:
+# process_file_api.py
+import os, io, requests
+from typing import Dict
+from PyPDF2 import PdfReader        # pip install PyPDF2
 
----
 
-### ✅ **1. Open Terminal in VS Code**
+def _pdf_bytes_to_text(binary: bytes) -> str:
+    """Extract plain text from a PDF in-memory buffer."""
+    reader = PdfReader(io.BytesIO(binary))
+    pages  = [p.extract_text() or "" for p in reader.pages]
+    return "\n".join(pages).strip()
 
-- Press `Ctrl + ~` (tilde)  
-  OR  
-- Go to **View → Terminal**
 
-Make sure **PowerShell** is selected as your terminal.
+def process_files_from_api_sequential(base_path: str, start_seq: int = 1) -> Dict[int, str]:
+    """
+    Download documents sequentially and return {seq: extracted_text}.
+    Stops when a 404 is encountered.
+    """
+    chart_path  = os.path.dirname(base_path)
+    folder_name = os.path.basename(chart_path)
 
----
+    seq      = start_seq
+    contents = {}
 
-### ✅ **2. Create a reusable virtual environment**
+    while True:
+        url = (
+            "https://document.synthesisuat.awsdns.internal.das/api/document/download?"
+            f"filePath={chart_path}/{folder_name}docXtrOutput-encounter-{seq}.txt"
+        )
 
-Let’s store the venv in a common folder (e.g., `C:\Users\Yogesh\my_envs\rag_env`):
+        try:
+            r = requests.get(url, verify=False, timeout=15)
+            r.raise_for_status()
 
-```powershell
-python -m venv "C:\Users\Yogesh\my_envs\rag_env"
-```
+            pdf_bytes = r.content      # downloaded file is always PDF
+            text      = _pdf_bytes_to_text(pdf_bytes) or "[EMPTY_PDF]"
+            contents[seq] = text
+            seq += 1
 
-> This will create the environment only once and reuse it across projects.
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                break
+            raise                  # propagate other HTTP errors
+        except Exception as e:
+            print(f"Error fetching {url}: {e}")
+            break
 
----
-
-### ✅ **3. Activate the virtual environment**
-
-```powershell
-& "C:\Users\Yogesh\my_envs\rag_env\Scripts\Activate.ps1"
-```
-
-> If PowerShell blocks it, run:
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-```
-Then repeat the `&` activation command.
-
----
-
-### ✅ **4. (Optional) Register kernel for Jupyter or VS Code**
-
-```powershell
-pip install ipykernel
-python -m ipykernel install --user --name=rag_env --display-name "Python (rag_env)"
-```
-
----
-
-### ✅ **5. Use the environment in VS Code**
-
-- Press `Ctrl + Shift + P` → **Python: Select Interpreter**
-- Choose `Python (rag_env)`
-
----
-
-### ✅ (Optional) Add Auto-Select in Project
-
-Create a file: `.vscode/settings.json` inside your project folder:
-
-```json
-{
-  "python.pythonPath": "C:\\Users\\Yogesh\\my_envs\\rag_env\\Scripts\\python.exe"
-}
-```
-
----
-
-Would you like me to generate a script to automate this entire setup as a `.ps1` PowerShell file?
+    return contents
