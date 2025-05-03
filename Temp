@@ -1,3 +1,14 @@
+import os, io, requests
+from typing import Dict
+from src.utils.logger import setup_logger
+from src.utils.config_loader import load_config
+
+config = load_config()
+logger = setup_logger(config['logging'])
+
+
+
+
 def process_files_from_api_sequential(base_path: str, start_seq: int = 1) -> Dict[int, str]:
     """
     Download documents sequentially and return {seq: extracted_text}.
