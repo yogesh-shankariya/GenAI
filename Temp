@@ -6,6 +6,10 @@ def session_exists(session_id: str) -> bool:
     conn.close()
     return result is not None
 
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
 
 
 from pathlib import Path
