@@ -1,3 +1,13 @@
+def session_exists(session_id: str) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1 FROM application_logs WHERE session_id = ? LIMIT 1", (session_id,))
+    result = cursor.fetchone()
+    conn.close()
+    return result is not None
+
+
+
 from pathlib import Path
 import sys
 import json
