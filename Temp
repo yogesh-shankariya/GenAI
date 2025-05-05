@@ -1,105 +1,60 @@
-from pathlib import Path
-import sys
-import json
-import traceback
-import argparse
-from typing import List, Dict, Optional
-import logging
+authorizations:
+  description: >
+    This section contains the details of an insurance authorization record related to
+    inpatient hospital services, including approval status, diagnosis, provider, dates,
+    and classification details.
 
-from src.utils.config_loader import load_config
-from src.utils.logger import setup_logger
-from src.services.llm_client import LLMClient
-from src.utils.file_and_session_manager import FileHandler
-from src.utils.sql_db import (
-    get_chat_history,
-    insert_conversation,
-    session_exists,
-    create_conversation_table,
-)
+  fields:
+    authorizationId:
+      description: Unique ID for the authorization request used for tracking purposes.
 
+    startDate:
+      description: The date from which the authorized treatment is allowed to begin.
 
-def process_request(
-    session_id: str,
-    user_question: str,
-    llm_client: LLMClient,
-    file_handler: FileHandler,
-    file_path: Optional[str] = None,
-    logger: Optional[logging.Logger] = None
-) -> str:
-    try:
-        is_new_session = not session_exists(session_id)
+    endDate:
+      description: The date on which the authorization period ends.
 
-        if is_new_session and not file_path:
-            logger.error(f"File path is required for new session: {session_id}")
-            return json.dumps({"session_id": session_id, "error": "File path is required for new sessions"})
+    status:
+      description: The current status of the authorization request; may include multiple decisions.
 
-        # Always get context
-        file_content = file_handler.process_files_from_api_sequential(file_path, start_seq=1)
+    diagnosis:
+      description: The medical condition for which treatment is being authorized.
 
-        # Build messages: 1. system + context, 2. chat history, 3. latest user Q
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You are a helpful assistant. You will be given a medical chart and you will be asked questions on the same.\n\n"
-                    f"Here is the medical chart:\n{file_content}"
-                )
-            }
-        ]
+    diagnosisCode:
+      description: ICD-10 code corresponding to the diagnosis.
 
-        # Add historical Q&A
-        history = get_chat_history(session_id)
-        messages.extend(history)
+    diagnosisDescription:
+      description: Detailed explanation of the diagnosis.
 
-        # Add current question
-        messages.append({
-            "role": "user",
-            "content": f"Question: {user_question}\nProvide evidence of the line in your answer."
-        })
+    diagnosisQualifier:
+      description: Contextual tags for the diagnosis like Primary, Admitting, or Discharge.
 
-        # Query LLM
-        response = llm_client.query_with_memory(messages)
+    provider:
+      description: The healthcare provider who submitted the authorization request.
 
-        # Log to SQLite
-        insert_conversation(session_id, user_question, response)
+    authNumber:
+      description: Reference number associated with the authorization, used for billing and tracking.
 
-        logger.info(f"Handled {'first' if is_new_session else 'follow-up'} message for session: {session_id}")
-        return json.dumps({"session_id": session_id, "content": response})
+    placeOfService:
+      description: Location where services are to be provided (e.g., Inpatient Hospital).
 
-    except Exception as e:
-        logger.exception(f"Unexpected error: {str(e)}")
-        return json.dumps({"session_id": session_id, "error": f"Unexpected error: {str(e)}"})
+    source:
+      description: Source system or platform initiating the authorization.
 
+    dischargeDate:
+      description: Date on which the patient was discharged or expected to be discharged.
 
-def main() -> str:
-    try:
-        config = load_config()
-        logger = setup_logger(config["logging"])
-        create_conversation_table()
-        llm_client = LLMClient(config["llm"], logger)
-    except Exception as e:
-        print(f"Failed to initialize components: {str(e)}")
-        print(traceback.format_exc())
-        sys.exit(1)
+    admitDate:
+      description: Date on which the patient was admitted to the facility.
 
-    parser = argparse.ArgumentParser(description='Process chat session inputs.')
-    parser.add_argument('session_id', type=str, help='Session identifier')
-    parser.add_argument('--file_path', type=str, help='Path to text file (required for new sessions)')
-    parser.add_argument('user_question', type=str, help='User question')
-    args = parser.parse_args()
+    assignedTo:
+      description: Individual or department to whom the case is assigned (if applicable).
 
-    file_handler = FileHandler(logger)
+    nextReviewDate:
+      description: Date scheduled for the next review of the authorization.
 
-    return process_request(
-        session_id=args.session_id,
-        user_question=args.user_question,
-        llm_client=llm_client,
-        file_handler=file_handler,
-        file_path=args.file_path,
-        logger=logger
-    )
+    classification:
+      description: Type or urgency classification for the authorization request.
 
-
-if __name__ == "__main__":
-    result = main()
-    print(result)
+    template:
+      description: Template type used for this case or submission (e.g., Medical).
