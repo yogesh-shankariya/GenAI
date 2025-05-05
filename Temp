@@ -1,60 +1,54 @@
-authorizations:
+claims:
   description: >
-    This section contains the details of an insurance authorization record related to
-    inpatient hospital services, including approval status, diagnosis, provider, dates,
-    and classification details.
+    This section contains the details of a healthcare claim submitted after services are rendered.
+    It captures the billing, clinical, and financial information necessary for insurance reimbursement,
+    including claim status, dates, diagnosis, services, and payment breakdown.
 
   fields:
-    authorizationId:
-      description: Unique ID for the authorization request used for tracking purposes.
+    claimId:
+      description: Unique identifier for the submitted claim.
 
-    startDate:
-      description: The date from which the authorized treatment is allowed to begin.
+    claimDatePoint:
+      description: Type of date used to categorize the claim (e.g., service date, submission date).
 
-    endDate:
-      description: The date on which the authorization period ends.
+    date:
+      description: The date of service or the date the claim was submitted, depending on claimDatePoint.
 
-    status:
-      description: The current status of the authorization request; may include multiple decisions.
-
-    diagnosis:
-      description: The medical condition for which treatment is being authorized.
-
-    diagnosisCode:
-      description: ICD-10 code corresponding to the diagnosis.
-
-    diagnosisDescription:
-      description: Detailed explanation of the diagnosis.
-
-    diagnosisQualifier:
-      description: Contextual tags for the diagnosis like Primary, Admitting, or Discharge.
+    datePaid:
+      description: The date on which the claim was processed or paid by the insurance.
 
     provider:
-      description: The healthcare provider who submitted the authorization request.
+      description: Name of the provider or organization submitting the claim.
 
-    authNumber:
-      description: Reference number associated with the authorization, used for billing and tracking.
+    status:
+      description: Current state of the claim such as Approved, Denied, or Pending.
 
-    placeOfService:
-      description: Location where services are to be provided (e.g., Inpatient Hospital).
+    diagnosis:
+      description: Clinical condition or reason for the claim (may match primary diagnosis).
+
+    charges:
+      description: Total billed amount for the services claimed.
+
+    paid:
+      description: Actual amount paid or approved by insurance after adjudication.
 
     source:
-      description: Source system or platform initiating the authorization.
+      description: System or source through which the claim was generated or submitted.
 
-    dischargeDate:
-      description: Date on which the patient was discharged or expected to be discharged.
+    placeOfService:
+      description: Setting where care was delivered (e.g., Inpatient, Outpatient, Home).
 
-    admitDate:
-      description: Date on which the patient was admitted to the facility.
+    type:
+      description: Type or category of service (e.g., Medical, Pharmacy, Behavioral Health).
 
-    assignedTo:
-      description: Individual or department to whom the case is assigned (if applicable).
+    claimProvider:
+      description: The individual provider or specialist responsible for the services rendered.
 
-    nextReviewDate:
-      description: Date scheduled for the next review of the authorization.
+    claimNumber:
+      description: External reference number (e.g., payer-assigned or legacy claim ID).
 
-    classification:
-      description: Type or urgency classification for the authorization request.
+    problems:
+      description: List of medical conditions or ICD codes associated with this claim.
 
-    template:
-      description: Template type used for this case or submission (e.g., Medical).
+    services:
+      description: Details of procedures, treatments, or medications included in the claim.
