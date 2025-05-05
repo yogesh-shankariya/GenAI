@@ -9,8 +9,12 @@ import logging
 from src.utils.config_loader import load_config
 from src.utils.logger import setup_logger
 from src.services.llm_client import LLMClient
-from src.utils.file_and_session_manager import FileHandler, SessionManager
-from src.utils.sql_db import get_chat_history, insert_application_logs
+from src.utils.file_and_session_manager import FileHandler
+from src.utils.sql_db import (
+    get_chat_history,
+    insert_application_logs,
+    session_exists,
+)
 
 
 def first_message(file_content: str, user_question: str) -> List[Dict[str, str]]:
@@ -30,25 +34,21 @@ def process_request(
     session_id: str,
     user_question: str,
     llm_client: LLMClient,
-    session_manager: SessionManager,
     file_handler: FileHandler,
     file_path: Optional[str] = None,
     logger: Optional[logging.Logger] = None
 ) -> str:
     try:
-        is_new_session = not session_manager.session_exists(session_id)
+        is_new_session = not session_exists(session_id)
 
-        # Handle new session
-        if is_new_session:
-            if not file_path:
-                logger.error(f"File path is required for new session: {session_id}")
-                return json.dumps({"session_id": session_id, "error": "File path is required for new sessions"})
-            session_manager.create_session(session_id, file_path)
+        if is_new_session and not file_path:
+            logger.error(f"File path is required for new session: {session_id}")
+            return json.dumps({"session_id": session_id, "error": "File path is required for new sessions"})
 
-        # Load context for both new & existing sessions
+        # Always load context fresh from source
         file_content = file_handler.process_files_from_api_sequential(file_path, start_seq=1)
 
-        # Load past messages from DB
+        # Build message history
         messages = get_chat_history(session_id)
         messages.insert(0, {
             "role": "system",
@@ -59,18 +59,12 @@ def process_request(
             "content": f"Medical chart:\n{file_content}\n\nQuestion: {user_question}\nProvide evidence of the line in your answer."
         })
 
-        # Generate answer from LLM
+        # Generate and store response
         response = llm_client.query_with_memory(messages)
-
-        # Log question/answer into DB
         insert_application_logs(session_id, user_question, response)
 
-        logger.info(f"Completed handling {'first' if is_new_session else 'follow-up'} message for session: {session_id}")
+        logger.info(f"Handled {'first' if is_new_session else 'follow-up'} message for session: {session_id}")
         return json.dumps({"session_id": session_id, "content": response})
-
-    except IOError as e:
-        logger.error(f"IO error: {str(e)}")
-        return json.dumps({"session_id": session_id, "error": f"IO error: {str(e)}"})
 
     except Exception as e:
         logger.exception(f"Unexpected error: {str(e)}")
@@ -89,18 +83,16 @@ def main() -> str:
 
     parser = argparse.ArgumentParser(description='Process chat session inputs.')
     parser.add_argument('session_id', type=str, help='Session identifier')
-    parser.add_argument('--file_path', type=str, help='Path to text file (optional)')
+    parser.add_argument('--file_path', type=str, help='Path to text file (required for new sessions)')
     parser.add_argument('user_question', type=str, help='User question')
     args = parser.parse_args()
 
     file_handler = FileHandler(logger)
-    session_manager = SessionManager(logger)
 
     return process_request(
         session_id=args.session_id,
         user_question=args.user_question,
         llm_client=llm_client,
-        session_manager=session_manager,
         file_handler=file_handler,
         file_path=args.file_path,
         logger=logger
