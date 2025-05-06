@@ -1,30 +1,24 @@
-documents:
+emergency_dept:
   description: >
-    This section contains metadata for clinical or administrative documents associated with the patient.
-    It includes information about the document's origin, type, description, access URL, and the date of the clinical encounter.
-    These documents may include lab reports, imaging results, visit summaries, or scanned records.
+    This section contains information about emergency department visits.
+    It includes visit date, facility details, diagnosis, admission time, and type of emergency.
+    These records help track urgent care interactions and support clinical continuity and follow-up.
 
   fields:
-    documentId:
-      description: Unique identifier for the document stored in the system.
+    emergencyId:
+      description: Unique identifier assigned to the emergency department encounter.
 
     date:
-      description: Timestamp indicating when the document was uploaded or recorded.
+      description: The date on which the patient visited the emergency department.
 
-    description:
-      description: Title or summary that describes the content or purpose of the document.
+    facilityName:
+      description: Name of the hospital or facility where emergency care was provided.
 
-    contentUrl:
-      description: Direct URL to access or download the document content from storage.
+    primaryDiagnosis:
+      description: Main diagnosis associated with the emergency visit.
 
-    contentType:
-      description: Format or MIME type of the document content (e.g., Text, PDF, Image).
+    type:
+      description: Classification or category of the emergency encounter (e.g., urgent, non-urgent).
 
-    groupType:
-      description: Classification for grouping documents (e.g., Ungrouped, Lab Reports, Imaging).
-
-    providerName:
-      description: Name of the provider or system that generated or uploaded the document.
-
-    encounterDate:
-      description: Date when the related clinical encounter or service occurred.
+    admissionHour:
+      description: The hour of the day when the patient was admitted to the emergency department.
