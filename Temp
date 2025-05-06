@@ -1,27 +1,51 @@
-office_visits:
+pharmacy:
   description: >
-    This section captures patient office or outpatient visits. It includes encounter metadata
-    such as provider details, specialty, clinical diagnosis, service rendered, and corresponding codes.
-    These records are key for continuity of care, claims generation, and patient history tracking.
+    This section includes pharmacy records capturing dispensed medications, refill history,
+    prescribing provider, drug details, dosage, and authorization status. These records are
+    critical for medication management, adherence tracking, and prescription validation.
 
   fields:
-    visitId:
-      description: Unique identifier for the office or outpatient visit.
+    pharmacyId:
+      description: Unique identifier for the pharmacy record.
+
+    pharmacyName:
+      description: Name of the pharmacy that dispensed the medication.
 
     date:
-      description: Date of the patient visit to the clinic or facility.
+      description: Date when the medication was dispensed.
 
-    provider:
-      description: Name of the healthcare provider who attended the visit.
+    medication:
+      description: Name and dosage of the medication prescribed.
+
+    quantity:
+      description: Number of units dispensed.
+
+    refills:
+      description: Total number of refills authorized for the prescription.
+
+    phone:
+      description: Contact number of the pharmacy.
 
     specialty:
-      description: Medical specialty of the provider (e.g., Family Practice, Pediatrics).
+      description: Pharmacy specialty or category, if any (e.g., Compounding, Retail).
 
-    primaryDiagnosis:
-      description: Primary clinical diagnosis made during the visit.
+    daysSupply:
+      description: Number of days the dispensed medication is expected to last.
 
-    service:
-      description: Description of the medical service or procedure performed during the visit.
+    status:
+      description: Status of the pharmacy request (e.g., Approved, Rejected).
 
-    code:
-      description: Billing or procedure code associated with the service (e.g., CPT code).
+    pharmacyLocation:
+      description: Full address of the pharmacy where the medication was dispensed.
+
+    prescriber:
+      description: Name of the healthcare provider who prescribed the medication.
+
+    theraputicClass:
+      description: Classification of the medication based on therapeutic use.
+
+    instructions:
+      description: Instructions provided for medication usage (e.g., Oral Tablet).
+
+    controlledSubstance:
+      description: Boolean indicating whether the medication is a controlled substance.
