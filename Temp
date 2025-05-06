@@ -1,27 +1,27 @@
-mods:
+office_visits:
   description: >
-    This section captures medical orders or durable medical equipment (DME) service records.
-    It includes order details such as provider, service type, diagnosis codes, and billing codes,
-    helping track non-clinical interventions and support services provided to the patient.
+    This section captures patient office or outpatient visits. It includes encounter metadata
+    such as provider details, specialty, clinical diagnosis, service rendered, and corresponding codes.
+    These records are key for continuity of care, claims generation, and patient history tracking.
 
   fields:
-    modID:
-      description: Unique identifier for the medical order or equipment record.
+    visitId:
+      description: Unique identifier for the office or outpatient visit.
 
     date:
-      description: Date on which the service or order was recorded or initiated.
+      description: Date of the patient visit to the clinic or facility.
 
     provider:
-      description: Name of the provider or prescriber who issued the order.
+      description: Name of the healthcare provider who attended the visit.
+
+    specialty:
+      description: Medical specialty of the provider (e.g., Family Practice, Pediatrics).
+
+    primaryDiagnosis:
+      description: Primary clinical diagnosis made during the visit.
 
     service:
-      description: Description of the service, equipment, or supply provided (e.g., wound pump).
+      description: Description of the medical service or procedure performed during the visit.
 
-    diagnosisCode:
-      description: ICD-10 code corresponding to the related diagnosis (if applicable).
-
-    diagnosisDescription:
-      description: Explanation or label for the associated diagnosis code.
-
-    serviceCode:
-      description: Procedure or billing code (e.g., HCPCS code) associated with the ordered service.
+    code:
+      description: Billing or procedure code associated with the service (e.g., CPT code).
