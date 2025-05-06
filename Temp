@@ -1,48 +1,30 @@
-denied_pharmacy:
+documents:
   description: >
-    This section captures records of pharmacy prescriptions that were denied by the insurance provider.
-    It includes medication details, quantity and refill info, pharmacy and prescriber information,
-    and the denial reason. This helps track medication access issues and support clinical follow-up.
+    This section contains metadata for clinical or administrative documents associated with the patient.
+    It includes information about the document's origin, type, description, access URL, and the date of the clinical encounter.
+    These documents may include lab reports, imaging results, visit summaries, or scanned records.
 
   fields:
-    pharmacyId:
-      description: Unique identifier assigned to the denied pharmacy transaction.
-
-    pharmacyName:
-      description: Name of the pharmacy where the prescription was attempted.
+    documentId:
+      description: Unique identifier for the document stored in the system.
 
     date:
-      description: Date on which the denied prescription was recorded.
+      description: Timestamp indicating when the document was uploaded or recorded.
 
-    medication:
-      description: Name and strength of the prescribed medication.
+    description:
+      description: Title or summary that describes the content or purpose of the document.
 
-    quantity:
-      description: Quantity of medication requested in the prescription.
+    contentUrl:
+      description: Direct URL to access or download the document content from storage.
 
-    refills:
-      description: Number of refills requested in the original prescription.
+    contentType:
+      description: Format or MIME type of the document content (e.g., Text, PDF, Image).
 
-    phone:
-      description: Contact phone number of the pharmacy or submitting party.
+    groupType:
+      description: Classification for grouping documents (e.g., Ungrouped, Lab Reports, Imaging).
 
-    daysSupply:
-      description: Number of days the prescribed quantity was intended to last.
+    providerName:
+      description: Name of the provider or system that generated or uploaded the document.
 
-    status:
-      description: Status of the prescription request (e.g., Rejected).
-
-    pharmacyLocation:
-      description: Physical address of the pharmacy where the prescription was attempted.
-
-    prescriber:
-      description: Name of the healthcare provider who wrote the prescription.
-
-    theraputicClass:
-      description: Therapeutic category of the medication (if available).
-
-    instructions:
-      description: Instructions for how the medication should be taken (e.g., Oral Tablet).
-
-    controlledSubstance:
-      description: Boolean indicator of whether the medication is a controlled substance.
+    encounterDate:
+      description: Date when the related clinical encounter or service occurred.
