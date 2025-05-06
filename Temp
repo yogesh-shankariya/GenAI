@@ -1,18 +1,28 @@
-immunizations:
+inpatient_records:
   description: >
-    This section contains records of immunizations or vaccinations administered to the patient.
-    It includes the vaccine or service type, administration date, and the provider responsible.
-    These records are important for preventive care tracking, compliance, and public health reporting.
+    This section contains records of inpatient hospital stays for the patient.
+    It includes admission and discharge dates, facility name, primary diagnosis,
+    and references to related authorizations. These records are essential for
+    understanding hospitalization history and for billing, clinical review, and reporting.
 
   fields:
     id:
-      description: Unique identifier for the immunization record.
+      description: Unique identifier for the inpatient encounter.
 
-    date:
-      description: Date on which the immunization was administered.
+    admitDate:
+      description: Date when the patient was admitted to the inpatient facility.
 
-    service:
-      description: Name or description of the vaccine or immunization service provided.
+    dischargeDate:
+      description: Date when the patient was discharged from the facility.
 
-    provider:
-      description: Name of the healthcare provider who administered the immunization.
+    facilityName:
+      description: Name of the hospital or facility where the inpatient services were provided.
+
+    primaryDiagnosis:
+      description: Main diagnosis or condition treated during the inpatient stay.
+
+    authNumber:
+      description: Authorization number that approved the inpatient stay.
+
+    primaryDiagnosisCode:
+      description: ICD-10 code corresponding to the primary diagnosis.
