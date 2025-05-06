@@ -1,54 +1,66 @@
-claims:
+communications:
   description: >
-    This section contains the details of a healthcare claim submitted after services are rendered.
-    It captures the billing, clinical, and financial information necessary for insurance reimbursement,
-    including claim status, dates, diagnosis, services, and payment breakdown.
+    This section captures records of communication or outreach activities with the patient
+    or care team. It includes contact metadata, purpose of communication, caller/operator details,
+    method of contact, and outcomes, supporting care coordination, case management, or wellness programs.
 
   fields:
-    claimId:
-      description: Unique identifier for the submitted claim.
-
-    claimDatePoint:
-      description: Type of date used to categorize the claim (e.g., service date, submission date).
-
     date:
-      description: The date of service or the date the claim was submitted, depending on claimDatePoint.
-
-    datePaid:
-      description: The date on which the claim was processed or paid by the insurance.
-
-    provider:
-      description: Name of the provider or organization submitting the claim.
-
-    status:
-      description: Current state of the claim such as Approved, Denied, or Pending.
-
-    diagnosis:
-      description: Clinical condition or reason for the claim (may match primary diagnosis).
-
-    charges:
-      description: Total billed amount for the services claimed.
-
-    paid:
-      description: Actual amount paid or approved by insurance after adjudication.
+      description: The date on which the communication record was created.
 
     source:
-      description: System or source through which the claim was generated or submitted.
-
-    placeOfService:
-      description: Setting where care was delivered (e.g., Inpatient, Outpatient, Home).
+      description: The platform or system through which the communication originated.
 
     type:
-      description: Type or category of service (e.g., Medical, Pharmacy, Behavioral Health).
+      description: Category or classification of the communication event.
 
-    claimProvider:
-      description: The individual provider or specialist responsible for the services rendered.
+    contactDate:
+      description: The specific date the contact or communication actually occurred.
 
-    claimNumber:
-      description: External reference number (e.g., payer-assigned or legacy claim ID).
+    callDirection:
+      description: Indicates whether the call was incoming, outgoing, or unknown.
 
-    problems:
-      description: List of medical conditions or ICD codes associated with this claim.
+    caseStatus:
+      description: Current status of the associated case or outreach program.
 
-    services:
-      description: Details of procedures, treatments, or medications included in the claim.
+    callManagerOrOperator:
+      description: The name of the individual who managed or initiated the communication.
+
+    contactNameOrRespondent:
+      description: Encrypted or tokenized identifier for the individual who responded to the communication.
+
+    contactTypeOrCallType:
+      description: Type or purpose of the call (e.g., Initial Outreach, Follow-up).
+
+    contactMethod:
+      description: The method used to initiate contact (e.g., Dialer, Manual, Email).
+
+    contactPurpose:
+      description: The primary intent of the communication, such as Care Management or Appointment Reminder.
+
+    callReason:
+      description: The stated reason for the communication or interaction.
+
+    contactOutcomeOrComments:
+      description: Notes or summary of the outcome from the communication event.
+
+    callerPhone:
+      description: Phone number of the caller (if applicable or captured).
+
+    description:
+      description: Additional free-text notes or description of the contact record.
+
+    authorization:
+      description: Related authorization reference if the communication is linked to a specific case.
+
+    userLogin:
+      description: System login ID of the user who logged or initiated the contact.
+
+    email:
+      description: Email address used in the communication (if any).
+
+    phone:
+      description: Contact phone number used or recorded during the interaction.
+
+    fax:
+      description: Fax number involved in the communication, if applicable.
