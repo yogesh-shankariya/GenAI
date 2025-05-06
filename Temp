@@ -1,51 +1,18 @@
-pharmacy:
+behavioral_health:
   description: >
-    This section includes pharmacy records capturing dispensed medications, refill history,
-    prescribing provider, drug details, dosage, and authorization status. These records are
-    critical for medication management, adherence tracking, and prescription validation.
+    This section captures behavioral or mental health records, including psychiatric evaluations,
+    therapy sessions, and psychological assessments. These details are vital for understanding 
+    a patient’s mental health status and the care provided by specialized professionals.
 
   fields:
-    pharmacyId:
-      description: Unique identifier for the pharmacy record.
-
-    pharmacyName:
-      description: Name of the pharmacy that dispensed the medication.
+    behavioralHealthId:
+      description: Unique identifier for the behavioral health record entry.
 
     date:
-      description: Date when the medication was dispensed.
+      description: Date on which the behavioral health service or evaluation occurred.
 
-    medication:
-      description: Name and dosage of the medication prescribed.
+    attendingPerformer:
+      description: Name of the attending mental health provider or organization delivering the service.
 
-    quantity:
-      description: Number of units dispensed.
-
-    refills:
-      description: Total number of refills authorized for the prescription.
-
-    phone:
-      description: Contact number of the pharmacy.
-
-    specialty:
-      description: Pharmacy specialty or category, if any (e.g., Compounding, Retail).
-
-    daysSupply:
-      description: Number of days the dispensed medication is expected to last.
-
-    status:
-      description: Status of the pharmacy request (e.g., Approved, Rejected).
-
-    pharmacyLocation:
-      description: Full address of the pharmacy where the medication was dispensed.
-
-    prescriber:
-      description: Name of the healthcare provider who prescribed the medication.
-
-    theraputicClass:
-      description: Classification of the medication based on therapeutic use.
-
-    instructions:
-      description: Instructions provided for medication usage (e.g., Oral Tablet).
-
-    controlledSubstance:
-      description: Boolean indicating whether the medication is a controlled substance.
+    primaryDiagnosis:
+      description: The primary behavioral or psychiatric condition assessed or treated during the visit.
