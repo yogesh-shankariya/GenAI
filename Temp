@@ -1,24 +1,18 @@
-emergency_dept:
+immunizations:
   description: >
-    This section contains information about emergency department visits.
-    It includes visit date, facility details, diagnosis, admission time, and type of emergency.
-    These records help track urgent care interactions and support clinical continuity and follow-up.
+    This section contains records of immunizations or vaccinations administered to the patient.
+    It includes the vaccine or service type, administration date, and the provider responsible.
+    These records are important for preventive care tracking, compliance, and public health reporting.
 
   fields:
-    emergencyId:
-      description: Unique identifier assigned to the emergency department encounter.
+    id:
+      description: Unique identifier for the immunization record.
 
     date:
-      description: The date on which the patient visited the emergency department.
+      description: Date on which the immunization was administered.
 
-    facilityName:
-      description: Name of the hospital or facility where emergency care was provided.
+    service:
+      description: Name or description of the vaccine or immunization service provided.
 
-    primaryDiagnosis:
-      description: Main diagnosis associated with the emergency visit.
-
-    type:
-      description: Classification or category of the emergency encounter (e.g., urgent, non-urgent).
-
-    admissionHour:
-      description: The hour of the day when the patient was admitted to the emergency department.
+    provider:
+      description: Name of the healthcare provider who administered the immunization.
