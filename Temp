@@ -1,28 +1,51 @@
-inpatient_records:
+labs:
   description: >
-    This section contains records of inpatient hospital stays for the patient.
-    It includes admission and discharge dates, facility name, primary diagnosis,
-    and references to related authorizations. These records are essential for
-    understanding hospitalization history and for billing, clinical review, and reporting.
+    This section captures laboratory test results including test type, value, interpretation,
+    and provider details. These records are essential for clinical diagnostics, patient monitoring,
+    and medical decision-making.
 
   fields:
-    id:
-      description: Unique identifier for the inpatient encounter.
+    labID:
+      description: Unique identifier for the lab result record.
 
-    admitDate:
-      description: Date when the patient was admitted to the inpatient facility.
+    observationDate:
+      description: The date and time when the lab test observation was made.
 
-    dischargeDate:
-      description: Date when the patient was discharged from the facility.
+    status:
+      description: Status of the lab result, such as final, preliminary, or corrected.
 
-    facilityName:
-      description: Name of the hospital or facility where the inpatient services were provided.
+    type:
+      description: Name or classification of the lab test performed.
 
-    primaryDiagnosis:
-      description: Main diagnosis or condition treated during the inpatient stay.
+    value:
+      description: Result value along with its unit (e.g., "74 mg/dL").
 
-    authNumber:
-      description: Authorization number that approved the inpatient stay.
+    orderingProvider:
+      description: Name of the provider or lab that ordered/performed the test.
 
-    primaryDiagnosisCode:
-      description: ICD-10 code corresponding to the primary diagnosis.
+    normalRange:
+      description: Reference range that defines the normal limits for the test result.
+
+    acuity:
+      description: Interpretation of the result’s severity (e.g., Normal, Abnormal, Critical).
+
+    legend:
+      description: Additional context or labeling for result groupings (if any).
+
+    trend:
+      description: Noted trend range or comparison baseline (e.g., prior ranges or expected movement).
+
+    conclusion:
+      description: Overall interpretation or summary conclusion from the lab result.
+
+    note:
+      description: Additional notes or comments related to the lab entry.
+
+    specimen:
+      description: Details about the specimen (e.g., blood, urine) used for the test.
+
+    supportingInfo:
+      description: Any supporting contextual information tied to the lab test.
+
+    media:
+      description: Any attached image or binary file related to the test (e.g., scanned report or graph).
