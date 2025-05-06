@@ -1,66 +1,48 @@
-communications:
+denied_pharmacy:
   description: >
-    This section captures records of communication or outreach activities with the patient
-    or care team. It includes contact metadata, purpose of communication, caller/operator details,
-    method of contact, and outcomes, supporting care coordination, case management, or wellness programs.
+    This section captures records of pharmacy prescriptions that were denied by the insurance provider.
+    It includes medication details, quantity and refill info, pharmacy and prescriber information,
+    and the denial reason. This helps track medication access issues and support clinical follow-up.
 
   fields:
+    pharmacyId:
+      description: Unique identifier assigned to the denied pharmacy transaction.
+
+    pharmacyName:
+      description: Name of the pharmacy where the prescription was attempted.
+
     date:
-      description: The date on which the communication record was created.
+      description: Date on which the denied prescription was recorded.
 
-    source:
-      description: The platform or system through which the communication originated.
+    medication:
+      description: Name and strength of the prescribed medication.
 
-    type:
-      description: Category or classification of the communication event.
+    quantity:
+      description: Quantity of medication requested in the prescription.
 
-    contactDate:
-      description: The specific date the contact or communication actually occurred.
-
-    callDirection:
-      description: Indicates whether the call was incoming, outgoing, or unknown.
-
-    caseStatus:
-      description: Current status of the associated case or outreach program.
-
-    callManagerOrOperator:
-      description: The name of the individual who managed or initiated the communication.
-
-    contactNameOrRespondent:
-      description: Encrypted or tokenized identifier for the individual who responded to the communication.
-
-    contactTypeOrCallType:
-      description: Type or purpose of the call (e.g., Initial Outreach, Follow-up).
-
-    contactMethod:
-      description: The method used to initiate contact (e.g., Dialer, Manual, Email).
-
-    contactPurpose:
-      description: The primary intent of the communication, such as Care Management or Appointment Reminder.
-
-    callReason:
-      description: The stated reason for the communication or interaction.
-
-    contactOutcomeOrComments:
-      description: Notes or summary of the outcome from the communication event.
-
-    callerPhone:
-      description: Phone number of the caller (if applicable or captured).
-
-    description:
-      description: Additional free-text notes or description of the contact record.
-
-    authorization:
-      description: Related authorization reference if the communication is linked to a specific case.
-
-    userLogin:
-      description: System login ID of the user who logged or initiated the contact.
-
-    email:
-      description: Email address used in the communication (if any).
+    refills:
+      description: Number of refills requested in the original prescription.
 
     phone:
-      description: Contact phone number used or recorded during the interaction.
+      description: Contact phone number of the pharmacy or submitting party.
 
-    fax:
-      description: Fax number involved in the communication, if applicable.
+    daysSupply:
+      description: Number of days the prescribed quantity was intended to last.
+
+    status:
+      description: Status of the prescription request (e.g., Rejected).
+
+    pharmacyLocation:
+      description: Physical address of the pharmacy where the prescription was attempted.
+
+    prescriber:
+      description: Name of the healthcare provider who wrote the prescription.
+
+    theraputicClass:
+      description: Therapeutic category of the medication (if available).
+
+    instructions:
+      description: Instructions for how the medication should be taken (e.g., Oral Tablet).
+
+    controlledSubstance:
+      description: Boolean indicator of whether the medication is a controlled substance.
