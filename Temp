@@ -1,123 +1,92 @@
 """
-Enhanced detector: counts regex vs fuzzy hits and records which
-pattern/phrase matched which sentence.
+Tally follow-up vs referral cues in a note.
 
-Dependencies
+Output shape
 ------------
-pip install pyyaml rapidfuzz
+{
+  "Referral": {
+      "total": 3,
+      "regex_count": 2,
+      "fuzzy_count": 1,
+      "regex_patterns": ["\\breferral to\\b", "\\bconsult with\\b"],
+      "fuzzy_phrases": ["referral to gi"]
+  },
+  "Folow up": {
+      "total": 2,
+      ...
+  }
+}
 """
 
 import re
 import yaml
 from rapidfuzz import fuzz
 
-# ------------------------------------------------------------------- #
-# CONFIGURATION
-# ------------------------------------------------------------------- #
 RULE_FILE = "followup_referral_patterns.yaml"
-FUZZY_THRESHOLD = 85                 # 0–100 similarity
+FUZZY_THRESHOLD = 85                                   # similarity 0-100
 
 with open(RULE_FILE, "r") as fh:
     RULES = yaml.safe_load(fh)
 
 
-# ------------------------------------------------------------------- #
-# LOW-LEVEL MATCHERS
-# ------------------------------------------------------------------- #
-def regex_matches(sentence: str, patterns: list[str]) -> list[str]:
-    """Return a list of regex patterns that match the sentence."""
+def _regex_hits(sentence: str, patterns: list[str]) -> list[str]:
+    """Return every regex pattern that matches this sentence."""
     return [pat for pat in patterns if re.search(pat, sentence, flags=re.I)]
 
 
-def fuzzy_matches(sentence: str, phrases: list[str]) -> list[str]:
-    """Return a list of fuzzy phrases whose similarity ≥ threshold."""
-    lowered = sentence.lower()
-    return [
-        phrase
-        for phrase in phrases
-        if fuzz.partial_ratio(phrase, lowered) >= FUZZY_THRESHOLD
-    ]
+def _fuzzy_hits(sentence: str, phrases: list[str]) -> list[str]:
+    """Return every phrase whose partial-ratio ≥ threshold."""
+    s = sentence.lower()
+    return [p for p in phrases if fuzz.partial_ratio(p, s) >= FUZZY_THRESHOLD]
 
 
-# ------------------------------------------------------------------- #
-# MAIN ANALYSER
-# ------------------------------------------------------------------- #
-def analyse_note(text: str) -> dict[str, dict]:
-    """
-    Returns structure:
-
-    {
-      "Referral": {
-          "total": 3,
-          "regex_count": 2,
-          "fuzzy_count": 1,
-          "regex_hits": [
-              {"pattern": "...", "sentence": "..."},
-              ...
-          ],
-          "fuzzy_hits": [
-              {"phrase": "...", "sentence": "..."},
-              ...
-          ]
-      },
-      "Folow up": { ... }
+def analyse_note(text: str) -> dict:
+    # initialise running tallies
+    summary = {
+        "Referral": {
+            "regex_count": 0, "fuzzy_count": 0,
+            "regex_patterns": set(), "fuzzy_phrases": set()
+        },
+        "Folow up": {
+            "regex_count": 0, "fuzzy_count": 0,
+            "regex_patterns": set(), "fuzzy_phrases": set()
+        },
     }
-    """
 
-    template = {
-        "total": 0,
-        "regex_count": 0,
-        "fuzzy_count": 0,
-        "regex_hits": [],
-        "fuzzy_hits": [],
-    }
-    out = {"Referral": template.copy(), "Folow up": template.copy()}
+    # rough sentence split
+    for sent in filter(None, map(str.strip, re.split(r"[.?!]\s+", text))):
+        # ---------------- FOLLOW-UP -----------------
+        for pat in _regex_hits(sent, RULES["followup"]["regex_patterns"]):
+            summary["Folow up"]["regex_count"] += 1
+            summary["Folow up"]["regex_patterns"].add(pat)
 
-    # naive sentence split (period / question / exclamation)
-    sentences = re.split(r"[.?!]\s+", text)
-    sentences = [s.strip() for s in sentences if s.strip()]
+        for phr in _fuzzy_hits(sent, RULES["followup"]["fuzzy_phrases"]):
+            summary["Folow up"]["fuzzy_count"] += 1
+            summary["Folow up"]["fuzzy_phrases"].add(phr)
 
-    for sent in sentences:
-        # ------------------ FOLLOW-UP ------------------ #
-        r_hits_fu = regex_matches(sent, RULES["followup"]["regex_patterns"])
-        f_hits_fu = fuzzy_matches(sent, RULES["followup"]["fuzzy_phrases"])
+        # ---------------- REFERRAL ------------------
+        for pat in _regex_hits(sent, RULES["referral"]["regex_patterns"]):
+            summary["Referral"]["regex_count"] += 1
+            summary["Referral"]["regex_patterns"].add(pat)
 
-        if r_hits_fu or f_hits_fu:
-            out["Folow up"]["total"] += 1
+        for phr in _fuzzy_hits(sent, RULES["referral"]["fuzzy_phrases"]):
+            summary["Referral"]["fuzzy_count"] += 1
+            summary["Referral"]["fuzzy_phrases"].add(phr)
 
-        for pat in r_hits_fu:
-            out["Folow up"]["regex_count"] += 1
-            out["Folow up"]["regex_hits"].append({"pattern": pat, "sentence": sent})
+    # final tidy-up: cast sets → sorted lists, add total
+    for cat in summary.values():
+        cat["regex_patterns"] = sorted(cat["regex_patterns"])
+        cat["fuzzy_phrases"] = sorted(cat["fuzzy_phrases"])
+        cat["total"] = cat["regex_count"] + cat["fuzzy_count"]
 
-        for phr in f_hits_fu:
-            out["Folow up"]["fuzzy_count"] += 1
-            out["Folow up"]["fuzzy_hits"].append({"phrase": phr, "sentence": sent})
-
-        # ------------------ REFERRAL ------------------- #
-        r_hits_ref = regex_matches(sent, RULES["referral"]["regex_patterns"])
-        f_hits_ref = fuzzy_matches(sent, RULES["referral"]["fuzzy_phrases"])
-
-        if r_hits_ref or f_hits_ref:
-            out["Referral"]["total"] += 1
-
-        for pat in r_hits_ref:
-            out["Referral"]["regex_count"] += 1
-            out["Referral"]["regex_hits"].append({"pattern": pat, "sentence": sent})
-
-        for phr in f_hits_ref:
-            out["Referral"]["fuzzy_count"] += 1
-            out["Referral"]["fuzzy_hits"].append({"phrase": phr, "sentence": sent})
-
-    return out
+    return summary
 
 
-# ------------------------------------------------------------------- #
-# QUICK DEMO
-# ------------------------------------------------------------------- #
+# quick smoke-test
 if __name__ == "__main__":
-    sample = (
+    note = (
         "I will refer her to Dr Gearard for GI review. "
         "RTC prn. Follow-up with OB/GYN and then consider referral to GI."
     )
     import json, pprint
-    pprint.pp(json.loads(json.dumps(analyse_note(sample), indent=2)))
+    pprint.pp(json.loads(json.dumps(analyse_note(note), indent=2)))
