@@ -1,92 +1,159 @@
-"""
-Tally follow-up vs referral cues in a note.
+followup:
+  regex_patterns:
+    # Matches phrases like "follow up", "follow-up"
+    - "\\bfollow[\\s-]?up\\b"
 
-Output shape
-------------
-{
-  "Referral": {
-      "total": 3,
-      "regex_count": 2,
-      "fuzzy_count": 1,
-      "regex_patterns": ["\\breferral to\\b", "\\bconsult with\\b"],
-      "fuzzy_phrases": ["referral to gi"]
-  },
-  "Folow up": {
-      "total": 2,
-      ...
-  }
-}
-"""
+    # Short form of "follow-up"
+    - "\\bf/u\\b"
+    - "\\bf-up\\b"
 
-import re
-import yaml
-from rapidfuzz import fuzz
+    # Return to Clinic abbreviation
+    - "\\bRTC\\b"
 
-RULE_FILE = "followup_referral_patterns.yaml"
-FUZZY_THRESHOLD = 85                                   # similarity 0-100
+    # RTC as needed ("pro re nata")
+    - "\\bRTC[\\s-]?prn\\b"
 
-with open(RULE_FILE, "r") as fh:
-    RULES = yaml.safe_load(fh)
+    # Return to Follow-up abbreviation
+    - "\\bRTF\\b"
 
+    # Explicit phrase "return to clinic"
+    - "\\breturn to clinic\\b"
 
-def _regex_hits(sentence: str, patterns: list[str]) -> list[str]:
-    """Return every regex pattern that matches this sentence."""
-    return [pat for pat in patterns if re.search(pat, sentence, flags=re.I)]
+    # Matches "reevaluation" or "re evaluation"
+    - "\\bre\\s?evaluation\\b"
 
+    # Matches phrases like "schedule follow-up", "schedule a follow-up"
+    - "\\bschedule (?:a )?follow-?up\\b"
 
-def _fuzzy_hits(sentence: str, phrases: list[str]) -> list[str]:
-    """Return every phrase whose partial-ratio ≥ threshold."""
-    s = sentence.lower()
-    return [p for p in phrases if fuzz.partial_ratio(p, s) >= FUZZY_THRESHOLD]
+    # Matches "follow-up appointment" or "follow up appointment"
+    - "\\bfollow-?up appointment\\b"
 
+    # Indicating revisit instructions explicitly
+    - "\\bcome back in\\b"
+    - "\\bsee us again\\b"
+    - "\\bmonitor in clinic\\b"
+    - "\\bcontinue care\\b"
+    - "\\bcheck back\\b"
+    - "\\bpatient to be seen again\\b"
+    - "\\bplanned reassessment\\b"
+    - "\\breturn if symptoms persist\\b"
+    - "\\bprn visit\\b"                  # "as needed visit"
+    - "\\bas needed visit\\b"
+    - "\\brepeat visit\\b"
+    - "\\brecheck required\\b"
+    - "\\bfollow-?up recommended\\b"
+    - "\\bclinic review\\b"
+    - "\\bto be reviewed\\b"
+    - "\\bfollow closely\\b"
+    - "\\bfollow regularly\\b"
+    - "\\bscheduled appointment\\b"
+    - "\\bcall if no improvement\\b"
+    - "\\brevisit advised\\b"
 
-def analyse_note(text: str) -> dict:
-    # initialise running tallies
-    summary = {
-        "Referral": {
-            "regex_count": 0, "fuzzy_count": 0,
-            "regex_patterns": set(), "fuzzy_phrases": set()
-        },
-        "Folow up": {
-            "regex_count": 0, "fuzzy_count": 0,
-            "regex_patterns": set(), "fuzzy_phrases": set()
-        },
-    }
+  fuzzy_phrases:
+    # Informal or fuzzy matches for follow-up instructions
+    - "follow up"
+    - "follow-up"
+    - "f/u"
+    - "rtc"
+    - "rtc prn"
+    - "return to clinic"
+    - "schedule follow-up"
+    - "follow-up visit"
+    - "come back if needed"
+    - "re-check in clinic"
+    - "patient to follow up"
+    - "she may return"
+    - "return if symptoms persist"
+    - "follow-up recommended"
+    - "check in with doctor"
+    - "revisit clinic"
+    - "patient advised to return"
+    - "re-evaluation needed"
+    - "to follow up with provider"
+    - "contact office if needed"
+    - "call if no better"
+    - "clinic reassessment"
+    - "routine follow-up"
+    - "periodic evaluation"
+    - "follow closely"
+    - "come again for review"
+    - "check progress in clinic"
+    - "return visit advised"
+    - "future evaluation"
 
-    # rough sentence split
-    for sent in filter(None, map(str.strip, re.split(r"[.?!]\s+", text))):
-        # ---------------- FOLLOW-UP -----------------
-        for pat in _regex_hits(sent, RULES["followup"]["regex_patterns"]):
-            summary["Folow up"]["regex_count"] += 1
-            summary["Folow up"]["regex_patterns"].add(pat)
+referral:
+  regex_patterns:
+    # Explicitly "referral to" specialist
+    - "\\breferral to\\b"
 
-        for phr in _fuzzy_hits(sent, RULES["followup"]["fuzzy_phrases"]):
-            summary["Folow up"]["fuzzy_count"] += 1
-            summary["Folow up"]["fuzzy_phrases"].add(phr)
+    # Matches "refer to", "referral to", "refer her to", "refer him to"
+    - "\\brefer(?:ral)?\\s+(?:to|her to|him to)\\b"
 
-        # ---------------- REFERRAL ------------------
-        for pat in _regex_hits(sent, RULES["referral"]["regex_patterns"]):
-            summary["Referral"]["regex_count"] += 1
-            summary["Referral"]["regex_patterns"].add(pat)
+    # Matches "will refer to", "will refer her to", "will refer him to"
+    - "\\bwill refer (?:her|him)?\\s+to\\b"
 
-        for phr in _fuzzy_hits(sent, RULES["referral"]["fuzzy_phrases"]):
-            summary["Referral"]["fuzzy_count"] += 1
-            summary["Referral"]["fuzzy_phrases"].add(phr)
+    # Planned referral statement
+    - "\\bplan to refer\\b"
 
-    # final tidy-up: cast sets → sorted lists, add total
-    for cat in summary.values():
-        cat["regex_patterns"] = sorted(cat["regex_patterns"])
-        cat["fuzzy_phrases"] = sorted(cat["fuzzy_phrases"])
-        cat["total"] = cat["regex_count"] + cat["fuzzy_count"]
+    # Indicating specialist consultation
+    - "\\bconsult with\\b"
 
-    return summary
+    # Matches direct instruction to see certain specialist types or doctors
+    - "\\bsee (?:Dr\\.?|specialist|GI|OB/GYN|cardiology|orthopedics|neuro|psychiatry|oncology|urology|pediatrics|dermatology|radiology)\\b"
 
+    # Expressing the need for a consult explicitly
+    - "\\bneeds (?:a )?consult\\b"
 
-# quick smoke-test
-if __name__ == "__main__":
-    note = (
-        "I will refer her to Dr Gearard for GI review. "
-        "RTC prn. Follow-up with OB/GYN and then consider referral to GI."
-    )
-    import json, pprint
-    pprint.pp(json.loads(json.dumps(analyse_note(note), indent=2)))
+    # Transfer of patient's care
+    - "\\btransfer of care\\b"
+
+    # Referring actions clearly indicated
+    - "\\breferring to\\b"
+    - "\\breferred by\\b"
+    - "\\binterdisciplinary consult\\b"
+    - "\\breferral requested\\b"
+    - "\\brequest consult\\b"
+    - "\\breferral pending\\b"
+    - "\\barrange referral\\b"
+    - "\\bspecialist consultation\\b"
+    - "\\bpatient sent to\\b"
+    - "\\bappointment with specialist\\b"
+    - "\\bcoordinate with specialist\\b"
+    - "\\bexpert consultation\\b"
+    - "\\bforward to specialist\\b"
+    - "\\bsent to specialist\\b"
+    - "\\brequest specialist\\b"
+    - "\\breferral initiated\\b"
+
+  fuzzy_phrases:
+    # Informal, fuzzy, or OCR-error-friendly matches for referrals
+    - "referral to gi"
+    - "referral to ob/gyn"
+    - "referral to cardiologist"
+    - "refer her to dr"
+    - "refer to specialist"
+    - "consult with gi"
+    - "consult a specialist"
+    - "patient referred"
+    - "referral pending"
+    - "please refer to"
+    - "sending to cardiologist"
+    - "referring to ortho"
+    - "he was referred"
+    - "arranged referral"
+    - "they were sent to specialist"
+    - "recommended referral"
+    - "initiated consult"
+    - "sent to imaging center"
+    - "set up appointment with specialist"
+    - "recommended to see specialist"
+    - "forwarded to specialist"
+    - "patient sent for consultation"
+    - "arranging specialist opinion"
+    - "awaiting referral"
+    - "specialist review advised"
+    - "suggest consultation"
+    - "discuss with specialist"
+    - "seek expert opinion"
+    - "book appointment with specialist"
