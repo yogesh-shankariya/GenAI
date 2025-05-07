@@ -1,48 +1,87 @@
-followup:
-  # Exact / near-exact forms → fast regex search
-  regex_patterns:
-    - "\\bfollow[\\s-]?up\\b"
-    - "\\bRTC\\b"
-    - "\\bRTC[\\s-]?prn\\b"
-    - "\\breturn to clinic\\b"
-    - "\\bre\\s?evaluation\\b"
-    - "\\bschedule (?:a )?follow-?up\\b"
-    - "\\bfollow-?up appointment\\b"
-    - "\\bcome back in\\b"
-    - "\\bsee us again\\b"
-    - "\\bmonitor in clinic\\b"
+"""
+Detect follow-up / referral cues, and return both counts and matching sentences.
+Requires: pyyaml, rapidfuzz   (pip install pyyaml rapidfuzz)
+"""
 
-  # Free-text variants → fuzzy similarity search
-  fuzzy_phrases:
-    - "follow up"
-    - "follow-up"
-    - "rtc"
-    - "return to clinic"
-    - "schedule follow-up"
-    - "follow-up visit"
-    - "come back if needed"
-    - "re-check in clinic"
-    - "patient to follow up"
-    - "she may return"
+import re
+import yaml
+from rapidfuzz import fuzz
 
-referral:
-  regex_patterns:
-    - "\\breferral to\\b"
-    - "\\brefer(?:ral)?\\s+(?:to|her to|him to)\\b"
-    - "\\bwill refer (?:her|him)?\\s+to\\b"
-    - "\\bplan to refer\\b"
-    - "\\bconsult with\\b"
-    - "\\bsee (?:Dr\\.?|specialist|GI|OB/GYN)\\b"
-    - "\\bneeds (?:a )?consult\\b"
-    - "\\btransfer of care\\b"
+# ------------------------------------------------------------------ #
+# CONFIGURATION
+# ------------------------------------------------------------------ #
+RULE_FILE = "followup_referral_patterns.yaml"
+FUZZY_THRESHOLD = 85                      # similarity score (0-100)
 
-  fuzzy_phrases:
-    - "referral to gi"
-    - "referral to ob/gyn"
-    - "refer her to dr"
-    - "refer to specialist"
-    - "consult with gi"
-    - "consult a specialist"
-    - "patient referred"
-    - "referral pending"
-    - "please refer to"
+with open(RULE_FILE, "r") as fh:
+    RULES = yaml.safe_load(fh)
+
+
+# ------------------------------------------------------------------ #
+# INTERNAL HELPERS
+# ------------------------------------------------------------------ #
+def _regex_hit(text: str, patterns: list[str]) -> bool:
+    return any(re.search(pat, text, flags=re.I) for pat in patterns)
+
+
+def _fuzzy_hit(text: str, phrases: list[str]) -> bool:
+    lowered = text.lower()
+    return any(fuzz.partial_ratio(p, lowered) >= FUZZY_THRESHOLD for p in phrases)
+
+
+def _classify(sentence: str) -> tuple[bool, bool]:
+    """Returns (is_followup, is_referral) for one sentence."""
+    followup = (
+        _regex_hit(sentence, RULES["followup"]["regex_patterns"])
+        or _fuzzy_hit(sentence, RULES["followup"]["fuzzy_phrases"])
+    )
+    referral = (
+        _regex_hit(sentence, RULES["referral"]["regex_patterns"])
+        or _fuzzy_hit(sentence, RULES["referral"]["fuzzy_phrases"])
+    )
+    return followup, referral
+
+
+# ------------------------------------------------------------------ #
+# PUBLIC API
+# ------------------------------------------------------------------ #
+def analyse_note(text: str) -> dict[str, dict]:
+    """
+    Scan a clinical note and return:
+        {
+          "Referral": {"count": n, "matches": [sent1, …]},
+          "Folow up": {"count": m, "matches": [sent2, …]}
+        }
+    """
+    result = {
+        "Referral": {"count": 0, "matches": []},
+        "Folow up": {"count": 0, "matches": []},
+    }
+
+    # crude sentence splitter (period / question / exclamation)
+    sentences = re.split(r"[.?!]\s+", text)
+
+    for sent in filter(None, map(str.strip, sentences)):
+        is_fu, is_ref = _classify(sent)
+        if is_fu:
+            result["Folow up"]["count"] += 1
+            result["Folow up"]["matches"].append(sent)
+        if is_ref:
+            result["Referral"]["count"] += 1
+            result["Referral"]["matches"].append(sent)
+
+    return result
+
+
+# ------------------------------------------------------------------ #
+# DEMO
+# ------------------------------------------------------------------ #
+if __name__ == "__main__":
+    note = (
+        "Patient should maintain incisions clean and dry. "
+        "I will refer her to Dr Gearard from Gastroenterology for chronic abd pain. "
+        "RTC prn. "
+        "Follow-up with OB/GYN and then consider referral to GI."
+    )
+    from pprint import pprint
+    pprint(analyse_note(note))
