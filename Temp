@@ -1,18 +1,48 @@
-behavioral_health:
-  description: >
-    This section captures behavioral or mental health records, including psychiatric evaluations,
-    therapy sessions, and psychological assessments. These details are vital for understanding 
-    a patient’s mental health status and the care provided by specialized professionals.
+followup:
+  # Exact / near-exact forms → fast regex search
+  regex_patterns:
+    - "\\bfollow[\\s-]?up\\b"
+    - "\\bRTC\\b"
+    - "\\bRTC[\\s-]?prn\\b"
+    - "\\breturn to clinic\\b"
+    - "\\bre\\s?evaluation\\b"
+    - "\\bschedule (?:a )?follow-?up\\b"
+    - "\\bfollow-?up appointment\\b"
+    - "\\bcome back in\\b"
+    - "\\bsee us again\\b"
+    - "\\bmonitor in clinic\\b"
 
-  fields:
-    behavioralHealthId:
-      description: Unique identifier for the behavioral health record entry.
+  # Free-text variants → fuzzy similarity search
+  fuzzy_phrases:
+    - "follow up"
+    - "follow-up"
+    - "rtc"
+    - "return to clinic"
+    - "schedule follow-up"
+    - "follow-up visit"
+    - "come back if needed"
+    - "re-check in clinic"
+    - "patient to follow up"
+    - "she may return"
 
-    date:
-      description: Date on which the behavioral health service or evaluation occurred.
+referral:
+  regex_patterns:
+    - "\\breferral to\\b"
+    - "\\brefer(?:ral)?\\s+(?:to|her to|him to)\\b"
+    - "\\bwill refer (?:her|him)?\\s+to\\b"
+    - "\\bplan to refer\\b"
+    - "\\bconsult with\\b"
+    - "\\bsee (?:Dr\\.?|specialist|GI|OB/GYN)\\b"
+    - "\\bneeds (?:a )?consult\\b"
+    - "\\btransfer of care\\b"
 
-    attendingPerformer:
-      description: Name of the attending mental health provider or organization delivering the service.
-
-    primaryDiagnosis:
-      description: The primary behavioral or psychiatric condition assessed or treated during the visit.
+  fuzzy_phrases:
+    - "referral to gi"
+    - "referral to ob/gyn"
+    - "refer her to dr"
+    - "refer to specialist"
+    - "consult with gi"
+    - "consult a specialist"
+    - "patient referred"
+    - "referral pending"
+    - "please refer to"
