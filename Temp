@@ -1,48 +1,42 @@
 import re
-import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
-from langchain_openai import OpenAIEmbeddings
-import os
 
-# Embedding configuration (as per your environment)
-embeddings = OpenAIEmbeddings(
-    model="text-embedding-3-large",
-    dimensions=3072,
-    api_key=os.getenv('API_KEY'),
-    base_url=os.getenv('API_BASE')
-)
+# Sample FAISS top 10 retrieved documents content (replace with your actual documents)
+top_10_documents = [
+    "Patient advised RTC prn.",
+    "Referral to cardiology for evaluation.",
+    "Schedule follow-up next month.",
+    "Refer patient to neurology immediately.",
+    "Patient recommended to consult with oncology.",
+    "Referral to GI specialist advised.",
+    "No referral required at this time.",
+    "Refer her to Dr. John Smith for assessment.",
+    "Follow-up advised.",
+    "Referral to orthopedics recommended."
+]
 
-# Function to get embeddings using your embeddings object
-def get_embedding(text):
-    return embeddings.embed_query(text)
+# Comprehensive regex patterns for extracting referral targets
+referral_patterns = [
+    r"referral to ([^.]+)",
+    r"refer to ([^.]+)",
+    r"refer her to ([^.]+)",
+    r"refer him to ([^.]+)",
+    r"consult with ([^.]+)",
+    r"referring to ([^.]+)"
+]
 
-# Define your semantic labels
-labels = {
-    "follow-up": "Patient should return or revisit the clinic for further evaluation or treatment.",
-    "referral": "Patient referred or consultation requested with a specialist or another department."
-}
+# Extraction function using regex patterns
+def extract_referral_target(text):
+    targets = []
+    for pattern in referral_patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        if matches:
+            targets.extend([match.strip() for match in matches])
+    return targets
 
-# Generate embeddings for labels
-label_embeddings = {label: get_embedding(desc) for label, desc in labels.items()}
-
-# Clinical note
-note = "Patient advised RTC prn. Referral to GI if pain persists."
-
-# Split into sentences
-sentences = re.split(r"[.?!]\s+", note.strip())
-
-# Similarity threshold
-threshold = 0.80
-
-# Classify sentences
-for sentence in sentences:
-    if sentence:
-        sent_emb = get_embedding(sentence)
-        for label, label_emb in label_embeddings.items():
-            sim_score = cosine_similarity(
-                [sent_emb],
-                [label_emb]
-            )[0][0]
-
-            if sim_score >= threshold:
-                print(f"{label.upper()}: '{sentence}' (score: {sim_score:.2f})")
+# Extract referral targets from top 10 retrieved documents
+for idx, doc_text in enumerate(top_10_documents, 1):
+    referral_targets = extract_referral_target(doc_text)
+    if referral_targets:
+        print(f"Document {idx}: '{doc_text}'")
+        for target in referral_targets:
+            print(f"  → Referral Target: {target}")
