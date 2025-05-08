@@ -1,39 +1,42 @@
 import re
 import numpy as np
-import openai
 from sklearn.metrics.pairwise import cosine_similarity
+from langchain_openai import OpenAIEmbeddings
+import os
 
-openai.api_key = "your_openai_api_key_here"
+# Embedding configuration (as per your environment)
+embeddings = OpenAIEmbeddings(
+    model="text-embedding-3-large",
+    dimensions=3072,
+    api_key=os.getenv('API_KEY'),
+    base_url=os.getenv('API_BASE')
+)
 
-# Function to get embeddings from OpenAI
+# Function to get embeddings using your embeddings object
 def get_embedding(text):
-    response = openai.Embedding.create(
-        input=text,
-        model="text-embedding-3-large"
-    )
-    return np.array(response['data'][0]['embedding'])
+    return embeddings.embed_query(text)
 
-# Define your concepts clearly
+# Define your semantic labels
 labels = {
     "follow-up": "Patient should return or revisit the clinic for further evaluation or treatment.",
     "referral": "Patient referred or consultation requested with a specialist or another department."
 }
 
-# Embed concepts (labels)
-label_embeddings = {label: get_embedding(text) for label, text in labels.items()}
+# Generate embeddings for labels
+label_embeddings = {label: get_embedding(desc) for label, desc in labels.items()}
 
-# Example clinical note
+# Clinical note
 note = "Patient advised RTC prn. Referral to GI if pain persists."
 
-# Split note into sentences
+# Split into sentences
 sentences = re.split(r"[.?!]\s+", note.strip())
 
-# Set similarity threshold (adjustable)
-threshold = 0.80  # Adjust threshold based on validation results
+# Similarity threshold
+threshold = 0.80
 
-# Analyze each sentence
+# Classify sentences
 for sentence in sentences:
-    if sentence:  # Check sentence is not empty
+    if sentence:
         sent_emb = get_embedding(sentence)
         for label, label_emb in label_embeddings.items():
             sim_score = cosine_similarity(
