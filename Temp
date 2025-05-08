@@ -1,159 +1,45 @@
-followup:
-  regex_patterns:
-    # Matches phrases like "follow up", "follow-up"
-    - "\\bfollow[\\s-]?up\\b"
+import re
+import numpy as np
+import openai
+from sklearn.metrics.pairwise import cosine_similarity
 
-    # Short form of "follow-up"
-    - "\\bf/u\\b"
-    - "\\bf-up\\b"
+openai.api_key = "your_openai_api_key_here"
 
-    # Return to Clinic abbreviation
-    - "\\bRTC\\b"
+# Function to get embeddings from OpenAI
+def get_embedding(text):
+    response = openai.Embedding.create(
+        input=text,
+        model="text-embedding-3-large"
+    )
+    return np.array(response['data'][0]['embedding'])
 
-    # RTC as needed ("pro re nata")
-    - "\\bRTC[\\s-]?prn\\b"
+# Define your concepts clearly
+labels = {
+    "follow-up": "Patient should return or revisit the clinic for further evaluation or treatment.",
+    "referral": "Patient referred or consultation requested with a specialist or another department."
+}
 
-    # Return to Follow-up abbreviation
-    - "\\bRTF\\b"
+# Embed concepts (labels)
+label_embeddings = {label: get_embedding(text) for label, text in labels.items()}
 
-    # Explicit phrase "return to clinic"
-    - "\\breturn to clinic\\b"
+# Example clinical note
+note = "Patient advised RTC prn. Referral to GI if pain persists."
 
-    # Matches "reevaluation" or "re evaluation"
-    - "\\bre\\s?evaluation\\b"
+# Split note into sentences
+sentences = re.split(r"[.?!]\s+", note.strip())
 
-    # Matches phrases like "schedule follow-up", "schedule a follow-up"
-    - "\\bschedule (?:a )?follow-?up\\b"
+# Set similarity threshold (adjustable)
+threshold = 0.80  # Adjust threshold based on validation results
 
-    # Matches "follow-up appointment" or "follow up appointment"
-    - "\\bfollow-?up appointment\\b"
+# Analyze each sentence
+for sentence in sentences:
+    if sentence:  # Check sentence is not empty
+        sent_emb = get_embedding(sentence)
+        for label, label_emb in label_embeddings.items():
+            sim_score = cosine_similarity(
+                [sent_emb],
+                [label_emb]
+            )[0][0]
 
-    # Indicating revisit instructions explicitly
-    - "\\bcome back in\\b"
-    - "\\bsee us again\\b"
-    - "\\bmonitor in clinic\\b"
-    - "\\bcontinue care\\b"
-    - "\\bcheck back\\b"
-    - "\\bpatient to be seen again\\b"
-    - "\\bplanned reassessment\\b"
-    - "\\breturn if symptoms persist\\b"
-    - "\\bprn visit\\b"                  # "as needed visit"
-    - "\\bas needed visit\\b"
-    - "\\brepeat visit\\b"
-    - "\\brecheck required\\b"
-    - "\\bfollow-?up recommended\\b"
-    - "\\bclinic review\\b"
-    - "\\bto be reviewed\\b"
-    - "\\bfollow closely\\b"
-    - "\\bfollow regularly\\b"
-    - "\\bscheduled appointment\\b"
-    - "\\bcall if no improvement\\b"
-    - "\\brevisit advised\\b"
-
-  fuzzy_phrases:
-    # Informal or fuzzy matches for follow-up instructions
-    - "follow up"
-    - "follow-up"
-    - "f/u"
-    - "rtc"
-    - "rtc prn"
-    - "return to clinic"
-    - "schedule follow-up"
-    - "follow-up visit"
-    - "come back if needed"
-    - "re-check in clinic"
-    - "patient to follow up"
-    - "she may return"
-    - "return if symptoms persist"
-    - "follow-up recommended"
-    - "check in with doctor"
-    - "revisit clinic"
-    - "patient advised to return"
-    - "re-evaluation needed"
-    - "to follow up with provider"
-    - "contact office if needed"
-    - "call if no better"
-    - "clinic reassessment"
-    - "routine follow-up"
-    - "periodic evaluation"
-    - "follow closely"
-    - "come again for review"
-    - "check progress in clinic"
-    - "return visit advised"
-    - "future evaluation"
-
-referral:
-  regex_patterns:
-    # Explicitly "referral to" specialist
-    - "\\breferral to\\b"
-
-    # Matches "refer to", "referral to", "refer her to", "refer him to"
-    - "\\brefer(?:ral)?\\s+(?:to|her to|him to)\\b"
-
-    # Matches "will refer to", "will refer her to", "will refer him to"
-    - "\\bwill refer (?:her|him)?\\s+to\\b"
-
-    # Planned referral statement
-    - "\\bplan to refer\\b"
-
-    # Indicating specialist consultation
-    - "\\bconsult with\\b"
-
-    # Matches direct instruction to see certain specialist types or doctors
-    - "\\bsee (?:Dr\\.?|specialist|GI|OB/GYN|cardiology|orthopedics|neuro|psychiatry|oncology|urology|pediatrics|dermatology|radiology)\\b"
-
-    # Expressing the need for a consult explicitly
-    - "\\bneeds (?:a )?consult\\b"
-
-    # Transfer of patient's care
-    - "\\btransfer of care\\b"
-
-    # Referring actions clearly indicated
-    - "\\breferring to\\b"
-    - "\\breferred by\\b"
-    - "\\binterdisciplinary consult\\b"
-    - "\\breferral requested\\b"
-    - "\\brequest consult\\b"
-    - "\\breferral pending\\b"
-    - "\\barrange referral\\b"
-    - "\\bspecialist consultation\\b"
-    - "\\bpatient sent to\\b"
-    - "\\bappointment with specialist\\b"
-    - "\\bcoordinate with specialist\\b"
-    - "\\bexpert consultation\\b"
-    - "\\bforward to specialist\\b"
-    - "\\bsent to specialist\\b"
-    - "\\brequest specialist\\b"
-    - "\\breferral initiated\\b"
-
-  fuzzy_phrases:
-    # Informal, fuzzy, or OCR-error-friendly matches for referrals
-    - "referral to gi"
-    - "referral to ob/gyn"
-    - "referral to cardiologist"
-    - "refer her to dr"
-    - "refer to specialist"
-    - "consult with gi"
-    - "consult a specialist"
-    - "patient referred"
-    - "referral pending"
-    - "please refer to"
-    - "sending to cardiologist"
-    - "referring to ortho"
-    - "he was referred"
-    - "arranged referral"
-    - "they were sent to specialist"
-    - "recommended referral"
-    - "initiated consult"
-    - "sent to imaging center"
-    - "set up appointment with specialist"
-    - "recommended to see specialist"
-    - "forwarded to specialist"
-    - "patient sent for consultation"
-    - "arranging specialist opinion"
-    - "awaiting referral"
-    - "specialist review advised"
-    - "suggest consultation"
-    - "discuss with specialist"
-    - "seek expert opinion"
-    - "book appointment with specialist"
+            if sim_score >= threshold:
+                print(f"{label.upper()}: '{sentence}' (score: {sim_score:.2f})")
