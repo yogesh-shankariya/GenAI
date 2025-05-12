@@ -1,42 +1,35 @@
-import re
+import requests
+import json
 
-# Sample FAISS top 10 retrieved documents content (replace with your actual documents)
-top_10_documents = [
-    "Patient advised RTC prn.",
-    "Referral to cardiology for evaluation.",
-    "Schedule follow-up next month.",
-    "Refer patient to neurology immediately.",
-    "Patient recommended to consult with oncology.",
-    "Referral to GI specialist advised.",
-    "No referral required at this time.",
-    "Refer her to Dr. John Smith for assessment.",
-    "Follow-up advised.",
-    "Referral to orthopedics recommended."
-]
+# Load your JSON input file
+with open("your_input.json") as f:
+    data = json.load(f)
 
-# Comprehensive regex patterns for extracting referral targets
-referral_patterns = [
-    r"referral to ([^.]+)",
-    r"refer to ([^.]+)",
-    r"refer her to ([^.]+)",
-    r"refer him to ([^.]+)",
-    r"consult with ([^.]+)",
-    r"referring to ([^.]+)"
-]
+# Base API endpoint template
+BASE_URL = "https://ingestion.synthesisuat.awsdns.internal.das/api/storage/download?filePath={}&isDecrypt=true"
 
-# Extraction function using regex patterns
-def extract_referral_target(text):
-    targets = []
-    for pattern in referral_patterns:
-        matches = re.findall(pattern, text, re.IGNORECASE)
-        if matches:
-            targets.extend([match.strip() for match in matches])
-    return targets
+# Combine all chunk contents
+combined_xml = ""
 
-# Extract referral targets from top 10 retrieved documents
-for idx, doc_text in enumerate(top_10_documents, 1):
-    referral_targets = extract_referral_target(doc_text)
-    if referral_targets:
-        print(f"Document {idx}: '{doc_text}'")
-        for target in referral_targets:
-            print(f"  → Referral Target: {target}")
+# Iterate through each chunk
+for chunk in data.get("chunks", []):
+    chunk_path = chunk.get("chunk_url")
+    if not chunk_path:
+        continue
+
+    full_url = BASE_URL.format(chunk_path)
+
+    try:
+        response = requests.get(full_url, verify=False, timeout=15)
+        if response.status_code == 200:
+            combined_xml += response.text.strip() + "\n"
+        else:
+            print(f"Failed to download: {full_url} - Status {response.status_code}")
+    except Exception as e:
+        print(f"Error while fetching {full_url}: {str(e)}")
+
+# Save or print combined result
+with open("combined_output.xml", "w", encoding="utf-8") as f:
+    f.write(combined_xml)
+
+print("Download and merge completed.")
