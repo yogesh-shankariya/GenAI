@@ -1,35 +1,39 @@
+from fastapi import FastAPI, Request
+from pydantic import BaseModel
+from typing import List, Optional
 import requests
-import json
 
-# Load your JSON input file
-with open("your_input.json") as f:
-    data = json.load(f)
+app = FastAPI()
 
-# Base API endpoint template
+# Base URL to fetch the chunk content
 BASE_URL = "https://ingestion.synthesisuat.awsdns.internal.das/api/storage/download?filePath={}&isDecrypt=true"
 
-# Combine all chunk contents
-combined_xml = ""
+# Define input schema
+class Chunk(BaseModel):
+    loincd: Optional[str] = ""
+    loincd_desc: Optional[str] = ""
+    chunk_url: str
 
-# Iterate through each chunk
-for chunk in data.get("chunks", []):
-    chunk_path = chunk.get("chunk_url")
-    if not chunk_path:
-        continue
+class RequestModel(BaseModel):
+    trace_id: Optional[str] = ""
+    file_name: Optional[str] = ""
+    file_path: Optional[str] = ""
+    file_type: Optional[str] = ""
+    chunks: List[Chunk]
 
-    full_url = BASE_URL.format(chunk_path)
+@app.post("/referral")
+async def referral(input_data: RequestModel):
+    combined_xml = ""
 
-    try:
-        response = requests.get(full_url, verify=False, timeout=15)
-        if response.status_code == 200:
-            combined_xml += response.text.strip() + "\n"
-        else:
-            print(f"Failed to download: {full_url} - Status {response.status_code}")
-    except Exception as e:
-        print(f"Error while fetching {full_url}: {str(e)}")
+    for chunk in input_data.chunks:
+        full_url = BASE_URL.format(chunk.chunk_url)
+        try:
+            response = requests.get(full_url, verify=False, timeout=15)
+            if response.status_code == 200:
+                combined_xml += response.text.strip() + "\n"
+            else:
+                return {"error": f"Failed to fetch: {chunk.chunk_url}, Status: {response.status_code}"}
+        except Exception as e:
+            return {"error": f"Exception occurred while fetching {chunk.chunk_url}: {str(e)}"}
 
-# Save or print combined result
-with open("combined_output.xml", "w", encoding="utf-8") as f:
-    f.write(combined_xml)
-
-print("Download and merge completed.")
+    return combined_xml
