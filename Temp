@@ -1,40 +1,145 @@
 import os
-from openai import OpenAI
 import json
+from typing import Dict, List, Union
+from openai import OpenAI
 
 client = OpenAI()
 
-def load_json_context(json_names: list, base_dir: str = "../input_data/67648643"):
-    context = {}
+###############################################################################
+# 1. Utility ─ load JSON files given their names
+###############################################################################
+def load_json_context(json_names: List[str],
+                      base_dir: str = "../input_data/67648643") -> Dict[str, str]:
+    """
+    Read <name>.json files from *base_dir* and return a dictionary of their text
+    keyed by the original *json_name*.
+    """
+    ctx: Dict[str, str] = {}
     for name in json_names:
         file_path = os.path.join(base_dir, f"{name}.json")
         with open(file_path, "r", encoding="utf-8") as f:
-            context[name] = f.read()
-    return context
+            ctx[name] = f.read()
+    return ctx
 
-def process_user_query(query: str, system_prompt: str):
+
+###############################################################################
+# 2. STEP-1 ─ decide which JSONs (if any) are relevant to the user’s query
+###############################################################################
+IDENTIFY_JSON_SYSTEM_PROMPT = (
+    "You are an assistant that decides which clinical JSON documents are needed "
+    "to answer a user’s question. "
+    "• If the question can be answered from one or more JSONs, respond ONLY with "
+    "a JSON array of their file-stem names (e.g. [\"pharmacy\", \"denied_pharmacy\"]).\n"
+    "• If the question does NOT require any JSON, give a short conversational reply."
+)
+
+def process_user_query(query: str,
+                       sys_prompt: str = IDENTIFY_JSON_SYSTEM_PROMPT
+                       ) -> Union[Dict[str, str], Dict[str, str]]:
+    """
+    1. Ask the model to list relevant JSON names (or reply conversationally).
+    2. If a list is returned → load those JSONs and return their contents.
+    3. Otherwise → return the model’s conversational reply unchanged.
+    """
     messages = [
-        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": sys_prompt},
         {"role": "user", "content": query}
     ]
-
     result = client.chat.completions.create(
         model="gpt-4o-openai",
         messages=messages,
         temperature=0
     )
-
     reply = result.choices[0].message.content.strip()
 
+    # Try to treat reply as a list of JSON names
     try:
-        # Try to parse reply as JSON list
         json_list = json.loads(reply)
         if isinstance(json_list, list):
-            print("Loading content for JSONs:", json_list)
             return load_json_context(json_list)
-        else:
-            print("Unexpected format (not a list), response:", reply)
-            return {"response": reply}
     except json.JSONDecodeError:
-        print("No relevant JSONs, casual query response:")
-        return {"response": reply}
+        pass
+
+    # Fallback → no JSONs needed
+    return {"response": reply}
+
+
+###############################################################################
+# 3. STEP-2 ─ answer the question using ONLY the provided JSON context
+###############################################################################
+ANSWER_SYSTEM_PROMPT = (
+    "You are given a user query and a JSON object named *context* whose keys are "
+    "JSON file names and whose values are file contents. "
+    "Answer STRICTLY from this context; do not assume or draw on any other knowledge. "
+    "Return your reply as a JSON object: "
+    "{\"Answer\": <string>, \"source\": [<list of json file names you used>]}."
+)
+
+def answer_from_context(query: str,
+                        context: Dict[str, str],
+                        model: str = "gpt-4o-openai") -> Dict[str, Union[str, List[str]]]:
+    """
+    Use the supplied *context* to answer *query*.  
+    Return dict → {"Answer": <answer>, "source": [<json names>]}.
+    """
+    # Force the user query to request sources, per user requirement
+    user_query_with_source = f"{query.strip()} Provide source (list of json name) in the response."
+
+    # Pack everything into a single user-visible JSON payload
+    payload = {
+        "query": user_query_with_source,
+        "context": context           # full JSON-formatted evidence
+    }
+
+    messages = [
+        {"role": "system", "content": ANSWER_SYSTEM_PROMPT},
+        {"role": "user",   "content": json.dumps(payload, ensure_ascii=False)}
+    ]
+
+    result = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=0
+    )
+
+    raw = result.choices[0].message.content.strip()
+
+    # The model should already return the mandated structure; parse defensively
+    try:
+        structured = json.loads(raw)
+        if ("Answer" in structured) and ("source" in structured):
+            return structured
+    except json.JSONDecodeError:
+        pass
+
+    # If parsing fails, wrap whatever came back
+    return {"Answer": raw, "source": list(context.keys())}
+
+
+###############################################################################
+# 4. WRAPPER ─ full workflow for a single user query
+###############################################################################
+def handle_query(query: str) -> Dict[str, Union[str, List[str]]]:
+    """
+    End-to-end:
+    1. Decide if any JSONs are needed.
+    2. If yes, answer only from those JSONs.
+    3. If no, return the conversational reply and empty source list.
+    """
+    step1_output = process_user_query(query)
+
+    # Case A ─ conversational answer, no JSON required
+    if "response" in step1_output:
+        return {"Answer": step1_output["response"], "source": []}
+
+    # Case B ─ we have a context dict → answer from context
+    return answer_from_context(query, context=step1_output)
+
+
+###############################################################################
+# EXAMPLE
+###############################################################################
+if __name__ == "__main__":
+    question = "What are the instructions while taking medicines?"
+    response = handle_query(question)
+    print(json.dumps(response, indent=2, ensure_ascii=False))
