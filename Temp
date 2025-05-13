@@ -1,22 +1,103 @@
-async def generate_combined_xml(trace_id: str, req: ReferralRequest) -> str:
-    logger = logging.getLogger(__name__)
-    logger.info(f"{trace_id} - Starting referral processing")
+import os
+import json
+from openai import OpenAI
 
-    combined_xml = ""
-    for chunk in req.chunks:
-        if chunk.loincd != "42349-1":
-            logger.info(f"{trace_id} - Skipping chunk with loincd: {chunk.loincd}")
-            continue  # Skip if loincd is not "42349-1"
+###############################################################################
+# 1. Core loader
+###############################################################################
+def load_json_context(json_names, base_dir="./json_data"):
+    """
+    Load multiple JSON files from *base_dir* and return a dict
+    mapping {json_name: file_content_as_string}.
 
-        full_url = BASE_URL.format(chunk.chunk_url)
-        try:
-            response = requests.get(full_url, verify=False, timeout=15)
-            if response.status_code == 200:
-                combined_xml += response.text.strip() + "\n"
-                logger.info(f"{trace_id} - Successfully fetched: {chunk.chunk_url}")
-            else:
-                logger.warning(f"{trace_id} - Failed: {chunk.chunk_url}, Status: {response.status_code}")
-        except Exception as e:
-            logger.error(f"{trace_id} - Exception fetching {chunk.chunk_url}: {str(e)}")
+    Parameters
+    ----------
+    json_names : list[str]
+        E.g. ["pharmacy", "denied_pharmacy"]
+    base_dir : str
+        Folder containing <json_name>.json files.
 
-    return combined_xml
+    Returns
+    -------
+    dict
+        { "pharmacy": "<file text>", "denied_pharmacy": "<file text>", ... }
+    """
+    context = {}
+    for name in json_names:
+        file_path = os.path.join(base_dir, f"{name}.json")
+        with open(file_path, "r", encoding="utf-8") as f:
+            context[name] = f.read()
+    return context
+
+
+###############################################################################
+# 2. OpenAI function-calling setup
+###############################################################################
+client = OpenAI()
+
+tools = [{
+    "type": "function",
+    "name": "load_json_context",
+    "description": "Load one or more healthcare JSON files and return their raw contents.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "json_names": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of JSON names (without .json extension) to load."
+            }
+        },
+        "required": ["json_names"],
+        "additionalProperties": False
+    },
+    "strict": True
+}]
+
+###############################################################################
+# 3. Conversation loop (example)
+###############################################################################
+def ask(question):
+    """
+    Minimal loop:
+      • Send user question
+      • Let model request JSON
+      • Load JSON & send back
+      • Return final answer
+    """
+    messages = [{"role": "user", "content": question}]
+
+    # FIRST CALL – model decides which JSON it wants
+    resp = client.responses.create(
+        model="gpt-4o-mini",
+        input=messages,
+        tools=tools,
+    )
+
+    tool_call = resp.output[0]          # model's first (and only) function call
+    args      = json.loads(tool_call.arguments)
+    json_ctx  = load_json_context(**args)
+
+    # append function call + its result
+    messages.append(tool_call)
+    messages.append({
+        "type": "function_call_output",
+        "call_id": tool_call.call_id,
+        "output": json.dumps(json_ctx)
+    })
+
+    # SECOND CALL – model answers with that context
+    final_resp = client.responses.create(
+        model="gpt-4o-mini",
+        input=messages,
+        tools=tools,
+    )
+    return final_resp.output_text
+
+
+###############################################################################
+# Example usage
+###############################################################################
+if __name__ == "__main__":
+    user_q = "Is the prescription for LISINOP/HCTZ approved or denied?"
+    print(ask(user_q))
