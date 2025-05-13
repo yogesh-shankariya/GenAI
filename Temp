@@ -1,27 +1,10 @@
 import os
-import json
 from openai import OpenAI
+import json
 
-###############################################################################
-# 1. Core loader
-###############################################################################
-def load_json_context(json_names, base_dir="./json_data"):
-    """
-    Load multiple JSON files from *base_dir* and return a dict
-    mapping {json_name: file_content_as_string}.
+client = OpenAI()
 
-    Parameters
-    ----------
-    json_names : list[str]
-        E.g. ["pharmacy", "denied_pharmacy"]
-    base_dir : str
-        Folder containing <json_name>.json files.
-
-    Returns
-    -------
-    dict
-        { "pharmacy": "<file text>", "denied_pharmacy": "<file text>", ... }
-    """
+def load_json_context(json_names: list, base_dir: str = "../input_data/67648643"):
     context = {}
     for name in json_names:
         file_path = os.path.join(base_dir, f"{name}.json")
@@ -29,75 +12,29 @@ def load_json_context(json_names, base_dir="./json_data"):
             context[name] = f.read()
     return context
 
+def process_user_query(query: str, system_prompt: str):
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": query}
+    ]
 
-###############################################################################
-# 2. OpenAI function-calling setup
-###############################################################################
-client = OpenAI()
-
-tools = [{
-    "type": "function",
-    "name": "load_json_context",
-    "description": "Load one or more healthcare JSON files and return their raw contents.",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "json_names": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "List of JSON names (without .json extension) to load."
-            }
-        },
-        "required": ["json_names"],
-        "additionalProperties": False
-    },
-    "strict": True
-}]
-
-###############################################################################
-# 3. Conversation loop (example)
-###############################################################################
-def ask(question):
-    """
-    Minimal loop:
-      • Send user question
-      • Let model request JSON
-      • Load JSON & send back
-      • Return final answer
-    """
-    messages = [{"role": "user", "content": question}]
-
-    # FIRST CALL – model decides which JSON it wants
-    resp = client.responses.create(
-        model="gpt-4o-mini",
-        input=messages,
-        tools=tools,
+    result = client.chat.completions.create(
+        model="gpt-4o-openai",
+        messages=messages,
+        temperature=0
     )
 
-    tool_call = resp.output[0]          # model's first (and only) function call
-    args      = json.loads(tool_call.arguments)
-    json_ctx  = load_json_context(**args)
+    reply = result.choices[0].message.content.strip()
 
-    # append function call + its result
-    messages.append(tool_call)
-    messages.append({
-        "type": "function_call_output",
-        "call_id": tool_call.call_id,
-        "output": json.dumps(json_ctx)
-    })
-
-    # SECOND CALL – model answers with that context
-    final_resp = client.responses.create(
-        model="gpt-4o-mini",
-        input=messages,
-        tools=tools,
-    )
-    return final_resp.output_text
-
-
-###############################################################################
-# Example usage
-###############################################################################
-if __name__ == "__main__":
-    user_q = "Is the prescription for LISINOP/HCTZ approved or denied?"
-    print(ask(user_q))
+    try:
+        # Try to parse reply as JSON list
+        json_list = json.loads(reply)
+        if isinstance(json_list, list):
+            print("Loading content for JSONs:", json_list)
+            return load_json_context(json_list)
+        else:
+            print("Unexpected format (not a list), response:", reply)
+            return {"response": reply}
+    except json.JSONDecodeError:
+        print("No relevant JSONs, casual query response:")
+        return {"response": reply}
