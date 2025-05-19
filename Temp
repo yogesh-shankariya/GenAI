@@ -1,59 +1,41 @@
-import streamlit as st
-import subprocess
-import json
+import tiktoken
 
-# ---------- Page configuration ----------
-st.set_page_config(page_title="Hybrid MRR", layout="wide")
+def count_tokens(messages, model="gpt-4"):
+    # Get the appropriate encoding for the model
+    try:
+        encoding = tiktoken.encoding_for_model(model)
+    except KeyError:
+        encoding = tiktoken.get_encoding("cl100k_base")
 
-# ---------- Sidebar (left – small) ----------
-with st.sidebar:
-    st.title("🩺 Hybrid MRR")
-    st.markdown("### 📂 Input Details")
-    file_path = st.text_input("File Path")
-    session_id = st.text_input("Session ID (e.g., patient6)")
-    st.markdown("---")
-    st.markdown(
-        "1. Fill **File Path** and **Session ID** here.\n"
-        "2. Ask your question on the right.\n"
-        "3. Click **Get Answer**."
-    )
-
-# ---------- Main panel (right – large) ----------
-st.markdown("## 🤖 Ask a Medical Question")
-question = st.text_area("Enter your question:", height=150)
-submit = st.button("Get Answer")
-
-if submit:
-    if not (file_path and session_id and question):
-        st.warning("Please provide values for *File Path*, *Session ID* and *Question*.")
+    # Set tokens per message based on the model
+    if model == "gpt-3.5-turbo":
+        tokens_per_message = 4
+        tokens_per_name = -1
+    elif model == "gpt-4":
+        tokens_per_message = 3
+        tokens_per_name = 1
     else:
-        # Build the CLI command that was previously run in the terminal
-        # Example: python main2.py patient6 --file_path <path> "was my latest medications?"
-        command = [
-            "python",
-            "main2.py",
-            session_id,
-            "--file_path",
-            file_path,
-            question,
-        ]
+        raise ValueError(f"Model '{model}' not supported.")
 
-        try:
-            # Execute the command and capture stdout/stderr
-            result = subprocess.run(command, capture_output=True, text=True)
-            output = result.stdout.strip()
-            error = result.stderr.strip()
+    total_tokens = 0
+    for msg in messages:
+        total_tokens += tokens_per_message
+        for key, value in msg.items():
+            total_tokens += len(encoding.encode(value))
+            if key == "name":
+                total_tokens += tokens_per_name
 
-            if result.returncode == 0:
-                # Attempt to parse JSON; fall back to raw text if parsing fails
-                try:
-                    parsed = json.loads(output)
-                    st.success("Answer:")
-                    st.json(parsed)
-                except json.JSONDecodeError:
-                    st.success("Answer:")
-                    st.write(output)
-            else:
-                st.error(f"Backend error (return code {result.returncode}):\n{error}")
-        except Exception as exc:
-            st.error(f"Exception occurred while running backend script:\n{exc}")
+    # Add tokens required for priming
+    total_tokens += 3
+    return total_tokens
+
+# Example usage:
+if __name__ == "__main__":
+    messages = [
+        {"role": "system", "content": "You're a helpful medical assistant."},
+        {"role": "user", "content": "What are my latest medications?"},
+        {"role": "assistant", "content": "Your latest medications include Aspirin and Metformin."}
+    ]
+
+    total = count_tokens(messages, model="gpt-4")
+    print(f"Total tokens used: {total}")
