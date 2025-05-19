@@ -1,6 +1,59 @@
-import os
-from dotenv import load_dotenv
+import streamlit as st
+import subprocess
+import json
 
-def load_env():
-    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.env')
-    load_dotenv(dotenv_path=env_path)
+# ---------- Page configuration ----------
+st.set_page_config(page_title="Hybrid MRR", layout="wide")
+
+# ---------- Sidebar (left – small) ----------
+with st.sidebar:
+    st.title("🩺 Hybrid MRR")
+    st.markdown("### 📂 Input Details")
+    file_path = st.text_input("File Path")
+    session_id = st.text_input("Session ID (e.g., patient6)")
+    st.markdown("---")
+    st.markdown(
+        "1. Fill **File Path** and **Session ID** here.\n"
+        "2. Ask your question on the right.\n"
+        "3. Click **Get Answer**."
+    )
+
+# ---------- Main panel (right – large) ----------
+st.markdown("## 🤖 Ask a Medical Question")
+question = st.text_area("Enter your question:", height=150)
+submit = st.button("Get Answer")
+
+if submit:
+    if not (file_path and session_id and question):
+        st.warning("Please provide values for *File Path*, *Session ID* and *Question*.")
+    else:
+        # Build the CLI command that was previously run in the terminal
+        # Example: python main2.py patient6 --file_path <path> "was my latest medications?"
+        command = [
+            "python",
+            "main2.py",
+            session_id,
+            "--file_path",
+            file_path,
+            question,
+        ]
+
+        try:
+            # Execute the command and capture stdout/stderr
+            result = subprocess.run(command, capture_output=True, text=True)
+            output = result.stdout.strip()
+            error = result.stderr.strip()
+
+            if result.returncode == 0:
+                # Attempt to parse JSON; fall back to raw text if parsing fails
+                try:
+                    parsed = json.loads(output)
+                    st.success("Answer:")
+                    st.json(parsed)
+                except json.JSONDecodeError:
+                    st.success("Answer:")
+                    st.write(output)
+            else:
+                st.error(f"Backend error (return code {result.returncode}):\n{error}")
+        except Exception as exc:
+            st.error(f"Exception occurred while running backend script:\n{exc}")
