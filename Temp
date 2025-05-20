@@ -1,50 +1,127 @@
-To measure the time taken to execute a function in Python, you can use the `time` module. Here's how to do it:
+Below is a **drop-in Python snippet** that shows
 
-### Method 1: Using `time.time()`
-
-```python
-import time
-
-start_time = time.time()
-your_function()  # Replace with your actual function call
-end_time = time.time()
-
-execution_time = end_time - start_time
-print(f"Execution time: {execution_time:.4f} seconds")
-```
-
-### Method 2: Using `time.perf_counter()` (more precise)
+1. **How to pass the YAML-style prompt** you drafted to GPT-4o
+2. **A resilient wrapper** (`get_structured_answer`) that keeps calling the
+   model until it returns valid JSON (with a hard stop after `max_retries`)
 
 ```python
+import json
 import time
+from openai import OpenAI, RateLimitError, APIError
 
-start = time.perf_counter()
-your_function()
-end = time.perf_counter()
+# ---------------------------------------------------------------------
+# 1️⃣  Your YAML-style prompt template (system + user parts)
+# ---------------------------------------------------------------------
+PROMPT_SYSTEM = """
+You are a JSON re-formatter for medical-chart answers.
+Convert the supplied answer text (which contains “Evidence: [Page N]”
+markers) into a JSON object that follows the *exact* schema below.
+Requirements:
+1. Return **only** JSON – no markdown, no comments, no extra text.
+2. In the "data.content" field:
+     • Keep the original wording and line-breaks.
+     • Delete every “Evidence: [Page N]” substring.
+3. Build "references" as a list of objects with keys:
+     • "Evidence"  – short section title you infer from the answer
+                     (e.g. "Medications", "Lab_Report").
+     • "Page"      – the page number associated with that evidence.
+   If a title appears on multiple pages, include one object per page.
+4. Preserve key order: status → data → content → references.
+5. Use the literal string "200" for status.
+6. The final output **must parse** with standard JSON parsers.
+"""
 
-print(f"Execution time: {end - start:.4f} seconds")
+PROMPT_USER_TEMPLATE = """
+Transform the following answer text into the required JSON format.
+
+--- BEGIN ANSWER TEXT ---
+{answer_text}
+---  END ANSWER TEXT  ---
+
+## Example of the exact structure you must return
+{{
+  "status": "200",
+  "data": {{
+    "content": "Metformin HCl - take 1 tablet by oral route 2 times every day with morning and evening meals.\\nFARXIGA - take 1 tablet by oral route every day in the morning.\\n..."
+  }},
+  "references": [
+    {{ "Evidence": "Medications", "Page": 7 }},
+    {{ "Evidence": "Medications", "Page": 8 }},
+    {{ "Evidence": "Lab_Report", "Page": 19 }}
+  ]
+}}
+
+Return **only** JSON that matches this structure.
+"""
+
+# ---------------------------------------------------------------------
+# 2️⃣  Helper: call the model once
+# ---------------------------------------------------------------------
+client = OpenAI()               # Make sure OPENAI_API_KEY is set in env
+
+def _call_openai(messages: list[str | dict[str, str]],
+                 model: str = "gpt-4o-mini",  # or gpt-4o if enabled
+                 temperature: float = 0.0) -> str:
+    """
+    Single chat completion call; returns `content` string.
+    """
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=temperature,
+    )
+    return response.choices[0].message.content.strip()
+
+# ---------------------------------------------------------------------
+# 3️⃣  Main wrapper: keep trying until JSON is returned or retries exhausted
+# ---------------------------------------------------------------------
+def get_structured_answer(answer_text: str,
+                          max_retries: int = 3,
+                          backoff_sec: float = 2.0) -> dict:
+    """
+    Call GPT-4o with the YAML prompt and return the parsed JSON object.
+    Retries until a valid JSON is obtained or max_retries reached.
+    """
+    user_prompt = PROMPT_USER_TEMPLATE.format(answer_text=answer_text)
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            messages = [
+                {"role": "system", "content": PROMPT_SYSTEM},
+                {"role": "user",   "content": user_prompt}
+            ]
+            raw = _call_openai(messages)
+            parsed = json.loads(raw)          # ⬅️  validate JSON
+            return parsed                     # success!
+        except (json.JSONDecodeError, ValueError):
+            print(f"[Attempt {attempt}] Model returned non-JSON. Retrying…")
+        except (RateLimitError, APIError) as e:
+            print(f"[Attempt {attempt}] API error: {e}. Retrying…")
+        time.sleep(backoff_sec)
+
+    raise RuntimeError(f"Failed to obtain valid JSON after {max_retries} tries.")
+
+# ---------------------------------------------------------------------
+# 🔍 Example usage
+# ---------------------------------------------------------------------
+if __name__ == "__main__":
+    raw_answer_from_rag = """
+    Medications and Instructions:
+    Metformin HCl – take 1 tablet by oral route 2 times every day with morning and evening meals. Evidence: [Page 7]
+    FARXIGA – take 1 tablet by oral route every day in the morning. Evidence: [Page 7]
+    ...
+    """
+    structured = get_structured_answer(raw_answer_from_rag)
+    print(json.dumps(structured, indent=2))
 ```
 
-### Method 3: Using a decorator for reusability
+### What the code does
 
-```python
-import time
+| Section                         | Purpose                                                                                                                                                                   |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1️⃣ Prompt**                  | Stores the system instructions and the user template in plain strings; the YAML formatting is irrelevant to the API – they’re just text.                                  |
+| **2️⃣ \_call\_openai**          | Thin wrapper over `client.chat.completions.create`.                                                                                                                       |
+| **3️⃣ get\_structured\_answer** | Loops up to `max_retries`, calling GPT-4o each time. If the returned string parses with `json.loads`, it exits; otherwise it waits `backoff_sec` seconds and tries again. |
+| **Example**                     | Shows end-to-end usage with a dummy RAG answer.                                                                                                                           |
 
-def measure_time(func):
-    def wrapper(*args, **kwargs):
-        start = time.perf_counter()
-        result = func(*args, **kwargs)
-        end = time.perf_counter()
-        print(f"{func.__name__} executed in {end - start:.4f} seconds")
-        return result
-    return wrapper
-
-@measure_time
-def your_function():
-    # Your code here
-    pass
-
-your_function()
-```
-
-Let me know if you want to log it or store it somewhere instead of printing.
+You can tweak `max_retries`, `temperature`, or add exponential back-off as needed.
