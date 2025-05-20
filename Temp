@@ -1,127 +1,47 @@
-Below is a **drop-in Python snippet** that shows
+# === Prompt template for post-processing the RAG answer ===
+# Feed this template (with {{answer_text}} substituted) to a *second*
+# LLM call.  The model must return a single, valid JSON object in the
+# exact structure shown in the example.
 
-1. **How to pass the YAML-style prompt** you drafted to GPT-4o
-2. **A resilient wrapper** (`get_structured_answer`) that keeps calling the
-   model until it returns valid JSON (with a hard stop after `max_retries`)
+# --------------------------------------------------------------------
+system: |
+  You are a JSON re-formatter for medical-chart answers.
+  Convert the supplied answer text (which contains “Evidence: [Page N]”
+  markers) into a JSON object that follows the *exact* schema below.
+  Requirements:
+  1. Return **only** JSON – no markdown, no comments, no extra text.
+  2. In the "data.content" field:
+       • Keep the original wording and line-breaks.
+       • Delete every “Evidence: [Page N]” substring.
+  3. Build "references" as a list of objects with keys:
+       • "Evidence"  – short section title you infer from the answer
+                       (e.g. "Medications", "Lab_Report").
+       • "Page"      – the page number associated with that evidence.
+     If a title appears on multiple pages, include one object per page.
+  4. Preserve key order: status → data → content → references.
+  5. Use the literal string "200" for status.
+  6. The final output **must parse** with standard JSON parsers.
 
-```python
-import json
-import time
-from openai import OpenAI, RateLimitError, APIError
+user: |
+  Transform the following answer text into the required JSON format.
 
-# ---------------------------------------------------------------------
-# 1️⃣  Your YAML-style prompt template (system + user parts)
-# ---------------------------------------------------------------------
-PROMPT_SYSTEM = """
-You are a JSON re-formatter for medical-chart answers.
-Convert the supplied answer text (which contains “Evidence: [Page N]”
-markers) into a JSON object that follows the *exact* schema below.
-Requirements:
-1. Return **only** JSON – no markdown, no comments, no extra text.
-2. In the "data.content" field:
-     • Keep the original wording and line-breaks.
-     • Delete every “Evidence: [Page N]” substring.
-3. Build "references" as a list of objects with keys:
-     • "Evidence"  – short section title you infer from the answer
-                     (e.g. "Medications", "Lab_Report").
-     • "Page"      – the page number associated with that evidence.
-   If a title appears on multiple pages, include one object per page.
-4. Preserve key order: status → data → content → references.
-5. Use the literal string "200" for status.
-6. The final output **must parse** with standard JSON parsers.
-"""
+  --- BEGIN ANSWER TEXT ---
+  {{answer_text}}
+  ---  END ANSWER TEXT  ---
 
-PROMPT_USER_TEMPLATE = """
-Transform the following answer text into the required JSON format.
+  ## Example of the **exact structure** you must return
+  {
+    "status": "200",
+    "data": {
+      "content": "Metformin HCl - take 1 tablet by oral route 2 times every day with morning and evening meals.\nFARXIGA - take 1 tablet by oral route every day in the morning.\nLANTUS SOLOSTAR - inject 20u twice daily as directed for diabetes.\nHydroxyzine HCl - take 1 tablet by oral route 3 times every day as needed.\nTriamcinolone acetonide - apply by topical route every day a thin layer to the affected area(s).\nCONTOUR NEXT TEST STRIP - take 1 by capillary route every day.\nA1C level is 8.6, with a reference range of 4.0-5.9%\nLipid Panel results\nCholesterol Total: 187 mg/dL (Reference Range: 100-199 mg/dL)\nHDL Cholesterol: 50 mg/dL (Reference Range: >39 mg/dL)\nLDL Cholesterol Calc (NIH): 115 mg/dL (Out of Range, Reference Range: 0-99 mg/dL)\nTriglycerides: 124 mg/dL (Reference Range: 0-149 mg/dL)\nVLDL Cholesterol Cal: 22 mg/dL (Reference Range: 5-40 mg/dL)"
+    },
+    "references": [
+      { "Evidence": "Medications", "Page": 7 },
+      { "Evidence": "Medications", "Page": 8 },
+      { "Evidence": "Medications", "Page": 9 },
+      { "Evidence": "Lab_Report", "Page": 19 },
+      { "Evidence": "Lab_Report", "Page": 29 }
+    ]
+  }
 
---- BEGIN ANSWER TEXT ---
-{answer_text}
----  END ANSWER TEXT  ---
-
-## Example of the exact structure you must return
-{{
-  "status": "200",
-  "data": {{
-    "content": "Metformin HCl - take 1 tablet by oral route 2 times every day with morning and evening meals.\\nFARXIGA - take 1 tablet by oral route every day in the morning.\\n..."
-  }},
-  "references": [
-    {{ "Evidence": "Medications", "Page": 7 }},
-    {{ "Evidence": "Medications", "Page": 8 }},
-    {{ "Evidence": "Lab_Report", "Page": 19 }}
-  ]
-}}
-
-Return **only** JSON that matches this structure.
-"""
-
-# ---------------------------------------------------------------------
-# 2️⃣  Helper: call the model once
-# ---------------------------------------------------------------------
-client = OpenAI()               # Make sure OPENAI_API_KEY is set in env
-
-def _call_openai(messages: list[str | dict[str, str]],
-                 model: str = "gpt-4o-mini",  # or gpt-4o if enabled
-                 temperature: float = 0.0) -> str:
-    """
-    Single chat completion call; returns `content` string.
-    """
-    response = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        temperature=temperature,
-    )
-    return response.choices[0].message.content.strip()
-
-# ---------------------------------------------------------------------
-# 3️⃣  Main wrapper: keep trying until JSON is returned or retries exhausted
-# ---------------------------------------------------------------------
-def get_structured_answer(answer_text: str,
-                          max_retries: int = 3,
-                          backoff_sec: float = 2.0) -> dict:
-    """
-    Call GPT-4o with the YAML prompt and return the parsed JSON object.
-    Retries until a valid JSON is obtained or max_retries reached.
-    """
-    user_prompt = PROMPT_USER_TEMPLATE.format(answer_text=answer_text)
-
-    for attempt in range(1, max_retries + 1):
-        try:
-            messages = [
-                {"role": "system", "content": PROMPT_SYSTEM},
-                {"role": "user",   "content": user_prompt}
-            ]
-            raw = _call_openai(messages)
-            parsed = json.loads(raw)          # ⬅️  validate JSON
-            return parsed                     # success!
-        except (json.JSONDecodeError, ValueError):
-            print(f"[Attempt {attempt}] Model returned non-JSON. Retrying…")
-        except (RateLimitError, APIError) as e:
-            print(f"[Attempt {attempt}] API error: {e}. Retrying…")
-        time.sleep(backoff_sec)
-
-    raise RuntimeError(f"Failed to obtain valid JSON after {max_retries} tries.")
-
-# ---------------------------------------------------------------------
-# 🔍 Example usage
-# ---------------------------------------------------------------------
-if __name__ == "__main__":
-    raw_answer_from_rag = """
-    Medications and Instructions:
-    Metformin HCl – take 1 tablet by oral route 2 times every day with morning and evening meals. Evidence: [Page 7]
-    FARXIGA – take 1 tablet by oral route every day in the morning. Evidence: [Page 7]
-    ...
-    """
-    structured = get_structured_answer(raw_answer_from_rag)
-    print(json.dumps(structured, indent=2))
-```
-
-### What the code does
-
-| Section                         | Purpose                                                                                                                                                                   |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **1️⃣ Prompt**                  | Stores the system instructions and the user template in plain strings; the YAML formatting is irrelevant to the API – they’re just text.                                  |
-| **2️⃣ \_call\_openai**          | Thin wrapper over `client.chat.completions.create`.                                                                                                                       |
-| **3️⃣ get\_structured\_answer** | Loops up to `max_retries`, calling GPT-4o each time. If the returned string parses with `json.loads`, it exits; otherwise it waits `backoff_sec` seconds and tries again. |
-| **Example**                     | Shows end-to-end usage with a dummy RAG answer.                                                                                                                           |
-
-You can tweak `max_retries`, `temperature`, or add exponential back-off as needed.
+  **Return only JSON that matches this structure.**
