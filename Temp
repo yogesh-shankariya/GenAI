@@ -1,13 +1,11 @@
-def move_references_inside_data(response: dict) -> dict:
-    """
-    Moves 'references' inside the 'data' field of the given JSON response.
-
-    Args:
-        response (dict): The original JSON response with 'status', 'data', and 'references'.
-
-    Returns:
-        dict: Updated response with 'references' moved inside 'data'.
-    """
-    if 'data' in response and 'references' in response:
-        response['data']['references'] = response.pop('references')
-    return response
+messages = [
+    {
+        "role": "system",
+        "content": (
+            "You are a helpful assistant. You will be given a medical chart and you will be asked questions based on the same.\n\n"
+            "Here is the medical chart:\n{file_content}\n\n"
+            "You must answer strictly based on the provided context. Do not use any external knowledge or assumptions.\n"
+            "If you do not find the answer in the provided context, respond with: 'Information is not available.'"
+        )
+    }
+]
