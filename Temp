@@ -1,11 +1,79 @@
-messages = [
-    {
-        "role": "system",
-        "content": (
-            "You are a helpful assistant. You will be given a medical chart and you will be asked questions based on the same.\n\n"
-            "Here is the medical chart:\n{file_content}\n\n"
-            "You must answer strictly based on the provided context. Do not use any external knowledge or assumptions.\n"
-            "If you do not find the answer in the provided context, respond with: 'Information is not available.'"
-        )
+import os
+import pandas as pd
+import mlflow
+from mlflow.metrics.genai import faithfulness, relevance
+import openai
+
+# -----------------------------🔑 SET API KEY -----------------------------
+# Replace with your actual OpenAI-compatible endpoint and key
+os.environ["OPENAI_API_KEY"]  = "your_openai_key_here"
+os.environ["OPENAI_API_BASE"] = "https://your-base-url.com/v1"
+os.environ["OPENAI_API_TYPE"] = "openai"  # Keep this unless using Azure
+
+# Optional: Also set in OpenAI SDK if you use it elsewhere
+openai.api_key  = os.environ["OPENAI_API_KEY"]
+openai.base_url = os.environ["OPENAI_API_BASE"]
+
+# -----------------------------📏 BUILD METRICS -----------------------------
+MODEL_ID = "openai:/gpt-4o-openai"
+
+faith_metric    = faithfulness(model=MODEL_ID)
+relevance_metric = relevance(model=MODEL_ID)
+
+# -----------------------------🔍 DUMMY INPUT -----------------------------
+context = (
+    "MLflow is an open-source platform to manage the ML lifecycle, "
+    "including experimentation, reproducibility, deployment, and a central model registry. "
+    "It was created by Databricks."
+)
+
+question = "What is MLflow used for?"
+answer   = "MLflow is a tool for managing machine learning experiments and deployments."
+
+# -----------------------------🚀 EVALUATION FUNCTION -----------------------------
+def evaluate_rag_sample(context: str, question: str, answer: str) -> dict:
+    batch = pd.DataFrame({
+        "inputs":  [question],
+        "outputs": [answer],
+        "context": [context]
+    })
+
+    dummy_model = lambda df: df["outputs"]
+
+    result = mlflow.evaluate(
+        model=dummy_model,
+        data=batch,
+        model_type="question-answering",
+        evaluators="default",
+        predictions="outputs",
+        evaluator_config={
+            "col_mapping": {
+                "inputs": "inputs",
+                "context": "context",
+            }
+        },
+        extra_metrics=[faith_metric, relevance_metric, mlflow.metrics.latency()]
+    )
+
+    row = result.tables["eval_results_table"].iloc[0]
+    return {
+        "faithfulness": {
+            "score": int(row["faithfulness/v1/score"]),
+            "justification": row["faithfulness/v1/justification"]
+        },
+        "relevance": {
+            "score": int(row["relevance/v1/score"]),
+            "justification": row["relevance/v1/justification"]
+        },
+        "latency": float(row["latency"])
     }
-]
+
+# -----------------------------🏁 RUN -----------------------------
+if __name__ == "__main__":
+    scores = evaluate_rag_sample(context, question, answer)
+    print("\n=== Evaluation ===")
+    print(f"Faithfulness Score   : {scores['faithfulness']['score']}")
+    print(f"Faithfulness Reason  : {scores['faithfulness']['justification']}")
+    print(f"Relevance Score      : {scores['relevance']['score']}")
+    print(f"Relevance Reason     : {scores['relevance']['justification']}")
+    print(f"Latency (seconds)    : {scores['latency']:.2f}")
