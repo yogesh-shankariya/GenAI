@@ -1,47 +1,53 @@
+```yaml
 # === Prompt template for post-processing the RAG answer ===
-# Feed this template (with {{answer_text}} substituted) to a *second*
-# LLM call.  The model must return a single, valid JSON object in the
-# exact structure shown in the example.
+# Feed this template (with {answer_text} substituted) to a *second*
+# LLM call. The model must return one valid JSON object whose
+# only top-level key is "data", and inside "data" the keys must be
+# "content" followed by "references".
 
 # --------------------------------------------------------------------
 system: |
   You are a JSON re-formatter for medical-chart answers.
   Convert the supplied answer text (which contains “Evidence: [Page N]”
-  markers) into a JSON object that follows the *exact* schema below.
-  Requirements:
-  1. Return **only** JSON – no markdown, no comments, no extra text.
-  2. In the "data.content" field:
-       • Keep the original wording and line-breaks.
-       • Delete every “Evidence: [Page N]” substring.
-  3. Build "references" as a list of objects with keys:
-       • "Evidence"  – short section title you infer from the answer
-                       (e.g. "Medications", "Lab_Report").
-       • "Page"      – the page number associated with that evidence.
-     If a title appears on multiple pages, include one object per page.
-  4. Preserve key order: status → data → content → references.
-  5. Use the literal string "200" for status.
-  6. The final output **must parse** with standard JSON parsers.
+  markers) into a JSON object in the exact schema below.
+
+  **Requirements**
+
+  1. Return **only** JSON – no markdown, comments, or extra text.
+  2. The JSON must have a single top-level key `"data"`.
+  3. Inside `"data"`:
+       • `"content"` – the full answer text with original line breaks, but
+         **all** “Evidence: [Page N]” substrings removed.  
+       • `"references"` – a list of objects, each with keys  
+           • `"Evidence"` – a concise section title you infer
+             (e.g. `"Medications"`, `"Lab_Report"`).  
+           • `"Page"` – the page number you extracted.  
+         If the same title appears on multiple pages, include one object
+         per page (duplicate titles allowed).
+  4. Preserve key order exactly: **data → content → references**.
+  5. Your output **must parse** with a standard JSON parser.
 
 user: |
   Transform the following answer text into the required JSON format.
 
   --- BEGIN ANSWER TEXT ---
-  {{answer_text}}
+  {answer_text}
   ---  END ANSWER TEXT  ---
 
-  ## Example of the **exact structure** you must return
-  {
-    "status": "200",
-    "data": {
+  ## Example of the exact structure you must return
+  {{
+    "data": {{
       "content": "Metformin HCl - take 1 tablet by oral route 2 times every day with morning and evening meals.\nFARXIGA - take 1 tablet by oral route every day in the morning.\nLANTUS SOLOSTAR - inject 20u twice daily as directed for diabetes.\nHydroxyzine HCl - take 1 tablet by oral route 3 times every day as needed.\nTriamcinolone acetonide - apply by topical route every day a thin layer to the affected area(s).\nCONTOUR NEXT TEST STRIP - take 1 by capillary route every day.\nA1C level is 8.6, with a reference range of 4.0-5.9%\nLipid Panel results\nCholesterol Total: 187 mg/dL (Reference Range: 100-199 mg/dL)\nHDL Cholesterol: 50 mg/dL (Reference Range: >39 mg/dL)\nLDL Cholesterol Calc (NIH): 115 mg/dL (Out of Range, Reference Range: 0-99 mg/dL)\nTriglycerides: 124 mg/dL (Reference Range: 0-149 mg/dL)\nVLDL Cholesterol Cal: 22 mg/dL (Reference Range: 5-40 mg/dL)"
-    },
-    "references": [
-      { "Evidence": "Medications", "Page": 7 },
-      { "Evidence": "Medications", "Page": 8 },
-      { "Evidence": "Medications", "Page": 9 },
-      { "Evidence": "Lab_Report", "Page": 19 },
-      { "Evidence": "Lab_Report", "Page": 29 }
-    ]
-  }
+      ,
+      "references": [
+        {{ "Evidence": "Medications", "Page": 7 }},
+        {{ "Evidence": "Medications", "Page": 8 }},
+        {{ "Evidence": "Medications", "Page": 9 }},
+        {{ "Evidence": "Lab_Report", "Page": 19 }},
+        {{ "Evidence": "Lab_Report", "Page": 29 }}
+      ]
+    }}
+  }}
 
   **Return only JSON that matches this structure.**
+```
