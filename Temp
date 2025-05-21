@@ -1,53 +1,13 @@
-```yaml
-# === Prompt template for post-processing the RAG answer ===
-# Feed this template (with {answer_text} substituted) to a *second*
-# LLM call. The model must return one valid JSON object whose
-# only top-level key is "data", and inside "data" the keys must be
-# "content" followed by "references".
+def move_references_inside_data(response: dict) -> dict:
+    """
+    Moves 'references' inside the 'data' field of the given JSON response.
 
-# --------------------------------------------------------------------
-system: |
-  You are a JSON re-formatter for medical-chart answers.
-  Convert the supplied answer text (which contains “Evidence: [Page N]”
-  markers) into a JSON object in the exact schema below.
+    Args:
+        response (dict): The original JSON response with 'status', 'data', and 'references'.
 
-  **Requirements**
-
-  1. Return **only** JSON – no markdown, comments, or extra text.
-  2. The JSON must have a single top-level key `"data"`.
-  3. Inside `"data"`:
-       • `"content"` – the full answer text with original line breaks, but
-         **all** “Evidence: [Page N]” substrings removed.  
-       • `"references"` – a list of objects, each with keys  
-           • `"Evidence"` – a concise section title you infer
-             (e.g. `"Medications"`, `"Lab_Report"`).  
-           • `"Page"` – the page number you extracted.  
-         If the same title appears on multiple pages, include one object
-         per page (duplicate titles allowed).
-  4. Preserve key order exactly: **data → content → references**.
-  5. Your output **must parse** with a standard JSON parser.
-
-user: |
-  Transform the following answer text into the required JSON format.
-
-  --- BEGIN ANSWER TEXT ---
-  {answer_text}
-  ---  END ANSWER TEXT  ---
-
-  ## Example of the exact structure you must return
-  {{
-    "data": {{
-      "content": "Metformin HCl - take 1 tablet by oral route 2 times every day with morning and evening meals.\nFARXIGA - take 1 tablet by oral route every day in the morning.\nLANTUS SOLOSTAR - inject 20u twice daily as directed for diabetes.\nHydroxyzine HCl - take 1 tablet by oral route 3 times every day as needed.\nTriamcinolone acetonide - apply by topical route every day a thin layer to the affected area(s).\nCONTOUR NEXT TEST STRIP - take 1 by capillary route every day.\nA1C level is 8.6, with a reference range of 4.0-5.9%\nLipid Panel results\nCholesterol Total: 187 mg/dL (Reference Range: 100-199 mg/dL)\nHDL Cholesterol: 50 mg/dL (Reference Range: >39 mg/dL)\nLDL Cholesterol Calc (NIH): 115 mg/dL (Out of Range, Reference Range: 0-99 mg/dL)\nTriglycerides: 124 mg/dL (Reference Range: 0-149 mg/dL)\nVLDL Cholesterol Cal: 22 mg/dL (Reference Range: 5-40 mg/dL)"
-      ,
-      "references": [
-        {{ "Evidence": "Medications", "Page": 7 }},
-        {{ "Evidence": "Medications", "Page": 8 }},
-        {{ "Evidence": "Medications", "Page": 9 }},
-        {{ "Evidence": "Lab_Report", "Page": 19 }},
-        {{ "Evidence": "Lab_Report", "Page": 29 }}
-      ]
-    }}
-  }}
-
-  **Return only JSON that matches this structure.**
-```
+    Returns:
+        dict: Updated response with 'references' moved inside 'data'.
+    """
+    if 'data' in response and 'references' in response:
+        response['data']['references'] = response.pop('references')
+    return response
