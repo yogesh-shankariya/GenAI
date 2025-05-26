@@ -1,83 +1,52 @@
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain.vectorstores import FAISS
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.text_splitter import CharacterTextSplitter
-from langchain.schema import Document
-from ragas import EvaluationDataset, evaluate
-from ragas.llms import LangchainLLMWrapper
-from ragas.metrics import LLMContextRecall, Faithfulness, FactualCorrectness
+def history_to_prompt(message_history):
+    """
+    Flatten a list of {'role': ..., 'content': ...} dicts into a single
+    Horizon-ready prompt string.
 
-# ------------------ 1. Sample Docs ------------------
-sample_docs = [
-    "Albert Einstein proposed the theory of relativity, which transformed our understanding of time, space, and gravity.",
-    "Marie Curie was a physicist and chemist who conducted pioneering research on radioactivity and won two Nobel Prizes.",
-    "Isaac Newton formulated the laws of motion and universal gravitation, laying the foundation for classical mechanics.",
-    "Charles Darwin introduced the theory of evolution by natural selection in his book 'On the Origin of Species'.",
-    "Ada Lovelace is regarded as the first computer programmer for her work on Charles Babbage's early mechanical computer, the Analytical Engine."
-]
+    *Assumes the final item in `message_history` is the newest user turn that
+    the model must now answer.*
 
-# ------------------ 2. Create Vector Store ------------------
-text_splitter = CharacterTextSplitter(chunk_size=200, chunk_overlap=0)
-docs = [Document(page_content=doc) for doc in sample_docs]
-split_docs = text_splitter.split_documents(docs)
+    Parameters
+    ----------
+    message_history : list[dict]
+        Full running transcript, e.g.
+        [
+            {"role": "system",    "content": "You are a helpful assistant."},
+            {"role": "user",      "content": "Hi, who won the 2011 World Cup?"},
+            {"role": "assistant", "content": "India won the 2011 ICC Cricket World Cup."},
+            {"role": "user",      "content": "Who was the captain?"}  # latest query
+        ]
 
-embeddings = OpenAIEmbeddings()
-vectorstore = FAISS.from_documents(split_docs, embeddings)
+    Returns
+    -------
+    str
+        Prompt string ending with 'Assistant:' ready for completion.
+    """
 
-# ------------------ 3. Langchain RAG function ------------------
-llm = ChatOpenAI(model="gpt-4o", temperature=0)
+    ROLE_PREFIX = {
+        "system":    "System:",
+        "user":      "User:",
+        "assistant": "Assistant:"
+    }
+    DELIM = "\n---\n"
 
-def get_answer_and_context(question: str):
-    retriever = vectorstore.as_retriever(search_type="similarity", k=2)
-    relevant_docs = retriever.get_relevant_documents(question)
-    context = " ".join([doc.page_content for doc in relevant_docs])
-    
-    messages = [
-        {"role": "system", "content": "Answer the question using only the given context."},
-        {"role": "user", "content": f"Context: {context}\n\nQuestion: {question}"}
+    if not message_history:
+        raise ValueError("`message_history` cannot be empty.")
+
+    # sanity-check that the last turn is a user message
+    if message_history[-1].get("role") != "user":
+        raise ValueError(
+            "The last message must be the user's latest question so that the "
+            "model knows to respond next."
+        )
+
+    # build transcript
+    parts = [
+        f"{ROLE_PREFIX.get(msg['role'], 'Unknown:')} {msg['content'].strip()}"
+        for msg in message_history
     ]
-    answer = llm.invoke(messages).content
-    return answer, [doc.page_content for doc in relevant_docs]
 
-# ------------------ 4. Dummy Q&A dataset ------------------
-sample_queries = [
-    "Who introduced the theory of relativity?",
-    "Who was the first computer programmer?",
-    "What did Isaac Newton contribute to science?",
-    "Who won two Nobel Prizes for research on radioactivity?",
-    "What is the theory of evolution by natural selection?"
-]
+    # cue the model to speak next
+    parts.append("Assistant:")
 
-expected_responses = [
-    "Albert Einstein proposed the theory of relativity.",
-    "Ada Lovelace is regarded as the first computer programmer.",
-    "Isaac Newton formulated the laws of motion and gravitation.",
-    "Marie Curie won two Nobel Prizes for radioactivity research.",
-    "Charles Darwin proposed the theory of evolution by natural selection."
-]
-
-# ------------------ 5. Create RAGAS EvaluationDataset ------------------
-dataset = []
-
-for question, reference in zip(sample_queries, expected_responses):
-    answer, retrieved_contexts = get_answer_and_context(question)
-    dataset.append({
-        "user_input": question,
-        "retrieved_contexts": retrieved_contexts,
-        "response": answer,
-        "reference": reference
-    })
-
-evaluation_dataset = EvaluationDataset.from_list(dataset)
-
-# ------------------ 6. Evaluate ------------------
-evaluator_llm = LangchainLLMWrapper(llm)
-result = evaluate(
-    dataset=evaluation_dataset,
-    metrics=[LLMContextRecall(), Faithfulness(), FactualCorrectness()],
-    llm=evaluator_llm
-)
-
-# ------------------ 7. Output ------------------
-print("\n=== Evaluation Scores ===")
-print(result)
+    return DELIM.join(parts).strip()
