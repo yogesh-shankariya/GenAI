@@ -1,52 +1,9 @@
-def history_to_prompt(message_history):
-    """
-    Flatten a list of {'role': ..., 'content': ...} dicts into a single
-    Horizon-ready prompt string.
+history = [
+    {"role": "system",    "content": "You are a helpful assistant."},
+    {"role": "user",      "content": "Hi, who won the 2011 World Cup?"},
+    {"role": "assistant", "content": "India won the 2011 ICC Cricket World Cup."},
+    {"role": "user",      "content": "Who was the captain?"}   # latest question
+]
 
-    *Assumes the final item in `message_history` is the newest user turn that
-    the model must now answer.*
-
-    Parameters
-    ----------
-    message_history : list[dict]
-        Full running transcript, e.g.
-        [
-            {"role": "system",    "content": "You are a helpful assistant."},
-            {"role": "user",      "content": "Hi, who won the 2011 World Cup?"},
-            {"role": "assistant", "content": "India won the 2011 ICC Cricket World Cup."},
-            {"role": "user",      "content": "Who was the captain?"}  # latest query
-        ]
-
-    Returns
-    -------
-    str
-        Prompt string ending with 'Assistant:' ready for completion.
-    """
-
-    ROLE_PREFIX = {
-        "system":    "System:",
-        "user":      "User:",
-        "assistant": "Assistant:"
-    }
-    DELIM = "\n---\n"
-
-    if not message_history:
-        raise ValueError("`message_history` cannot be empty.")
-
-    # sanity-check that the last turn is a user message
-    if message_history[-1].get("role") != "user":
-        raise ValueError(
-            "The last message must be the user's latest question so that the "
-            "model knows to respond next."
-        )
-
-    # build transcript
-    parts = [
-        f"{ROLE_PREFIX.get(msg['role'], 'Unknown:')} {msg['content'].strip()}"
-        for msg in message_history
-    ]
-
-    # cue the model to speak next
-    parts.append("Assistant:")
-
-    return DELIM.join(parts).strip()
+prompt_string = history_to_prompt(history)
+print(prompt_string)
