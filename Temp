@@ -1,9 +1,8 @@
-history = [
-    {"role": "system",    "content": "You are a helpful assistant."},
-    {"role": "user",      "content": "Hi, who won the 2011 World Cup?"},
-    {"role": "assistant", "content": "India won the 2011 ICC Cricket World Cup."},
-    {"role": "user",      "content": "Who was the captain?"}   # latest question
-]
+import os
 
-prompt_string = history_to_prompt(history)
-print(prompt_string)
+# Construct full path from 'text_files' directory
+full_file_path = os.path.join(os.path.dirname(__file__), '..', 'text_files', filename)
+
+files = [
+    ('files', (filename, open(full_file_path, 'rb'), 'text/plain'))
+]
