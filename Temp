@@ -1,7 +1,21 @@
+user_question = "Your question here"
+
+prompt = f"""
 Question: {user_question}
 
-Provide evidence for each line with the exact page number in the format: Evidence: [Page N].  
-Do NOT use page ranges like [Page 12-15]. Provide evidence separately for each section of your answer.  
-Be very careful and accurate when providing evidence.  
-Use <ocr_service_page_start>{page number}<ocr_service_page_start> as a reference from the given context.
+Provide evidence for each line with the exact page number in the format: Evidence: [Page N].
+Do NOT use page ranges like [Page 12–15]. Provide evidence separately for each section of your answer.
+
+If a section of the answer comes from text found between:
+<ocr_service_page_start><page_number><ocr_service_page_start> and <ocr_service_page_start><page_number + 1><ocr_service_page_start>,
+then the evidence must be marked as [Page page_number].
+
+Example:
+If a section of the answer is extracted from between:
+<ocr_service_page_start>10<ocr_service_page_start> and <ocr_service_page_start>11<ocr_service_page_start>,
+then you must provide the evidence as [Page 10].
+
+Be careful and accurate when providing evidence. Do not deviate from this instruction.
+
 Answer:
+"""
