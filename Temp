@@ -1,13 +1,29 @@
-import os
+def process_files_from_api_sequential(self, file_path: str, start_seq: int = 1) -> Dict[int, str]:
+    combined_text = ""
+    seq = start_seq
 
-# Path to the "text_files" folder
-text_files_dir = os.path.join(os.path.dirname(__file__), "text_files")
+    while True:
+        url = f"https://ingestion.synthesisuat.awsdns.internal.das/api/storage/download?filePath={file_path}/encounter_{seq}.txt&isDecrypt=true"
+        
+        try:
+            self.logger.info(f"Loading text file: seq={seq} URL={url}")
+            r = requests.get(url, verify=False, timeout=15)
 
-# Ensure the folder exists
-os.makedirs(text_files_dir, exist_ok=True)
+            if r.status_code in [200, 201]:
+                self.logger.info(f"Successfully fetched document: seq={seq} URL={url}")
+                combined_text += r.text + "\n\n"
+                seq += 1  # Only increment if response is successful (200 or 201)
+            else:
+                self.logger.warning(f"Stopping at seq={seq} URL={url} due to unexpected status code: {r.status_code}")
+                break
 
-# Save the file inside "text_files" directory
-save_path = os.path.join(text_files_dir, f"{session_id}.txt")
+        except requests.exceptions.HTTPError as e:
+            self.logger.error(f"HTTP error for seq={seq} URL={url}: {e}")
+            break
 
-with open(save_path, "w", encoding="utf-8") as f:
-    f.write(file_content)
+        except Exception as e:
+            self.logger.exception(f"Unexpected error while fetching seq={seq} URL={url}: {e}")
+            break
+
+    pprint(combined_text)
+    return combined_text
