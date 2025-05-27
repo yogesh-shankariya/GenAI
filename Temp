@@ -1,29 +1,7 @@
-def process_files_from_api_sequential(self, file_path: str, start_seq: int = 1) -> Dict[int, str]:
-    combined_text = ""
-    seq = start_seq
+Question: {user_question}
 
-    while True:
-        url = f"https://ingestion.synthesisuat.awsdns.internal.das/api/storage/download?filePath={file_path}/encounter_{seq}.txt&isDecrypt=true"
-        
-        try:
-            self.logger.info(f"Loading text file: seq={seq} URL={url}")
-            r = requests.get(url, verify=False, timeout=15)
-
-            if r.status_code in [200, 201]:
-                self.logger.info(f"Successfully fetched document: seq={seq} URL={url}")
-                combined_text += r.text + "\n\n"
-                seq += 1  # Only increment if response is successful (200 or 201)
-            else:
-                self.logger.warning(f"Stopping at seq={seq} URL={url} due to unexpected status code: {r.status_code}")
-                break
-
-        except requests.exceptions.HTTPError as e:
-            self.logger.error(f"HTTP error for seq={seq} URL={url}: {e}")
-            break
-
-        except Exception as e:
-            self.logger.exception(f"Unexpected error while fetching seq={seq} URL={url}: {e}")
-            break
-
-    pprint(combined_text)
-    return combined_text
+Provide evidence for each line with the exact page number in the format: Evidence: [Page N].  
+Do NOT use page ranges like [Page 12-15]. Provide evidence separately for each section of your answer.  
+Be very careful and accurate when providing evidence.  
+Use <ocr_service_page_start>{page number}<ocr_service_page_start> as a reference from the given context.
+Answer:
