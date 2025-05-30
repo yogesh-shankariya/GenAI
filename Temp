@@ -1,98 +1,120 @@
 import json
 import os
-import tiktoken
+
 import streamlit as st
 import openai
+import tiktoken
 
-# ---------------------------------------------
+# --------------------------------------------------
+# Constants
+# --------------------------------------------------
+MAX_CONTEXT_TOKENS = 30000  # cap for each uploaded file
+
+# --------------------------------------------------
 # Utility functions
-# ---------------------------------------------
+# --------------------------------------------------
 
 def file_to_string(uploaded_file):
-    """Read an uploaded file and return its text content."""
+    """Read an uploaded file and return its text content (best‑effort decoding)."""
     if uploaded_file is None:
         return ""
 
     content_bytes = uploaded_file.read()
-    try:
-        return content_bytes.decode("utf-8")
-    except UnicodeDecodeError:
-        return content_bytes.decode("latin-1")
+    for enc in ("utf-8", "latin-1", "cp1252"):
+        try:
+            return content_bytes.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    # fallback to binary repr if all decode attempts fail
+    return str(content_bytes)
 
 
-def count_tokens(text, encoder):
-    """Return the number of tokens in *text* according to *encoder*."""
+def count_tokens(text: str, encoder) -> int:
+    """Count tokens in *text* using *encoder*."""
     return len(encoder.encode(text))
 
 
+def trim_to_tokens(text: str, limit: int, encoder):
+    """Trim *text* to *limit* tokens if necessary and return (trimmed_text, token_count, was_trimmed)."""
+    tokens = encoder.encode(text)
+    if len(tokens) <= limit:
+        return text, len(tokens), False
+    trimmed_text = encoder.decode(tokens[:limit])
+    return trimmed_text, limit, True
+
+
 def build_context(file1_text: str, file2_text: str) -> str:
-    """Format the two FHIR files into a single context string."""
-    context = (
+    """Merge the two FHIR documents into a single context block."""
+    return (
         "File 1 (FHIR JSON):\n" + file1_text.strip() +
         "\n\nFile 2 (FHIR JSON):\n" + file2_text.strip()
     )
-    return context
 
 
-def initialise_openai_client(api_key: str):
-    """Return an OpenAI client instance given an *api_key*."""
+def init_openai(api_key: str):
     if not api_key:
-        raise ValueError("Please provide a valid OpenAI API key.")
+        raise ValueError("Please provide an OpenAI API key in the sidebar.")
     openai.api_key = api_key
 
+# --------------------------------------------------
+# Streamlit page config
+# --------------------------------------------------
 
-# ---------------------------------------------
-# Streamlit page configuration
-# ---------------------------------------------
+st.set_page_config(
+    page_title="FHIR Comparison Chatbot",
+    page_icon="🩺",
+    layout="wide",
+)
 
-st.set_page_config(page_title="FHIR Comparison Chatbot", page_icon="🩺", layout="wide")
-
-# ---------------------------------------------
-# Sidebar – Upload files, system prompt, API key
-# ---------------------------------------------
+# --------------------------------------------------
+# Sidebar – inputs & settings
+# --------------------------------------------------
 
 st.sidebar.header("Settings")
-
 api_key = st.sidebar.text_input("🔑 OpenAI API Key", type="password")
 
-file1 = st.sidebar.file_uploader(
-    "📄 Upload FHIR JSON – File 1", type=["json"], key="file1"
-)
-file2 = st.sidebar.file_uploader(
-    "📄 Upload FHIR JSON – File 2", type=["json"], key="file2"
-)
+file1 = st.sidebar.file_uploader("📄 Upload FHIR JSON – File 1", type=["json"], key="file1")
+file2 = st.sidebar.file_uploader("📄 Upload FHIR JSON – File 2", type=["json"], key="file2")
 
 system_prompt = st.sidebar.text_area(
-    "📝 System Prompt (optional)", height=150,
-    placeholder="Add additional instructions for the assistant here…"
+    "📝 System Prompt (optional)",
+    height=150,
+    placeholder="Add additional instructions for the assistant here…",
 )
 
-# Display token counts when files are uploaded
+# Token encoder
 encoder = tiktoken.get_encoding("cl100k_base")
-file1_text = file_to_string(file1)
-file2_text = file_to_string(file2)
+
+# Read & trim files
+file1_raw = file_to_string(file1)
+file2_raw = file_to_string(file2)
+
+file1_text, file1_tokens, file1_trimmed = trim_to_tokens(file1_raw, MAX_CONTEXT_TOKENS, encoder)
+file2_text, file2_tokens, file2_trimmed = trim_to_tokens(file2_raw, MAX_CONTEXT_TOKENS, encoder)
 
 if file1:
-    st.sidebar.markdown(f"**File&nbsp;1 Tokens:** {count_tokens(file1_text, encoder)}")
-if file2:
-    st.sidebar.markdown(f"**File&nbsp;2 Tokens:** {count_tokens(file2_text, encoder)}")
+    lbl = "File 1 Tokens" + (f" (trimmed to {MAX_CONTEXT_TOKENS})" if file1_trimmed else "")
+    st.sidebar.markdown(f"**{lbl}:** {file1_tokens}")
 
-# ---------------------------------------------
-# Main chat interface
-# ---------------------------------------------
+if file2:
+    lbl = "File 2 Tokens" + (f" (trimmed to {MAX_CONTEXT_TOKENS})" if file2_trimmed else "")
+    st.sidebar.markdown(f"**{lbl}:** {file2_tokens}")
+
+# --------------------------------------------------
+# Main Chat Area
+# --------------------------------------------------
 
 st.title("🩺 FHIR Comparison Chatbot")
 
-# Initialise session state for chat history
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Render existing messages
+# Render chat history
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# User input
+# User prompt
 user_query = st.chat_input("Ask your question about the two FHIR files…")
 
 if user_query:
@@ -101,52 +123,53 @@ if user_query:
     elif not file1 or not file2:
         st.error("Please upload **both** FHIR JSON files before asking a question.")
     else:
-        # Append user message to chat history and display it
+        # Display user message
         st.session_state.messages.append({"role": "user", "content": user_query})
         with st.chat_message("user"):
             st.markdown(user_query)
 
-        # Build messages payload for OpenAI
+        # Build OpenAI messages
         context = build_context(file1_text, file2_text)
-        system_messages = []
+        messages = []
         if system_prompt.strip():
-            system_messages.append({"role": "system", "content": system_prompt.strip()})
-        # Add context as a system message so it is always included
-        system_messages.append({"role": "system", "content": context})
+            messages.append({"role": "system", "content": system_prompt.strip()})
+        messages.append({"role": "system", "content": context})
+        messages.append({"role": "user", "content": user_query})
 
-        openai_messages = system_messages + [{"role": "user", "content": user_query}]
-
-        # Call OpenAI GPT‑4o
+        # Call ChatCompletion
         try:
-            initialise_openai_client(api_key)
+            init_openai(api_key)
             response = openai.ChatCompletion.create(
                 model="gpt-4o",
-                messages=openai_messages,
+                messages=messages,
                 temperature=0.2,
                 max_tokens=1024,
             )
-            assistant_content = response.choices[0].message["content"].strip()
-        except Exception as exc:
-            assistant_content = f"🚨 Error from OpenAI API: {exc}"
+            assistant_reply = response.choices[0].message["content"].strip()
+        except Exception as e:
+            assistant_reply = f"🚨 OpenAI API error: {e}"
 
-        # Display assistant response and store in history
-        st.session_state.messages.append({"role": "assistant", "content": assistant_content})
+        # Display assistant response
+        st.session_state.messages.append({"role": "assistant", "content": assistant_reply})
         with st.chat_message("assistant"):
-            st.markdown(assistant_content)
+            st.markdown(assistant_reply)
 
-# Footer – installation instructions
+# --------------------------------------------------
+# Footer – how to run
+# --------------------------------------------------
+
 with st.expander("ℹ️  How to run this app"):
     st.markdown(
         """
-        1. **Install dependencies**  
+        1. **Install dependencies**
            ```bash
            pip install streamlit openai tiktoken
            ```
-        2. **Save this script** as `streamlit_fhir_chatbot.py`.  
-        3. **Run**  
+        2. **Save this script** as `streamlit_fhir_chatbot.py`.
+        3. **Run**
            ```bash
            streamlit run streamlit_fhir_chatbot.py
            ```
-        4. Enter your OpenAI API key, upload the two FHIR JSON files, add an optional system prompt, and start chatting!
+        4. Enter your OpenAI key, upload the two FHIR JSON files (they will be trimmed to 30 000 tokens each if larger), add an optional system prompt, and start chatting!
         """
     )
