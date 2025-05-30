@@ -1,21 +1,152 @@
-user_question = "Your question here"
+import json
+import os
+import tiktoken
+import streamlit as st
+import openai
 
-prompt = f"""
-Question: {user_question}
+# ---------------------------------------------
+# Utility functions
+# ---------------------------------------------
 
-Provide evidence for each line with the exact page number in the format: Evidence: [Page N].
-Do NOT use page ranges like [Page 12–15]. Provide evidence separately for each section of your answer.
+def file_to_string(uploaded_file):
+    """Read an uploaded file and return its text content."""
+    if uploaded_file is None:
+        return ""
 
-If a section of the answer comes from text found between:
-<ocr_service_page_start><page_number><ocr_service_page_start> and <ocr_service_page_start><page_number + 1><ocr_service_page_start>,
-then the evidence must be marked as [Page page_number].
+    content_bytes = uploaded_file.read()
+    try:
+        return content_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        return content_bytes.decode("latin-1")
 
-Example:
-If a section of the answer is extracted from between:
-<ocr_service_page_start>10<ocr_service_page_start> and <ocr_service_page_start>11<ocr_service_page_start>,
-then you must provide the evidence as [Page 10].
 
-Be careful and accurate when providing evidence. Do not deviate from this instruction.
+def count_tokens(text, encoder):
+    """Return the number of tokens in *text* according to *encoder*."""
+    return len(encoder.encode(text))
 
-Answer:
-"""
+
+def build_context(file1_text: str, file2_text: str) -> str:
+    """Format the two FHIR files into a single context string."""
+    context = (
+        "File 1 (FHIR JSON):\n" + file1_text.strip() +
+        "\n\nFile 2 (FHIR JSON):\n" + file2_text.strip()
+    )
+    return context
+
+
+def initialise_openai_client(api_key: str):
+    """Return an OpenAI client instance given an *api_key*."""
+    if not api_key:
+        raise ValueError("Please provide a valid OpenAI API key.")
+    openai.api_key = api_key
+
+
+# ---------------------------------------------
+# Streamlit page configuration
+# ---------------------------------------------
+
+st.set_page_config(page_title="FHIR Comparison Chatbot", page_icon="🩺", layout="wide")
+
+# ---------------------------------------------
+# Sidebar – Upload files, system prompt, API key
+# ---------------------------------------------
+
+st.sidebar.header("Settings")
+
+api_key = st.sidebar.text_input("🔑 OpenAI API Key", type="password")
+
+file1 = st.sidebar.file_uploader(
+    "📄 Upload FHIR JSON – File 1", type=["json"], key="file1"
+)
+file2 = st.sidebar.file_uploader(
+    "📄 Upload FHIR JSON – File 2", type=["json"], key="file2"
+)
+
+system_prompt = st.sidebar.text_area(
+    "📝 System Prompt (optional)", height=150,
+    placeholder="Add additional instructions for the assistant here…"
+)
+
+# Display token counts when files are uploaded
+encoder = tiktoken.get_encoding("cl100k_base")
+file1_text = file_to_string(file1)
+file2_text = file_to_string(file2)
+
+if file1:
+    st.sidebar.markdown(f"**File&nbsp;1 Tokens:** {count_tokens(file1_text, encoder)}")
+if file2:
+    st.sidebar.markdown(f"**File&nbsp;2 Tokens:** {count_tokens(file2_text, encoder)}")
+
+# ---------------------------------------------
+# Main chat interface
+# ---------------------------------------------
+
+st.title("🩺 FHIR Comparison Chatbot")
+
+# Initialise session state for chat history
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# Render existing messages
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+
+# User input
+user_query = st.chat_input("Ask your question about the two FHIR files…")
+
+if user_query:
+    if not api_key:
+        st.error("Please provide your OpenAI API key in the sidebar.")
+    elif not file1 or not file2:
+        st.error("Please upload **both** FHIR JSON files before asking a question.")
+    else:
+        # Append user message to chat history and display it
+        st.session_state.messages.append({"role": "user", "content": user_query})
+        with st.chat_message("user"):
+            st.markdown(user_query)
+
+        # Build messages payload for OpenAI
+        context = build_context(file1_text, file2_text)
+        system_messages = []
+        if system_prompt.strip():
+            system_messages.append({"role": "system", "content": system_prompt.strip()})
+        # Add context as a system message so it is always included
+        system_messages.append({"role": "system", "content": context})
+
+        openai_messages = system_messages + [{"role": "user", "content": user_query}]
+
+        # Call OpenAI GPT‑4o
+        try:
+            initialise_openai_client(api_key)
+            response = openai.ChatCompletion.create(
+                model="gpt-4o",
+                messages=openai_messages,
+                temperature=0.2,
+                max_tokens=1024,
+            )
+            assistant_content = response.choices[0].message["content"].strip()
+        except Exception as exc:
+            assistant_content = f"🚨 Error from OpenAI API: {exc}"
+
+        # Display assistant response and store in history
+        st.session_state.messages.append({"role": "assistant", "content": assistant_content})
+        with st.chat_message("assistant"):
+            st.markdown(assistant_content)
+
+# Footer – installation instructions
+with st.expander("ℹ️  How to run this app"):
+    st.markdown(
+        """
+        1. **Install dependencies**  
+           ```bash
+           pip install streamlit openai tiktoken
+           ```
+        2. **Save this script** as `streamlit_fhir_chatbot.py`.  
+        3. **Run**  
+           ```bash
+           streamlit run streamlit_fhir_chatbot.py
+           ```
+        4. Enter your OpenAI API key, upload the two FHIR JSON files, add an optional system prompt, and start chatting!
+        """
+    )
