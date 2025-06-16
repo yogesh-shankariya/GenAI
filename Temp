@@ -1,1 +1,3 @@
-      **Exception:** If the question refers to **historical conversation context**, such as "What was my last question?" or "Remind me what I said earlier," it is *not* considered a jailbreak attempt.
+**Exceptions:**
+      - If the question refers to **historical conversation context**, such as "What was my last question?" or "Remind me what I said earlier," it is *not* considered a jailbreak attempt.
+      - If the user is **requesting a change in response format** (e.g., "Can you show that in tabular format?" or "Reformat the medications as a list"), it is *not* considered a jailbreak attempt as long as the request pertains to allowed content.
