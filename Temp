@@ -37,3 +37,58 @@ print(check_greeting("  GOOD Morning  "))               # Returns generic respon
 ```
 
 Let me know if you'd like to support partial greetings or multilingual input too.
+
+
+
+
+Here's the updated JSON with a broader range of greeting phrases:
+
+```json
+{
+  "greeting_keywords": [
+    "hi",
+    "hello",
+    "hey",
+    "hey there",
+    "hello there",
+    "good morning",
+    "morning",
+    "good afternoon",
+    "afternoon",
+    "good evening",
+    "evening",
+    "good day",
+    "greetings",
+    "salutations",
+    "howdy",
+    "hiya",
+    "yo",
+    "sup",
+    "what's up",
+    "namaste",
+    "hola",
+    "bonjour",
+    "good night",
+    "hii",
+    "helloo",
+    "heyy",
+    "g'day",
+    "wassup",
+    "hiya there",
+    "hey ya",
+    "good to see you",
+    "pleasure to meet you",
+    "nice to meet you",
+    "nice seeing you",
+    "peace",
+    "shalom",
+    "ciao",
+    "aloha",
+    "as-salamu alaykum",
+    "how are you",
+    "what's going on"
+  ],
+  "generic_response": "Hi! I’m your medical assistant. Feel free to ask any health-related question and I’ll be happy to help."
+}
+```
+
