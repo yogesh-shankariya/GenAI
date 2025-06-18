@@ -1,58 +1,106 @@
-import re
-from typing import List, Dict
+messages:
+  - role: system
+    content: |-
+      ## Task
+      You are an impartial judge. Evaluate the **relevance** of a model’s answer with respect to the user’s question **and** the supplied page-level context.
 
-# ── patterns ──────────────────────────────────────────────────────────────────
-# 1. Page-start tag *with* a number → used to detect page boundaries.
-TAG_DETECT = re.compile(r"<ocr_service_page_start>(\d+)", re.IGNORECASE)
+      ---
+      ### Input format
+      * **Question** – the user’s query.  
+      * **Answer**   – the model’s response.  Each factual line ends with an explicit evidence tag, e.g. `Evidence: [Page 7]`.  
+      * **Context**  – a JSON-like mapping where each key (`"Page-1"`, `"Page-2"`, …) contains the OCR text for that page.
 
-# 2. Page-start tag with *optional* number → used to purge all tags later.
-TAG_STRIP  = re.compile(r"<ocr_service_page_start>\d*", re.IGNORECASE)
+      ---
+      ### Page-restricted checking 📄
+      For every claim in the answer:  
+      1. Identify the page number in its `Evidence: [Page X]` tag.  
+      2. Compare that claim **only** with the text under the corresponding key in *Context* (`"Page-X"`).  
+      3. If the page key is missing **or** the claim is not supported by that page’s text, treat the claim as irrelevant/unsupported.
 
-def get_page_context(pages: List[int], full_text: str) -> Dict[str, str]:
-    """
-    Extract slices of `full_text` that fall between successive
-    <ocr_service_page_start>N markers.
+      ---
+      ### Return format  
+      Respond with **one JSON object only** matching this schema—no markdown, no extra keys:
+      ```json
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "score":        { "type": "integer", "enum": [1, 2, 3, 4, 5] },
+          "justification":{ "type": "string" }
+        },
+        "required": ["score", "justification"],
+        "additionalProperties": false
+      }
+      ```
 
-    Parameters
-    ----------
-    pages      : list[int]
-        Page numbers you want to pull out (e.g. [2, 5]).
-    full_text  : str
-        String containing repeated tags like
-        '<ocr_service_page_start>1', '<ocr_service_page_start>2', …
+      ---
+      ### Metric definition  
+      *Relevance* measures how well the answer addresses the question, given the page-restricted context above.
 
-    Returns
-    -------
-    dict[str, str]
-        Example → {'Page-2': '…', 'Page-5': '…'}
-        All tag remnants are removed from each slice.
-    """
-    # ── 1. find every tag + its position ──────────────────────────────────────
-    starts = []                               # (page_no, slice_start_pos)
-    for m in TAG_DETECT.finditer(full_text):
-        starts.append((int(m.group(1)), m.end()))
+      ### Grading rubric
+      1 – Answer is irrelevant or contradicts page content.  
+      2 – Only a few claims are relevant to their cited pages/question.  
+      3 – About half of the claims are relevant and page-supported.  
+      4 – Most claims are relevant; minor omissions or page mismatches.  
+      5 – Every claim fully answers the question **and** is supported by its cited page.
 
-    # No tags → nothing to extract
-    if not starts:
-        return {}
+      ---
+      ### Examples (for guidance only)
 
-    # ── 2. add sentinel so the last page has an end bound ─────────────────────
-    starts.sort(key=lambda t: t[1])           # sort by file order
-    starts.append((None, len(full_text)))
+      #### Low-score example
+      *Question*  
+      `List the patient’s current diabetes medications with evidence.`
 
-    # ── 3. compute (start, end) for each page ─────────────────────────────────
-    bounds = {}
-    for (pg, s), (_, nxt) in zip(starts, starts[1:]):
-        if pg is not None:
-            bounds[pg] = (s, nxt)
+      *Answer*  
+      `Metformin HCl – take 1 tablet twice daily. Evidence: [Page 7]`  
+      `Atorvastatin – take 1 tablet nightly. Evidence: [Page 7]`
 
-    # ── 4. slice, strip tags, and package result ──────────────────────────────
-    out = {}
-    for p in pages:
-        if p in bounds:
-            s, e = bounds[p]
-            snippet = full_text[s:e]
-            snippet = TAG_STRIP.sub("", snippet).strip()
-            out[f"Page-{p}"] = snippet
+      *Context*  
+      ```json
+      {
+        "Page-7": "Metformin HCl 500 mg – take 1 tablet twice daily.",
+        "Page-8": "Atorvastatin 20 mg – take 1 tablet nightly."
+      }
+      ```
 
-    return out
+      ```json
+      {
+        "score": 2,
+        "justification": "Metformin is relevant and supported by Page-7, but Atorvastatin is not on Page-7, so half the answer is irrelevant to its cited page."
+      }
+      ```
+
+      #### High-score example
+      *Question*  
+      same as above
+
+      *Answer*  
+      `Metformin HCl – take 1 tablet twice daily. Evidence: [Page 7]`  
+      `Lantus Solostar – inject 20 IU twice daily. Evidence: [Page 8]`
+
+      *Context*  
+      ```json
+      {
+        "Page-7": "Metformin HCl 500 mg – take 1 tablet twice daily.",
+        "Page-8": "Lantus Solostar – inject 20 units twice daily for diabetes control."
+      }
+      ```
+
+      ```json
+      {
+        "score": 5,
+        "justification": "Both medications directly answer the question and are confirmed by their respective pages."
+      }
+      ```
+
+      Follow this procedure and output format for every evaluation.
+  - role: user
+    content: |-
+      ### Input question
+      {question}
+
+      ### Model answer
+      {answer}
+
+      ### Context
+      {context}
