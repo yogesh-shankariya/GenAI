@@ -1,46 +1,58 @@
 import re
 from typing import List, Dict
 
-TAG_RE = re.compile(r"<ocr_service_page_start>(\d+)", re.IGNORECASE)
+# ── patterns ──────────────────────────────────────────────────────────────────
+# 1. Page-start tag *with* a number → used to detect page boundaries.
+TAG_DETECT = re.compile(r"<ocr_service_page_start>(\d+)", re.IGNORECASE)
+
+# 2. Page-start tag with *optional* number → used to purge all tags later.
+TAG_STRIP  = re.compile(r"<ocr_service_page_start>\d*", re.IGNORECASE)
 
 def get_page_context(pages: List[int], full_text: str) -> Dict[str, str]:
     """
-    Extract page-specific slices from an OCR string that is delimited by
-    tags of the form <ocr_service_page_start>N.
+    Extract slices of `full_text` that fall between successive
+    <ocr_service_page_start>N markers.
 
     Parameters
     ----------
-    pages      : list[int]        page numbers to retrieve
-    full_text  : str              full OCR output
-    
+    pages      : list[int]
+        Page numbers you want to pull out (e.g. [2, 5]).
+    full_text  : str
+        String containing repeated tags like
+        '<ocr_service_page_start>1', '<ocr_service_page_start>2', …
+
     Returns
     -------
     dict[str, str]
-        Mapping like {"Page-2": "...", "Page-5": "..."}.
-        Tags themselves are excluded from the text.
+        Example → {'Page-2': '…', 'Page-5': '…'}
+        All tag remnants are removed from each slice.
     """
-    # 1️⃣  locate every tag and record where that page’s content begins
-    tag_positions = []                        # (page_number, content_start_offset)
-    for m in TAG_RE.finditer(full_text):
-        tag_positions.append((int(m.group(1)), m.end()))
-    
-    # 2️⃣  add sentinel to close the final page cleanly
-    tag_positions.sort(key=lambda t: t[1])
-    tag_positions.append((None, len(full_text)))
-    
-    # 3️⃣  build (start, end) bounds for each page
+    # ── 1. find every tag + its position ──────────────────────────────────────
+    starts = []                               # (page_no, slice_start_pos)
+    for m in TAG_DETECT.finditer(full_text):
+        starts.append((int(m.group(1)), m.end()))
+
+    # No tags → nothing to extract
+    if not starts:
+        return {}
+
+    # ── 2. add sentinel so the last page has an end bound ─────────────────────
+    starts.sort(key=lambda t: t[1])           # sort by file order
+    starts.append((None, len(full_text)))
+
+    # ── 3. compute (start, end) for each page ─────────────────────────────────
     bounds = {}
-    for (page, start), (_, next_start) in zip(tag_positions, tag_positions[1:]):
-        if page is not None:
-            bounds[page] = (start, next_start)
-    
-    # 4️⃣  slice, scrub, and return
-    result = {}
+    for (pg, s), (_, nxt) in zip(starts, starts[1:]):
+        if pg is not None:
+            bounds[pg] = (s, nxt)
+
+    # ── 4. slice, strip tags, and package result ──────────────────────────────
+    out = {}
     for p in pages:
         if p in bounds:
             s, e = bounds[p]
-            # remove any possible stray tags inside the slice
-            clean_slice = TAG_RE.sub("", full_text[s:e]).strip()
-            result[f"Page-{p}"] = clean_slice
-    
-    return result
+            snippet = full_text[s:e]
+            snippet = TAG_STRIP.sub("", snippet).strip()
+            out[f"Page-{p}"] = snippet
+
+    return out
