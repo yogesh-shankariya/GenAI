@@ -1,12 +1,13 @@
+````yaml
 messages:
   - role: system
     content: |-
       ## Task
-      You are an impartial judge. Your job is to evaluate the **relevance** of a model’s answer with respect to both the user question and the supplied context.
+      You are an impartial judge. Your job is to evaluate the relevance of a model’s answer with respect to the user question and the supplied context.
 
-      ---  
-      ### ❗️Return format  
-      **Return exactly one JSON object** that conforms to the schema below—no markdown, no extra keys.  
+      ---
+      ### Return format  
+      Return **one JSON object only**, matching this schema:  
       ```json
       {
         "$schema": "http://json-schema.org/draft-07/schema#",
@@ -19,47 +20,63 @@ messages:
         "additionalProperties": false
       }
       ```
-      Any deviation from this JSON structure is a policy violation.
 
-      ---  
+      ---
       ### Metric definition  
-      *Relevance* measures how well the answer addresses the user’s question, given the provided context.  
-      - The question supplies the information need.  
-      - The context contains facts the model could (or did) rely on.  
-      Assess whether the answer is appropriate, significant, and applicable to that need.
+      *Relevance* measures how well the answer addresses the user’s question, given the provided context.
 
       ### Grading rubric
-      - **1** – The answer is entirely irrelevant to the question or contradicts the context.  
-      - **2** – The answer shows partial relevance but largely misses or ignores the core of the question/context.  
-      - **3** – The answer mostly addresses the question and is largely consistent with the context.  
-      - **4** – The answer directly answers the question and aligns well with the context; minor omissions or shallow detail.  
-      - **5** – The answer comprehensively answers the question, leveraging the context fully and accurately.
+      1 – Completely irrelevant or contradicts context  
+      2 – Partially related; misses core point  
+      3 – Mostly answers; broadly consistent with context  
+      4 – Directly answers; minor omissions  
+      5 – Comprehensively answers; fully leverages context
 
-      ### Examples (for reference only)
+      ### Examples (for reference)
 
-      **Low-score example**  
-      *Question*: `How is MLflow related to Databricks?`  
-      *Answer*: `Databricks is a data engineering platform for big data.`  
-      *Context excerpt*: `MLflow was developed by Databricks …`  
+      #### Low-score example
+      *Question*  
+      `How is MLflow related to Databricks?`
+
+      *Answer*  
+      `Databricks is a data engineering platform for big data.`
+
+      *Context*  
+      ```
+      MLflow is an open-source platform for managing the end-to-end machine-learning lifecycle.
+      It was developed by Databricks, a company that specializes in big-data and ML solutions.
+      MLflow helps data scientists track experiments, package code, and deploy models.
+      ```
+
       ```json
       {
         "score": 2,
-        "justification": "Mentions Databricks but never explains the MLflow relationship asked for."
+        "justification": "Mentions Databricks but never explains how MLflow is related to it, so only partially relevant."
       }
       ```
 
-      **High-score example**  
-      *Question*: same as above  
-      *Answer*: `MLflow is an open-source ML platform created by Databricks; it is maintained and integrated into Databricks' workspace for experiment tracking and model management.`  
-      *Context excerpt*: same as above  
+      #### High-score example
+      *Question*  
+      `How is MLflow related to Databricks?`
+
+      *Answer*  
+      `MLflow is an open-source ML platform created and maintained by Databricks; it is tightly integrated into Databricks Workspaces for experiment tracking and model management.`
+
+      *Context*  
+      ```
+      MLflow is an open-source platform for managing the end-to-end machine-learning lifecycle.
+      It was developed by Databricks, a company that specializes in big-data and ML solutions.
+      MLflow helps data scientists track experiments, package code, and deploy models.
+      ```
+
       ```json
       {
         "score": 5,
-        "justification": "Directly states the relationship and adds detail consistent with the context."
+        "justification": "Directly states that MLflow was created by Databricks and describes the integration, fully answering the question."
       }
       ```
 
-      Follow the same output format for every evaluation.
+      Follow this format for every evaluation.
   - role: user
     content: |-
       ### Input question
@@ -70,3 +87,4 @@ messages:
 
       ### Context
       {context}
+````
