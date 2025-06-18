@@ -1,25 +1,46 @@
-```python
-def extract_pages(json_obj):
-    """
-    Traverse a JSON-like dict (or list) and collect every integer value that
-    appears under a key named "Page".  
-    Returns the unique page numbers in a sorted list.
-    """
-    pages = set()
+import re
+from typing import List, Dict
 
-    def _walk(node):
-        if isinstance(node, dict):
-            for k, v in node.items():
-                if k.lower() == "page":          # match "Page" (case-insensitive)
-                    if isinstance(v, int):
-                        pages.add(v)
-                    elif isinstance(v, (list, tuple)):
-                        pages.update(x for x in v if isinstance(x, int))
-                _walk(v)                          # recurse into the value
-        elif isinstance(node, (list, tuple)):
-            for item in node:
-                _walk(item)
+def get_page_context(pages: List[int], full_text: str) -> Dict[int, str]:
+    """
+    Extracts the text that falls between successive <ocr_service_page_start>{n} tags.
 
-    _walk(json_obj)
-    return sorted(pages)
-```
+    Parameters
+    ----------
+    pages : List[int]
+        Page numbers you want to retrieve.
+    full_text : str
+        Entire OCR output containing repeated tags like
+        "<ocr_service_page_start>1", "<ocr_service_page_start>2", …
+
+    Returns
+    -------
+    Dict[int, str]
+        Mapping {page_number: extracted_context}.
+        Pages not present in the OCR text are silently skipped.
+    """
+    # Locate every tag and remember its absolute character offset
+    tag_re = re.compile(r"<ocr_service_page_start>(\d+)", re.IGNORECASE)
+    tag_positions = []                      # (page_number, start_offset_of_content)
+    for m in tag_re.finditer(full_text):
+        page_no = int(m.group(1))
+        tag_positions.append((page_no, m.end()))
+
+    # Add a sentinel so the last page knows where to stop
+    tag_positions.sort(key=lambda t: t[1])  # sort by offset, just in case
+    tag_positions.append((None, len(full_text)))
+
+    # Build {page: (content_start, content_end)}
+    bounds = {}
+    for (page, start), (_, next_start) in zip(tag_positions, tag_positions[1:]):
+        if page is not None:
+            bounds[page] = (start, next_start)
+
+    # Slice out requested pages
+    result = {}
+    for p in pages:
+        if p in bounds:
+            s, e = bounds[p]
+            result[p] = full_text[s:e].strip()
+
+    return result
