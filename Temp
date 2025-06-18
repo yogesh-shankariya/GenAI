@@ -1,46 +1,46 @@
 import re
 from typing import List, Dict
 
-def get_page_context(pages: List[int], full_text: str) -> Dict[int, str]:
+TAG_RE = re.compile(r"<ocr_service_page_start>(\d+)", re.IGNORECASE)
+
+def get_page_context(pages: List[int], full_text: str) -> Dict[str, str]:
     """
-    Extracts the text that falls between successive <ocr_service_page_start>{n} tags.
+    Extract page-specific slices from an OCR string that is delimited by
+    tags of the form <ocr_service_page_start>N.
 
     Parameters
     ----------
-    pages : List[int]
-        Page numbers you want to retrieve.
-    full_text : str
-        Entire OCR output containing repeated tags like
-        "<ocr_service_page_start>1", "<ocr_service_page_start>2", …
-
+    pages      : list[int]        page numbers to retrieve
+    full_text  : str              full OCR output
+    
     Returns
     -------
-    Dict[int, str]
-        Mapping {page_number: extracted_context}.
-        Pages not present in the OCR text are silently skipped.
+    dict[str, str]
+        Mapping like {"Page-2": "...", "Page-5": "..."}.
+        Tags themselves are excluded from the text.
     """
-    # Locate every tag and remember its absolute character offset
-    tag_re = re.compile(r"<ocr_service_page_start>(\d+)", re.IGNORECASE)
-    tag_positions = []                      # (page_number, start_offset_of_content)
-    for m in tag_re.finditer(full_text):
-        page_no = int(m.group(1))
-        tag_positions.append((page_no, m.end()))
-
-    # Add a sentinel so the last page knows where to stop
-    tag_positions.sort(key=lambda t: t[1])  # sort by offset, just in case
+    # 1️⃣  locate every tag and record where that page’s content begins
+    tag_positions = []                        # (page_number, content_start_offset)
+    for m in TAG_RE.finditer(full_text):
+        tag_positions.append((int(m.group(1)), m.end()))
+    
+    # 2️⃣  add sentinel to close the final page cleanly
+    tag_positions.sort(key=lambda t: t[1])
     tag_positions.append((None, len(full_text)))
-
-    # Build {page: (content_start, content_end)}
+    
+    # 3️⃣  build (start, end) bounds for each page
     bounds = {}
     for (page, start), (_, next_start) in zip(tag_positions, tag_positions[1:]):
         if page is not None:
             bounds[page] = (start, next_start)
-
-    # Slice out requested pages
+    
+    # 4️⃣  slice, scrub, and return
     result = {}
     for p in pages:
         if p in bounds:
             s, e = bounds[p]
-            result[p] = full_text[s:e].strip()
-
+            # remove any possible stray tags inside the slice
+            clean_slice = TAG_RE.sub("", full_text[s:e]).strip()
+            result[f"Page-{p}"] = clean_slice
+    
     return result
