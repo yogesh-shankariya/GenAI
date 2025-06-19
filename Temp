@@ -1,42 +1,22 @@
-import re
-from collections import OrderedDict
-
-def extract_pages(text: str) -> dict:
+def extract_page_numbers(page_dict: dict) -> list:
     """
-    Return an ordered dict that maps each page to the combined snippet(s)
-    that cite it. Works whether the tag appears as
-        “… Evidence: [Page 15]”
-    or simply
-        “… [Page 15]”
+    Extract and return sorted list of unique page numbers from keys like 'Page-1', 'Page-67'.
+
     Parameters
     ----------
-    text : str
-        Raw string containing one or more “… [Page N]” markers.
+    page_dict : dict
+        Dictionary where keys are in the format 'Page-<number>'.
 
     Returns
     -------
-    dict
-        {"Page-<N>": "<concatenated snippet text>", ...}
+    list
+        Sorted list of unique page numbers as integers.
     """
-    pattern = re.compile(
-        r"""
-        (.*?)                  # (1) snippet – non-greedy
-        \s*                    # optional whitespace
-        (?:Evidence:\s*)?      # optional “Evidence:” label
-        \[Page\s+(\d+)\]       # [Page N] – (2) captures N
-        """,
-        re.DOTALL | re.VERBOSE,
-    )
+    page_numbers = []
 
-    page_dict = OrderedDict()
+    for key in page_dict.keys():
+        match = re.search(r'Page-(\d+)', key)
+        if match:
+            page_numbers.append(int(match.group(1)))
 
-    for snippet, page_num in pattern.findall(text):
-        key = f"Page-{page_num}"
-        snippet = " ".join(snippet.split())            # normalise spacing
-        if key in page_dict:
-            if snippet not in page_dict[key]:
-                page_dict[key] += " " + snippet        # merge unique snippet
-        else:
-            page_dict[key] = snippet
-
-    return page_dict
+    return sorted(set(page_numbers))
