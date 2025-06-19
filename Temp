@@ -1,106 +1,42 @@
-messages:
-  - role: system
-    content: |-
-      ## Task
-      You are an impartial judge. Evaluate the **relevance** of a model’s answer with respect to the user’s question **and** the supplied page-level context.
+import re
+from collections import OrderedDict
 
-      ---
-      ### Input format
-      * **Question** – the user’s query.  
-      * **Answer**   – the model’s response.  Each factual line ends with an explicit evidence tag, e.g. `Evidence: [Page 7]`.  
-      * **Context**  – a JSON-like mapping where each key (`"Page-1"`, `"Page-2"`, …) contains the OCR text for that page.
+def extract_pages(text: str) -> dict:
+    """
+    Return an ordered dict that maps each page to the combined snippet(s)
+    that cite it. Works whether the tag appears as
+        “… Evidence: [Page 15]”
+    or simply
+        “… [Page 15]”
+    Parameters
+    ----------
+    text : str
+        Raw string containing one or more “… [Page N]” markers.
 
-      ---
-      ### Page-restricted checking 📄
-      For every claim in the answer:  
-      1. Identify the page number in its `Evidence: [Page X]` tag.  
-      2. Compare that claim **only** with the text under the corresponding key in *Context* (`"Page-X"`).  
-      3. If the page key is missing **or** the claim is not supported by that page’s text, treat the claim as irrelevant/unsupported.
+    Returns
+    -------
+    dict
+        {"Page-<N>": "<concatenated snippet text>", ...}
+    """
+    pattern = re.compile(
+        r"""
+        (.*?)                  # (1) snippet – non-greedy
+        \s*                    # optional whitespace
+        (?:Evidence:\s*)?      # optional “Evidence:” label
+        \[Page\s+(\d+)\]       # [Page N] – (2) captures N
+        """,
+        re.DOTALL | re.VERBOSE,
+    )
 
-      ---
-      ### Return format  
-      Respond with **one JSON object only** matching this schema—no markdown, no extra keys:
-      ```json
-      {
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "type": "object",
-        "properties": {
-          "score":        { "type": "integer", "enum": [1, 2, 3, 4, 5] },
-          "justification":{ "type": "string" }
-        },
-        "required": ["score", "justification"],
-        "additionalProperties": false
-      }
-      ```
+    page_dict = OrderedDict()
 
-      ---
-      ### Metric definition  
-      *Relevance* measures how well the answer addresses the question, given the page-restricted context above.
+    for snippet, page_num in pattern.findall(text):
+        key = f"Page-{page_num}"
+        snippet = " ".join(snippet.split())            # normalise spacing
+        if key in page_dict:
+            if snippet not in page_dict[key]:
+                page_dict[key] += " " + snippet        # merge unique snippet
+        else:
+            page_dict[key] = snippet
 
-      ### Grading rubric
-      1 – Answer is irrelevant or contradicts page content.  
-      2 – Only a few claims are relevant to their cited pages/question.  
-      3 – About half of the claims are relevant and page-supported.  
-      4 – Most claims are relevant; minor omissions or page mismatches.  
-      5 – Every claim fully answers the question **and** is supported by its cited page.
-
-      ---
-      ### Examples (for guidance only)
-
-      #### Low-score example
-      *Question*  
-      `List the patient’s current diabetes medications with evidence.`
-
-      *Answer*  
-      `Metformin HCl – take 1 tablet twice daily. Evidence: [Page 7]`  
-      `Atorvastatin – take 1 tablet nightly. Evidence: [Page 7]`
-
-      *Context*  
-      ```json
-      {
-        "Page-7": "Metformin HCl 500 mg – take 1 tablet twice daily.",
-        "Page-8": "Atorvastatin 20 mg – take 1 tablet nightly."
-      }
-      ```
-
-      ```json
-      {
-        "score": 2,
-        "justification": "Metformin is relevant and supported by Page-7, but Atorvastatin is not on Page-7, so half the answer is irrelevant to its cited page."
-      }
-      ```
-
-      #### High-score example
-      *Question*  
-      same as above
-
-      *Answer*  
-      `Metformin HCl – take 1 tablet twice daily. Evidence: [Page 7]`  
-      `Lantus Solostar – inject 20 IU twice daily. Evidence: [Page 8]`
-
-      *Context*  
-      ```json
-      {
-        "Page-7": "Metformin HCl 500 mg – take 1 tablet twice daily.",
-        "Page-8": "Lantus Solostar – inject 20 units twice daily for diabetes control."
-      }
-      ```
-
-      ```json
-      {
-        "score": 5,
-        "justification": "Both medications directly answer the question and are confirmed by their respective pages."
-      }
-      ```
-
-      Follow this procedure and output format for every evaluation.
-  - role: user
-    content: |-
-      ### Input question
-      {question}
-
-      ### Model answer
-      {answer}
-
-      ### Context
-      {context}
+    return page_dict
