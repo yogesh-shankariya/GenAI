@@ -1,22 +1,210 @@
-def extract_page_numbers(page_dict: dict) -> list:
+```python
+"""
+RAG output-validation helpers
+-----------------------------
+
+1. ``evaluate_pages``  
+   • Launches **parallel, asynchronous** calls to the LLM so that each page-level
+     answer is scored against the corresponding context.  
+   • Returns a dict such as  
+     ``{"Page-1": {"score": 4, "justification": "…"}, "Page-67": …}``.
+
+2. ``aggregate_scores``  
+   • Scales the individual 1-to-5 scores to **0-to-1**.  
+   • Concatenates the page-level justifications.  
+   • Returns a single summary dict  
+     ``{"score": 0.83, "justification": "combined …"}``.
+
+Both functions assume:
+
+* You have already produced two *matching* key-value dicts:  
+  ``answer_dict`` and ``context_dict`` (keys like ``"Page-7"``).  
+* You are using the **async** OpenAI client (``openai>=1.0``).  
+  Replace ``model="gpt-4o-mini"`` with whatever model you deploy.  
+* Your evaluation prompt template contains three placeholders  
+  ``{question}``, ``{answer}``, ``{context}`` that will be filled in
+  for each page before sending to the model.
+"""
+
+import asyncio
+import re
+from typing import Dict, Any, Tuple, List
+
+import openai
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Low-level helper: call LLM and parse “score: N” / “justification: …”
+# ──────────────────────────────────────────────────────────────────────────────
+async def _score_page(
+    question: str,
+    answer: str,
+    context: str,
+    prompt_template: str,
+    model: str = "gpt-4o-mini",
+) -> Tuple[int, str]:
+    """Send one page’s data to the LLM and get (score:int, justification:str)."""
+    prompt = prompt_template.format(question=question, answer=answer, context=context)
+
+    response = await openai.chat.completions.acreate(
+        model=model,
+        messages=[{"role": "system", "content": prompt}],
+        temperature=0,
+    )
+
+    content: str = response.choices[0].message.content
+
+    # Expect two-line format:
+    # score: 4
+    # justification: …
+    score_match = re.search(r"score\s*:\s*([0-5](?:\.\d+)?)", content, re.I)
+    score = float(score_match.group(1)) if score_match else 0.0
+
+    # remove the “score:” line so the justification is cleaner
+    justification = re.sub(r"score\s*:[^\n]*\n?", "", content, flags=re.I).strip()
+
+    return score, justification
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Public API #1: evaluate each page in parallel
+# ──────────────────────────────────────────────────────────────────────────────
+async def evaluate_pages(
+    question: str,
+    answer_dict: Dict[str, str],
+    context_dict: Dict[str, str],
+    prompt_template: str,
+    concurrency_limit: int = 10,
+) -> Dict[str, Dict[str, Any]]:
     """
-    Extract and return sorted list of unique page numbers from keys like 'Page-1', 'Page-67'.
-
-    Parameters
-    ----------
-    page_dict : dict
-        Dictionary where keys are in the format 'Page-<number>'.
-
-    Returns
-    -------
-    list
-        Sorted list of unique page numbers as integers.
+    For every page key present in *answer_dict*, fetch the matching context,
+    call the LLM, and return a dict: { "Page-N": {"score": n, "justification": …}, … }.
     """
-    page_numbers = []
+    semaphore = asyncio.Semaphore(concurrency_limit)
 
-    for key in page_dict.keys():
-        match = re.search(r'Page-(\d+)', key)
-        if match:
-            page_numbers.append(int(match.group(1)))
+    async def _worker(page_key: str) -> Tuple[str, Dict[str, Any]]:
+        async with semaphore:
+            answer = answer_dict[page_key]
+            context = context_dict.get(page_key, "")
+            score, justif = await _score_page(
+                question, answer, context, prompt_template
+            )
+            return page_key, {"score": score, "justification": justif}
 
-    return sorted(set(page_numbers))
+    tasks: List[asyncio.Task] = [
+        asyncio.create_task(_worker(page)) for page in answer_dict
+    ]
+    results = await asyncio.gather(*tasks)
+
+    return {page: data for page, data in results}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Public API #2: aggregate the per-page results into one overall metric
+# ──────────────────────────────────────────────────────────────────────────────
+def aggregate_scores(page_results: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Scale the average 1-to-5 scores down to 0-to-1 and merge justifications.
+    Returns {"score": <0-1 float>, "justification": "<combined text>"}.
+    """
+    if not page_results:
+        return {"score": 0.0, "justification": "No pages evaluated."}
+
+    total_score = sum(d["score"] for d in page_results.values())
+    num_pages = len(page_results)
+
+    # average (1–5) → scale to 0–1
+    normalized = round((total_score / num_pages) / 5, 4)
+
+    combined_justification = "\n\n".join(
+        f"{page}: {d['justification']}" for page, d in page_results.items()
+    )
+
+    return {"score": normalized, "justification": combined_justification}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Example usage
+# ──────────────────────────────────────────────────────────────────────────────
+"""
+question = "What is the patient's name and asthma risk?"
+answer_dict = {
+    "Page-1": "The name of the patient is Evelyn Frederick.",
+    "Page-67": "Evelyn Frederick is at risk for asthma exacerbation...",
+}
+context_dict = {
+    "Page-1": "Patient chart … Evelyn Frederick …",
+    "Page-67": "… history of asthma … weather changes …",
+}
+PROMPT = \"\"\"
+You are an impartial judge…
+
+score: <1-5>
+justification: <your reasoning>
+\"\"\"
+
+# Run inside an async event-loop
+page_scores = asyncio.run(evaluate_pages(question, answer_dict, context_dict, PROMPT))
+overall = aggregate_scores(page_scores)
+print(page_scores)
+print(overall)
+"""
+```
+
+
+
+
+import json
+import asyncio
+import openai
+from typing import Tuple
+
+
+async def _score_page(
+    question: str,
+    answer: str,
+    context: str,
+    prompt_template: str,
+    model: str = "gpt-4o-mini",
+) -> Tuple[float, str]:
+    """
+    Send one page-level triple (question/answer/context) to the LLM and return
+    (score, justification).
+
+    The LLM must respond with JSON, e.g.
+        {"Score": 5, "Justifications": "…"}
+    or
+        {"score": 3.5, "justification": "…"}   ← case-insensitive
+
+    If the JSON cannot be parsed, the function falls back to score=0.
+    """
+    prompt = prompt_template.format(question=question, answer=answer, context=context)
+
+    response = await openai.chat.completions.acreate(
+        model=model,
+        messages=[{"role": "system", "content": prompt}],
+        temperature=0,
+    )
+
+    content: str = response.choices[0].message.content.strip()
+
+    try:
+        data = json.loads(content)
+        score = float(
+            data.get("Score")
+            or data.get("score")
+            or data.get("SCORE")
+            or 0
+        )
+        justification = (
+            data.get("Justifications")
+            or data.get("justification")
+            or data.get("JUSTIFICATIONS")
+            or ""
+        ).strip()
+    except json.JSONDecodeError:
+        # Graceful fallback if the model returns something unexpected
+        score = 0.0
+        justification = f"Unparseable response: {content!r}"
+
+    return score, justification
