@@ -1,11 +1,14 @@
-    async def get_structured_answer(self, answer_text: str) -> dict:
-        """
-        Asynchronous façade so that callers can `await`
-        without blocking the event-loop.
-        """
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None,                       # default ThreadPoolExecutor
-            self._sync_get_structured_answer,
-            answer_text,
+    def process_request(
+        self,
+        session_id: str,
+        user_question: str,
+        file_path: Optional[str] = None,
+    ) -> str:
+        """Blocking façade used by the API layer."""
+        return asyncio.run(
+            self._process_request_async(
+                session_id=session_id,
+                user_question=user_question,
+                file_path=file_path,
+            )
         )
