@@ -1,19 +1,51 @@
-# chatbot.py  (inside your async request-handler)
+from typing import Dict, Any
 
-# 0. get raw response first
-response, status = await self.llm_client.execute_chat_with_guardrail(
-    messages, user_question, history
-)
 
-# 1. launch all three coroutines
-tasks = await asyncio.gather(
-    self.llm_client.get_structured_answer(response),               # now await-able
-    self.ResponseValidationScoreCalculator.get_faithfulness_score(
-        answer=response, context=file_content
-    ),
-    self.ResponseValidationScoreCalculator.get_relevance_score(
-        answer=response, context=file_content, question=question_with_history
-    ),
-)
+def attach_validation_metrics(
+    llm_response: Dict[str, Any],
+    faithfulness: Dict[str, Any],
+    relevance: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Enrich an existing LLM response (already containing status = 200 and
+    `data.content` / `data.reference`) with evaluation scores.
 
-structured_ans, faithfulness_score, relevance_score = tasks
+    Parameters
+    ----------
+    llm_response : dict
+        The JSON-serialisable object returned from your structured-answer step,
+        e.g. {"status": 200, "data": {"content": "...", "reference": [...]}}
+    faithfulness : dict
+        Output produced by ResponseValidationScoreCalculator.get_faithfulness_score,
+        e.g. {"score": 0.93, "justification": "..."}
+    relevance : dict
+        Output produced by ResponseValidationScoreCalculator.get_relevance_score,
+        e.g. {"score": 0.87, "justification": "…"}.
+
+    Returns
+    -------
+    dict
+        Same object, now with a `data["metrics"]` section:
+
+        {
+            "status": 200,
+            "data": {
+                "content": "...",
+                "reference": [...],
+                "metrics": {
+                    "faithfulness": {"score": …, "justification": …},
+                    "relevance"   : {"score": …, "justification": …}
+                }
+            }
+        }
+    """
+    # Ensure nested keys exist
+    data_block = llm_response.setdefault("data", {})
+
+    # Attach or overwrite metrics
+    data_block["metrics"] = {
+        "faithfulness": faithfulness,
+        "relevance": relevance,
+    }
+
+    return llm_response
