@@ -1,50 +1,11 @@
-import re
-from typing import List
-
-# Detect page-start markers that look like: <ocr_service_page_start>12
-TAG_RE = re.compile(r"<ocr_service_page_start>(\d+)", re.IGNORECASE)
-
-def get_combined_context(pages: List[int], full_text: str) -> str:
-    """
-    Return a single string that contains the content of all `pages`
-    (in ascending order) with every <ocr_service_page_start>N marker removed.
-
-    Parameters
-    ----------
-    pages      : list[int]
-        Page numbers to include, e.g. [3, 1, 2].
-    full_text  : str
-        OCR text containing repeated tags.
-
-    Returns
-    -------
-    str
-        Combined text for the requested pages, trimmed and separated
-        by a single newline between pages. Pages that do not exist in
-        `full_text` are silently skipped.
-    """
-    # 1. Locate every tag and where that page’s content begins
-    tag_positions = [(int(m.group(1)), m.end()) for m in TAG_RE.finditer(full_text)]
-    if not tag_positions:
-        return ""
-
-    # 2. Add sentinel to close the final page
-    tag_positions.sort(key=lambda t: t[1])              # ensure file order
-    tag_positions.append((None, len(full_text)))
-
-    # 3. Map page → (start, end)
-    bounds = {
-        page: (start, next_start)
-        for (page, start), (_, next_start) in zip(tag_positions, tag_positions[1:])
-        if page is not None
-    }
-
-    # 4. Gather slices, scrub tags, concatenate
-    cleaned_chunks = []
-    for p in sorted(pages):                             # preserve numeric order
-        if p in bounds:
-            s, e = bounds[p]
-            slice_txt = TAG_RE.sub("", full_text[s:e]).strip()
-            cleaned_chunks.append(slice_txt)
-
-    return "\n".join(cleaned_chunks).strip()
+    async def get_structured_answer(self, answer_text: str) -> dict:
+        """
+        Asynchronous façade so that callers can `await`
+        without blocking the event-loop.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,                       # default ThreadPoolExecutor
+            self._sync_get_structured_answer,
+            answer_text,
+        )
