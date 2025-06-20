@@ -1,14 +1,19 @@
-    def process_request(
-        self,
-        session_id: str,
-        user_question: str,
-        file_path: Optional[str] = None,
-    ) -> str:
-        """Blocking façade used by the API layer."""
-        return asyncio.run(
-            self._process_request_async(
-                session_id=session_id,
-                user_question=user_question,
-                file_path=file_path,
-            )
-        )
+# chatbot.py  (inside your async request-handler)
+
+# 0. get raw response first
+response, status = await self.llm_client.execute_chat_with_guardrail(
+    messages, user_question, history
+)
+
+# 1. launch all three coroutines
+tasks = await asyncio.gather(
+    self.llm_client.get_structured_answer(response),               # now await-able
+    self.ResponseValidationScoreCalculator.get_faithfulness_score(
+        answer=response, context=file_content
+    ),
+    self.ResponseValidationScoreCalculator.get_relevance_score(
+        answer=response, context=file_content, question=question_with_history
+    ),
+)
+
+structured_ans, faithfulness_score, relevance_score = tasks
