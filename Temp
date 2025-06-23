@@ -121,3 +121,15 @@ user_prompt_template: |
   "recommended_questions": []
 }
 """.strip()
+
+
+
+
+Question: What were the patient's latest HbA1c and LDL-C results?
+
+1. Encounter Date: 2024-05-07
+   HbA1c is 8.9 %.                      Evidence: [Page 14]
+
+2. Encounter Date: 2024-05-07
+   LDL-C is 110 mg/dL.                  Evidence: [Page 17]
+
