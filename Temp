@@ -196,3 +196,24 @@ class LLMClient:  # base class in your project – fully rewritten here
         ]
         final, _ = await self.execute_chat_with_guardrail(msgs, user_question, history=[])
         return final
+
+
+
+
+
+content = "You are a helpful medical assistant. Use only the provided context to answer the user's questions. Do not make assumptions."
+
+history = [
+    {"role": "user", "content": "What is the patient's name?"},
+    {"role": "assistant", "content": "The patient's name is Evelyn Frederick. Evidence: [Page 2]"},
+    {"role": "user", "content": "What is her latest HbA1c result?"},
+    {"role": "assistant", "content": "HbA1c is 8.9%. Evidence: [Page 5]"}
+]
+
+user_question = "What medications is she currently taking?"
+
+msgs = [
+    {"role": "system", "content": content},
+    *history,
+    {"role": "user", "content": user_question}
+]
