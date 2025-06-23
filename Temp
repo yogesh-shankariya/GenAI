@@ -1,6 +1,6 @@
 """
-LLMClient – handles all LLM-side interaction, guard-rails, and (now) the
-chunk-level summarisation flow used when a document exceeds 50 000 tokens.
+Chatbot – orchestrates file loading, token gating, page-chunking and parallel
+query / guard-rail execution.
 """
 
 from __future__ import annotations
@@ -9,211 +9,157 @@ import asyncio
 import json
 import os
 import re
-import unicodedata
-from typing import Dict, List, Any, Iterable
+import traceback
+from pathlib import Path
+from typing import Optional, List, Dict
 
-import logging as app_logger
-from retry import retry
-
-from chatbot.src.utils.horizon_api import getAuthToken, chats
-from chatbot.src.utils.file_and_session_manager import FileHandler
+from chatbot.src.utils.config_loader import load_config
 from chatbot.src.utils.prompt_loader import load_prompt
-from chatbot.src.services.responsible_ai import GuardrailsDetection
-from constants import Constant
+from chatbot.src.utils.logger import setup_logger
+from chatbot.src.services.llm_client import LLMClient
+from chatbot.src.services.responsible_ai import ResponseValidationScoreCalculator
+from chatbot.src.utils.file_and_session_manager import FileHandler
+from chatbot.src.utils.sql_db import (
+    get_chat_history,
+    insert_conversation,
+    session_exists,
+    create_conversation,
+)
+from chatbot.src.utils.tiktoken import count_tokens_for_context
 
-# paths to prompts / support files
-_current_dir = os.path.dirname(__file__)
-json_converter_prompt_path      = os.path.join("prompts", "other", "json_prompt.yaml")
-guardrail_prompt_path           = os.path.join("prompts", "responsible_ai", "guardrails_prompt.yaml")
-greeting_json_path              = os.path.join(_current_dir, "greetings.json")
-question_recommendation_path    = os.path.join("prompts", "other", "question_recommendation.yaml")
+# path to Q&A prompt template
+INPUT_QA_PROMPT_PATH = os.path.join("prompts", "other", "input_prompt.yaml")
 
-# ──────────────────────────────────────────────────────────────────────────────
-#  Prompt for merging partial answers (chunk summaries → final answer)
-# ──────────────────────────────────────────────────────────────────────────────
-CHUNK_SUMMARY_PROMPT = """
-You are a careful, evidence-based clinical assistant.
-
-You will receive:
-• The current user question.
-• A numbered list of partial answers produced from overlapping document chunks.
-
-Task:
-1. Merge the partial answers into ONE coherent answer.
-2. Preserve every medically relevant detail; do **not** omit facts.
-3. If two partial answers disagree, include both views and mark the conflict.
-4. Do NOT add new information.
-
-Return only valid JSON (no markdown):
-
-{
-  "content": "<final answer text>",
-  "references": [],
-  "metrics": [],
-  "recommended_questions": []
-}
-""".strip()
+# regex for page tags
+PAGE_TAG_RE = re.compile(r"<ocr_service_page_start>\s*(\d+)", re.I)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-class LLMClient:  # base class in your project – fully rewritten here
+class Chatbot:
 # ═════════════════════════════════════════════════════════════════════════════
-    # --------------------------------------------------------------------- #
-    def __init__(self, config: Dict[str, Any], logger):
-        self.config  = config
-        self.logger  = logger
+    def __init__(self, session_id: str):
+        try:
+            cfg                = load_config()
+            self.session_id    = session_id
+            self.logger        = setup_logger(cfg["logging"], session_id)
 
-        self.greeting_json_path = greeting_json_path
-        self.chats              = chats
-        self.safe_load_json     = FileHandler.safe_load_json
+            create_conversation()
 
-        # prompt fragments
-        self.guardrail_prompt                  = load_prompt(guardrail_prompt_path)["PROMPT"]
-        jc_prompt                              = load_prompt(json_converter_prompt_path)
-        self.json_converter_system_prompt      = jc_prompt["system"]
-        self.json_converter_user_prompt        = jc_prompt["user"]
-        qr_prompt                              = load_prompt(question_recommendation_path)
-        self.question_recommendation_system_prompt = qr_prompt["system_prompt"]
-        self.question_recommendation_user_prompt   = qr_prompt["user_prompt"]
+            self.llm_client    = LLMClient(cfg, self.logger)
+            self.file_handler  = FileHandler(self.logger)
 
-        # guard-rails
-        self.GuardrailsDetection = GuardrailsDetection(config, self.logger)
+            prm                = load_prompt(INPUT_QA_PROMPT_PATH)
+            self.SYS_TPL       = prm["system_prompt"]
+            self.USER_TPL      = prm["user_prompt_template"]
 
-    # --------------------------------------------------------------------- #
-    #  Greeting helpers
-    # --------------------------------------------------------------------- #
-    def _normalize(self, txt: str) -> str:
-        txt = unicodedata.normalize("NFKD", txt).encode("ascii", "ignore").decode("utf-8")
-        txt = re.sub(r"[^\w\s]", "", txt)
-        return re.sub(r"\s+", " ", txt.strip().lower())
+            self.score_calc    = ResponseValidationScoreCalculator(cfg, self.logger)
 
-    def get_greeting_data(self) -> Dict[str, Any]:
-        with open(self.greeting_json_path, "r", encoding="utf-8") as fh:
-            return json.load(fh)
-
-    def check_greeting(self, user_input: str) -> dict | None:
-        data = self.get_greeting_data()
-        if self._normalize(user_input) in map(self._normalize, data["greeting_keywords"]):
-            return {
-                "status": 200,
-                "data": {
-                    "content": data["generic_response"],
-                    "references": [],
-                    "metrics": [],
-                    "recommended_questions": [],
-                },
-            }
-        return None
+        except Exception as exc:
+            print(traceback.format_exc())
+            raise RuntimeError(f"Init failed: {exc}") from exc
 
     # --------------------------------------------------------------------- #
-    #  Core single-call with conversation memory  (used by chunk calls)
+    #  Helper: split OCR text into overlapping page-chunks
     # --------------------------------------------------------------------- #
-    @retry(tries=3, delay=1, backoff=2, logger=app_logger)
-    async def query_with_memory(self, messages: List[Dict[str, str]]) -> str:
-        token = getAuthToken(
-            Constant.HORIZON_CLIENT_ID,
-            Constant.HORIZON_CLIENT_SECRET,
-            Constant.HORIZON_GATEWAY,
-        )
-        if not token:
-            self.logger.error("Q&A : Authentication Failed (token empty)")
-            return ""
-
-        completion = self.chats(
-            authToken=token,
-            address=Constant.HORIZON_GATEWAY,
-            messages=messages,
-        )
-        if completion:
-            return json.loads(completion.text)["message"]["content"]
-
-        self.logger.error("No response from Q&A LLM.")
-        return ""
-
-    # --------------------------------------------------------------------- #
-    #  Existing guard-rail wrapper (unchanged)
-    # --------------------------------------------------------------------- #
-    async def execute_chat_with_guardrail(self, messages, user_question, history):
-        guardrail_task = asyncio.create_task(
-            self.GuardrailsDetection.apply_guardrail(user_question, history)
-        )
-        chat_task = asyncio.create_task(self.query_with_memory(messages))
-
-        while True:
-            done, _ = await asyncio.wait(
-                [guardrail_task, chat_task], return_when=asyncio.FIRST_COMPLETED
-            )
-
-            if guardrail_task in done:
-                gr_resp = self.safe_load_json(guardrail_task.result())
-                if gr_resp["Status"] == "Reject":
-                    chat_task.cancel()
-                    return self.GuardrailsDetection.get_response_for_guardrail(gr_resp, "Rejected")
-            if chat_task in done:
-                return chat_task.result(), "Approved"
-            await asyncio.sleep(0.1)
-
-    # --------------------------------------------------------------------- #
-    #  New: call one LLM request per chunk (NO guard-rails)
-    # --------------------------------------------------------------------- #
-    async def _one_chunk_call(
-        self,
-        chunk: str,
-        history: List[Dict[str, str]],
-        user_question: str,
-        sys_tpl: str,
-        user_tpl: str,
-    ) -> str:
-        msgs = [
-            {"role": "system", "content": sys_tpl.format(context=chunk)},
-            *history,
-            {"role": "user", "content": user_tpl.format(user_question=user_question)},
-        ]
-        return await self.query_with_memory(msgs)
-
-    async def run_on_chunks(
-        self,
-        chunks: Iterable[str],
-        history: List[Dict[str, str]],
-        user_question: str,
-        sys_tpl: str,
-        user_tpl: str,
+    def _chunk_context(
+        self, full_text: str, pages_per_chunk: int = 50, overlap: int = 20
     ) -> List[str]:
-        coros = [
-            self._one_chunk_call(chunk, history, user_question, sys_tpl, user_tpl)
-            for chunk in chunks
-        ]
-        return await asyncio.gather(*coros)
+        positions: List[tuple[int, int]] = []
+        for m in PAGE_TAG_RE.finditer(full_text):
+            positions.append((int(m.group(1)), m.start()))
+        positions.append((positions[-1][0] + 1, len(full_text)))  # sentinel
+
+        # page → (start, end)
+        page_slice: Dict[int, tuple[int, int]] = {
+            p: (start, positions[i + 1][1]) for i, (p, start) in enumerate(positions[:-1])
+        }
+        max_page = max(page_slice)
+
+        step = pages_per_chunk - overlap
+        start_page = 1
+        chunks = []
+        while start_page <= max_page:
+            end_page = start_page + pages_per_chunk - 1
+            chunk_start = page_slice[start_page][0]
+            chunk_end   = page_slice[min(end_page, max_page)][1]
+            chunks.append(full_text[chunk_start:chunk_end])
+            start_page += step
+        return chunks
 
     # --------------------------------------------------------------------- #
-    #  New: merge partial answers into one final JSON answer
+    #  Parallel scheduler: guard-rail on question + chunk queries
     # --------------------------------------------------------------------- #
-    async def summarize_answers(self, answers: List[str], user_question: str) -> str:
-        numbered = "\n".join(f"{i+1}. {a}" for i, a in enumerate(answers))
-        msgs = [
-            {"role": "system", "content": CHUNK_SUMMARY_PROMPT},
-            {"role": "user", "content": f"Question:\n{user_question}\n\nPartialAnswers:\n{numbered}"},
-        ]
-        final, _ = await self.execute_chat_with_guardrail(msgs, user_question, history=[])
-        return final
+    async def _run_parallel(
+        self, full_text: str, history: List[dict[str, str]], user_question: str
+    ) -> str:
+        chunks = self._chunk_context(full_text)
 
+        guardrail_task = asyncio.create_task(
+            self.llm_client.GuardrailsDetection.apply_guardrail(user_question, history)
+        )
 
+        chunks_task = asyncio.create_task(
+            self.llm_client.run_on_chunks(
+                chunks, history, user_question, self.SYS_TPL, self.USER_TPL
+            )
+        )
 
+        done, _ = await asyncio.wait(
+            [guardrail_task, chunks_task], return_when=asyncio.FIRST_COMPLETED
+        )
 
+        # 1️⃣ guard-rails finished first
+        if guardrail_task in done:
+            gr = self.llm_client.safe_load_json(guardrail_task.result())
+            if gr["Status"] == "Reject":
+                chunks_task.cancel()
+                return self.llm_client.GuardrailsDetection.get_response_for_guardrail(gr, "Rejected")
+            answers = await chunks_task
+        else:
+            # 2️⃣ chunk answers finished first
+            answers = chunks_task.result()
+            gr = self.llm_client.safe_load_json(await guardrail_task)
+            if gr["Status"] == "Reject":
+                return self.llm_client.GuardrailsDetection.get_response_for_guardrail(gr, "Rejected")
 
-content = "You are a helpful medical assistant. Use only the provided context to answer the user's questions. Do not make assumptions."
+        # summarise across all chunks
+        return await self.llm_client.summarize_answers(answers, user_question)
 
-history = [
-    {"role": "user", "content": "What is the patient's name?"},
-    {"role": "assistant", "content": "The patient's name is Evelyn Frederick. Evidence: [Page 2]"},
-    {"role": "user", "content": "What is her latest HbA1c result?"},
-    {"role": "assistant", "content": "HbA1c is 8.9%. Evidence: [Page 5]"}
-]
+    # --------------------------------------------------------------------- #
+    #  MAIN entry – called by API layer
+    # --------------------------------------------------------------------- #
+    async def _process_request_async(
+        self, session_id: str, user_question: str, file_path: Optional[str] = None
+    ) -> str:
+        try:
+            # Greeting (only first turn)
+            if not session_exists(session_id):
+                greet = self.llm_client.check_greeting(user_question)
+                if greet:
+                    return json.dumps(greet)
 
-user_question = "What medications is she currently taking?"
+            if not file_path:
+                return json.dumps({"session_id": session_id, "error": "File path required"})
 
-msgs = [
-    {"role": "system", "content": content},
-    *history,
-    {"role": "user", "content": user_question}
-]
+            full_text = self.file_handler.process_files_from_api_sequential(file_path, start_seq=1)
+            history   = get_chat_history(session_id)
+            tokens    = count_tokens_for_context(full_text)
+
+            # ── Normal vs big-document path
+            if tokens <= 50_000:
+                messages = [
+                    {"role": "system", "content": self.SYS_TPL.format(context=full_text)},
+                    *history,
+                    {"role": "user", "content": self.USER_TPL.format(user_question=user_question)},
+                ]
+                resp, _ = await self.llm_client.execute_chat_with_guardrail(
+                    messages, user_question, history
+                )
+                return resp
+
+            # big doc ⇒ parallel chunk flow
+            return await self._run_parallel(full_text, history, user_question)
+
+        except Exception as exc:
+            self.logger.error(traceback.format_exc())
+            return json.dumps({"error": str(exc)})
