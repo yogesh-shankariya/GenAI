@@ -133,3 +133,8 @@ Question: What were the patient's latest HbA1c and LDL-C results?
 2. Encounter Date: 2024-05-07
    LDL-C is 110 mg/dL.                  Evidence: [Page 17]
 
+
+Here is a professionally rewritten version of your sentence:
+
+"Each partial answer is generated from a chunk of the context, as the full context is too large and is split into smaller segments. The LLM produces a response for each chunk using the corresponding question and chunked context."
+
