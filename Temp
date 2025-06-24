@@ -1,54 +1,36 @@
-from typing import List, Dict, Tuple
 import re
+from typing import List
 
-PAGE_TAG_RE = re.compile(r"<ocr_service_page_start>\s*(\d+)", re.I)
+TAG_PATTERN = r'<ocr_service_page_start>(\d+)<ocr_service_page_start>'
 
-def _chunk_context(full_text: str,
-                   pages_per_chunk: int = 50,
-                   overlap: int = 20) -> List[str]:
-    # ─────────────── record every tag position ───────────────
-    positions: List[Tuple[int, int]] = []
-    for m in PAGE_TAG_RE.finditer(full_text):
-        page = int(m.group(1))
-        # skip duplicates: keep first occurrence only
-        if not positions or positions[-1][0] != page:
-            positions.append((page, m.start()))
+def chunk_context(context: str, chunk_size: int = 50, overlap: int = 20) -> List[str]:
+    page_tags = list(re.finditer(TAG_PATTERN, context))
+    page_numbers = [int(match.group(1)) for match in page_tags]
 
-    if not positions:
-        return [full_text]                # no tags at all → single chunk
+    chunks = []
+    start_index = 0
 
-    # sentinel so the last page gets a slice end
-    positions.append((positions[-1][0] + 1, len(full_text)))
+    while start_index < len(page_numbers):
+        start_page = page_numbers[start_index]
+        end_page_number = start_page + chunk_size - 1
 
-    # page → (start, end)
-    page_slice: Dict[int, Tuple[int, int]] = {
-        p: (start, positions[i + 1][1])
-        for i, (p, start) in enumerate(positions[:-1])
-    }
-    all_pages = sorted(page_slice)         # e.g. [1,2,3,5,6,7,12,…]
+        end_index = start_index
+        while end_index < len(page_numbers) and page_numbers[end_index] <= end_page_number:
+            end_index += 1
 
-    # ─────────────── build overlapping windows ───────────────
-    step = pages_per_chunk - overlap
-    chunks: List[str] = []
+        if end_index < len(page_numbers):
+            end_offset = page_tags[end_index].start()
+        else:
+            end_offset = len(context)
 
-    start_idx = 0                          # index into all_pages list
-    while start_idx < len(all_pages):
-        # window of page indices we want
-        window_pages = []
-        first_page = all_pages[start_idx]
-        last_allowed = first_page + pages_per_chunk - 1
-        idx = start_idx
-        # collect pages while within window
-        while idx < len(all_pages) and all_pages[idx] <= last_allowed:
-            window_pages.append(all_pages[idx])
-            idx += 1
+        start_offset = page_tags[start_index].start()
+        chunk = context[start_offset:end_offset]
+        chunks.append(chunk)
 
-        # slice boundaries = first page start … last page end
-        chunk_start = page_slice[window_pages[0]][0]
-        chunk_end   = page_slice[window_pages[-1]][1]
-        chunks.append(full_text[chunk_start:chunk_end])
+        # Move the start_index forward by (chunk_size - overlap)
+        next_start_page = start_page + chunk_size - overlap
 
-        # advance by `step` pages in the ordered page list
-        start_idx += max(1, step)          # avoid infinite loop on tiny docs
+        # Find the index of the next starting page
+        start_index = next((i for i, p in enumerate(page_numbers) if p >= next_start_page), len(page_numbers))
 
     return chunks
