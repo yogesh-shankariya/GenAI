@@ -1,64 +1,54 @@
-import json
-import os
-import asyncio
-from typing import Any, Dict
+from typing import List, Dict, Tuple
+import re
 
-# ---------- initialise once, e.g. at module import --------------------------
-STEP_LOG_PATH: str = "step_outputs.json"
-step_outputs: Dict[str, Any] = {}
-step_lock: asyncio.Lock = asyncio.Lock()
+PAGE_TAG_RE = re.compile(r"<ocr_service_page_start>\s*(\d+)", re.I)
 
-# ------------- utility to load existing data on startup ---------------------
-def _load_existing_steps() -> None:
-    global step_outputs
-    if os.path.isfile(STEP_LOG_PATH):
-        with open(STEP_LOG_PATH, "r", encoding="utf-8") as fh:
-            try:
-                step_outputs = json.load(fh)
-            except json.JSONDecodeError:
-                # corrupted file → start fresh
-                step_outputs = {}
+def _chunk_context(full_text: str,
+                   pages_per_chunk: int = 50,
+                   overlap: int = 20) -> List[str]:
+    # ─────────────── record every tag position ───────────────
+    positions: List[Tuple[int, int]] = []
+    for m in PAGE_TAG_RE.finditer(full_text):
+        page = int(m.group(1))
+        # skip duplicates: keep first occurrence only
+        if not positions or positions[-1][0] != page:
+            positions.append((page, m.start()))
 
-# call once at startup
-_load_existing_steps()
+    if not positions:
+        return [full_text]                # no tags at all → single chunk
 
-# --------------------------------------------------------------------------- #
-async def record_step_output(step_number: int, output: Any) -> None:
-    """
-    Store or update an entry in `step_outputs.json` with proper indentation.
+    # sentinel so the last page gets a slice end
+    positions.append((positions[-1][0] + 1, len(full_text)))
 
-    Example call:
-        await record_step_output(1, {"status": 200, "data": "hello"})
+    # page → (start, end)
+    page_slice: Dict[int, Tuple[int, int]] = {
+        p: (start, positions[i + 1][1])
+        for i, (p, start) in enumerate(positions[:-1])
+    }
+    all_pages = sorted(page_slice)         # e.g. [1,2,3,5,6,7,12,…]
 
-    Result in file:
-        {
-          "step-1": {
-            "status": 200,
-            "data": "hello"
-          },
-          ...
-        }
-    """
-    key = f"step-{step_number}"
+    # ─────────────── build overlapping windows ───────────────
+    step = pages_per_chunk - overlap
+    chunks: List[str] = []
 
-    async with step_lock:                # guarantees async-safe writes
-        step_outputs[key] = output       # update in-memory dict
-        # write atomically
-        tmp_path = STEP_LOG_PATH + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as fh:
-            json.dump(step_outputs, fh, indent=2, ensure_ascii=False)
-        os.replace(tmp_path, STEP_LOG_PATH)
+    start_idx = 0                          # index into all_pages list
+    while start_idx < len(all_pages):
+        # window of page indices we want
+        window_pages = []
+        first_page = all_pages[start_idx]
+        last_allowed = first_page + pages_per_chunk - 1
+        idx = start_idx
+        # collect pages while within window
+        while idx < len(all_pages) and all_pages[idx] <= last_allowed:
+            window_pages.append(all_pages[idx])
+            idx += 1
 
-def record_step_output_sync(step_number: int, output):
-    """
-    Thread-safe helper that works whether or not an event loop is running.
-    """
-    coro = record_step_output(step_number, output)
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        # no loop → safe to start one
-        asyncio.run(coro)
-    else:
-        # loop already running → fire-and-forget task
-        asyncio.create_task(coro)
+        # slice boundaries = first page start … last page end
+        chunk_start = page_slice[window_pages[0]][0]
+        chunk_end   = page_slice[window_pages[-1]][1]
+        chunks.append(full_text[chunk_start:chunk_end])
+
+        # advance by `step` pages in the ordered page list
+        start_idx += max(1, step)          # avoid infinite loop on tiny docs
+
+    return chunks
