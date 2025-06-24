@@ -27,10 +27,11 @@ def chunk_context(context: str, chunk_size: int = 50, overlap: int = 20) -> List
         chunk = context[start_offset:end_offset]
         chunks.append(chunk)
 
-        # Move the start_index forward by (chunk_size - overlap)
+        if end_index == len(page_numbers):
+            break
+
         next_start_page = start_page + chunk_size - overlap
 
-        # Find the index of the next starting page
         start_index = next((i for i, p in enumerate(page_numbers) if p >= next_start_page), len(page_numbers))
 
     return chunks
