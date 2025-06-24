@@ -11,7 +11,57 @@ import os
 import re
 import traceback
 from pathlib import Path
-from typing import Optional, List, Dict
+from typing import Optional, List, Dictimport json
+import os
+import asyncio
+from typing import Any, Dict
+
+# ---------- initialise once, e.g. at module import --------------------------
+STEP_LOG_PATH: str = "step_outputs.json"
+step_outputs: Dict[str, Any] = {}
+step_lock: asyncio.Lock = asyncio.Lock()
+
+# ------------- utility to load existing data on startup ---------------------
+def _load_existing_steps() -> None:
+    global step_outputs
+    if os.path.isfile(STEP_LOG_PATH):
+        with open(STEP_LOG_PATH, "r", encoding="utf-8") as fh:
+            try:
+                step_outputs = json.load(fh)
+            except json.JSONDecodeError:
+                # corrupted file → start fresh
+                step_outputs = {}
+
+# call once at startup
+_load_existing_steps()
+
+# --------------------------------------------------------------------------- #
+async def record_step_output(step_number: int, output: Any) -> None:
+    """
+    Store or update an entry in `step_outputs.json` with proper indentation.
+
+    Example call:
+        await record_step_output(1, {"status": 200, "data": "hello"})
+
+    Result in file:
+        {
+          "step-1": {
+            "status": 200,
+            "data": "hello"
+          },
+          ...
+        }
+    """
+    key = f"step-{step_number}"
+
+    async with step_lock:                # guarantees async-safe writes
+        step_outputs[key] = output       # update in-memory dict
+        # write atomically
+        tmp_path = STEP_LOG_PATH + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as fh:
+            json.dump(step_outputs, fh, indent=2, ensure_ascii=False)
+        os.replace(tmp_path, STEP_LOG_PATH)
+
 
 from chatbot.src.utils.config_loader import load_config
 from chatbot.src.utils.prompt_loader import load_prompt
