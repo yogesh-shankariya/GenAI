@@ -213,3 +213,18 @@ class Chatbot:
         except Exception as exc:
             self.logger.error(traceback.format_exc())
             return json.dumps({"error": str(exc)})
+
+
+def record_step_output_sync(step_number: int, output):
+    """
+    Thread-safe helper that works whether or not an event loop is running.
+    """
+    coro = record_step_output(step_number, output)
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # no loop → safe to start one
+        asyncio.run(coro)
+    else:
+        # loop already running → fire-and-forget task
+        asyncio.create_task(coro)
