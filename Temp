@@ -1,37 +1,15 @@
-import re
-from typing import List
+Example of the **input structure** you will get :
 
-TAG_PATTERN = r'<ocr_service_page_start>(\d+)<ocr_service_page_start>'
-
-def chunk_context(context: str, chunk_size: int = 50, overlap: int = 20) -> List[str]:
-    page_tags = list(re.finditer(TAG_PATTERN, context))
-    page_numbers = [int(match.group(1)) for match in page_tags]
-
-    chunks = []
-    start_index = 0
-
-    while start_index < len(page_numbers):
-        start_page = page_numbers[start_index]
-        end_page_number = start_page + chunk_size - 1
-
-        end_index = start_index
-        while end_index < len(page_numbers) and page_numbers[end_index] <= end_page_number:
-            end_index += 1
-
-        if end_index < len(page_numbers):
-            end_offset = page_tags[end_index].start()
-        else:
-            end_offset = len(context)
-
-        start_offset = page_tags[start_index].start()
-        chunk = context[start_offset:end_offset]
-        chunks.append(chunk)
-
-        if end_index == len(page_numbers):
-            break
-
-        next_start_page = start_page + chunk_size - overlap
-
-        start_index = next((i for i, p in enumerate(page_numbers) if p >= next_start_page), len(page_numbers))
-
-    return chunks
+"Metformin HCl - take 1 tablet by oral route 2 times every day with morning and evening meals. Evidence: [Page 7]
+FARXIGA - take 1 tablet by oral route every day in the morning. Evidence: [Page 7]
+LANTUS SOLOSTAR - inject 20u twice daily as directed for diabetes. Evidence: [Page 8]
+Hydroxyzine HCl - take 1 tablet by oral route 3 times every day as needed. Evidence: [Page 8]
+Triamcinolone acetonide - apply by topical route every day a thin layer to the affected area(s). Evidence: [Page 9]
+CONTOUR NEXT TEST STRIP - take 1 by capillary route every day." Evidence: [Page 9]
+A1C level is 8.6, with a reference range of 4.0-5.9%. Evidence: [Page 19]
+Lipid Panel results: Evidence: [Page 19]
+Cholesterol Total: 187 mg/dL (Reference Range: 100-199 mg/dL) Evidence: [Page 19]
+HDL Cholesterol: 50 mg/dL (Reference Range: >39 mg/dL) Evidence: [Page 19]
+LDL Cholesterol Calc (NIH): 115 mg/dL (Out of Range, Reference Range: 0-99 mg/dL) Evidence: [Page 29]
+Triglycerides: 124 mg/dL (Reference Range: 0-149 mg/dL) Evidence: [Page 29]
+VLDL Cholesterol: 24 mg/dL (Reference Range: 5-40 mg/dL) Evidence: [Page 29]"
