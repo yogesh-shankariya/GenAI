@@ -1,7 +1,15 @@
 {
-  "Page-7": "Metformin HCl - take 1 tablet by oral route 2 times every day with morning and evening meals. FARXIGA - take 1 tablet by oral route every day in the morning.",
-  "Page-8": "LANTUS SOLOSTAR - inject 20u twice daily as directed for diabetes. Hydroxyzine HCl - take 1 tablet by oral route 3 times every day as needed.",
-  "Page-9": "Triamcinolone acetonide - apply by topical route every day a thin layer to the affected area(s). CONTOUR NEXT TEST STRIP - take 1 by capillary route every day.",
-  "Page-19": "A1C level is 8.6, with a reference range of 4.0-5.9%. Lipid Panel results: Cholesterol Total: 187 mg/dL (Reference Range: 100-199 mg/dL). HDL Cholesterol: 50 mg/dL (Reference Range: >39 mg/dL).",
-  "Page-29": "LDL Cholesterol Calc (NIH): 115 mg/dL (Out of Range, Reference Range: 0-99 mg/dL). Triglycerides: 124 mg/dL (Reference Range: 0-149 mg/dL). VLDL Cholesterol: 24 mg/dL (Reference Range: 5-40 mg/dL)."
+  "session_id": "patientN2",
+  "content": "The name of the patient is Evelyn Frederick.\n\nThe medications are:\n1. Allegra-D 24 Hour 180 mg-240 mg tablet extended release\n2. Albuterol sulfate HFA 90 mcg/actuation aerosol inhaler\n3. Famotidine 20 mg tablet\n4. Prednisone 20 mg tablet (started this visit)",
+  "error": null,
+  "references": [
+    {
+      "Evidence": "Patient Information",
+      "Page": 1
+    },
+    {
+      "Evidence": "Medications",
+      "Page": 2
+    }
+  ]
 }
