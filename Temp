@@ -1,72 +1,21 @@
-async def execute_chat_with_guardrail(
-    self,
-    messages: List[Dict[str, str]],
-    user_question: str,
-    history,
+# utils for timing -----------------------------------------------------------
+from typing import Callable, Any, Awaitable
+
+async def _run_timed(
+    coro: Awaitable[Any],
     *,
-    metrics: Optional[Dict[str, Any]] = None,
-) -> Tuple[str, Dict[str, Any]]:
-
-    # ── start both timers ───────────────────────────────────────────
-    t0 = time.perf_counter()                 # common “launch” time
-    guardrail_start = t0
-    llm_start       = t0
-
-    guardrail_task = asyncio.create_task(
-        self.GuardrailsDetection.apply_guardrail(user_question, history)
-    )
-    chat_task = asyncio.create_task(
-        self.query_with_memory(messages)
-    )
-
-    # wait until *either* guard-rail or chat finishes first
-    done, _ = await asyncio.wait(
-        [guardrail_task, chat_task],
-        return_when=asyncio.FIRST_COMPLETED,
-    )
-
-    # ── A. guard-rail finished first ────────────────────────────────
-    if guardrail_task in done:
-        gr_json = self.safe_load_json(guardrail_task.result())
-        guardrail_ms = (time.perf_counter() - guardrail_start) * 1_000
-
-        if metrics is not None:
-            metrics.update({
-                "guardrail_ms":   round(guardrail_ms, 1),
-                "guardrail_output": json.dumps(gr_json),
-            })
-
-        # hard reject → cancel the chat and return
-        if gr_json["Status"] == "Reject":
-            chat_task.cancel()
-            return "", gr_json
-
-        # otherwise wait for chat result, then time it
-        answer = await chat_task
-        llm_ms = (time.perf_counter() - llm_start) * 1_000
-        if metrics is not None:
-            metrics.update({
-                "llm_ms": round(llm_ms, 1),
-                "llm_output": answer,
-            })
-        return answer, gr_json
-
-    # ── B. chat finished first ──────────────────────────────────────
-    answer = chat_task.result()
-    llm_ms = (time.perf_counter() - llm_start) * 1_000
+    key: str,
+    metrics: dict | None = None,
+) -> Any:
+    """
+    Await `coro`, store its output & elapsed time (ms) in `metrics`
+    under   ‹key›_ms   and   ‹key›_output.
+    """
+    t0 = time.perf_counter()
+    result = await coro
     if metrics is not None:
         metrics.update({
-            "llm_ms":    round(llm_ms, 1),
-            "llm_output": answer,
+            f"{key}_ms":     round((time.perf_counter() - t0) * 1_000, 1),
+            f"{key}_output": json.dumps(result) if not isinstance(result, str) else result,
         })
-
-    # wait for guard-rail to finish, then time it
-    gr_json = self.safe_load_json(await guardrail_task)
-    guardrail_ms = (time.perf_counter() - guardrail_start) * 1_000
-    if metrics is not None:
-        metrics.update({
-            "guardrail_ms":   round(guardrail_ms, 1),
-            "guardrail_output": json.dumps(gr_json),
-        })
-
-    return answer, gr_json
+    return result
