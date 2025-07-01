@@ -1,57 +1,72 @@
-"""
-Centralised CSV logger for per-question metrics
-----------------------------------------------
-• Thread- & async-safe (uses file lock)
-• Writes header once
-• Appends one row per user question
-"""
-import csv, os, asyncio, hashlib, time
-from pathlib import Path
-from typing import Dict, Any
-from filelock import FileLock           # pip install filelock
+async def execute_chat_with_guardrail(
+    self,
+    messages: List[Dict[str, str]],
+    user_question: str,
+    history,
+    *,
+    metrics: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, Dict[str, Any]]:
 
-CSV_PATH = Path(os.getenv("METRICS_CSV", "conversation_metrics.csv")).resolve()
-_LOCK    = FileLock(str(CSV_PATH) + ".lock")
+    # ── start both timers ───────────────────────────────────────────
+    t0 = time.perf_counter()                 # common “launch” time
+    guardrail_start = t0
+    llm_start       = t0
 
-_HEADER = [                     # column order ⇒ rename freely
-    "session_id",
-    "question",
-    "tokens",
-    "guardrail_ms",
-    "guardrail_outcome",
-    "llm_ms",
-    "llm_answer",
-    "json_ms",
-    "json_answer",
-    "faith_ms",
-    "faith_score",
-    "faith_just",
-    "rel_ms",
-    "rel_score",
-    "rel_just",
-    "rec_ms",
-    "rec_questions",
-]
+    guardrail_task = asyncio.create_task(
+        self.GuardrailsDetection.apply_guardrail(user_question, history)
+    )
+    chat_task = asyncio.create_task(
+        self.query_with_memory(messages)
+    )
 
-def _write_header_if_needed() -> None:
-    if CSV_PATH.exists() and CSV_PATH.stat().st_size:
-        return
-    with _LOCK:
-        with CSV_PATH.open("w", newline="", encoding="utf-8") as fh:
-            csv.writer(fh).writerow(_HEADER)
+    # wait until *either* guard-rail or chat finishes first
+    done, _ = await asyncio.wait(
+        [guardrail_task, chat_task],
+        return_when=asyncio.FIRST_COMPLETED,
+    )
 
-async def append_row(row: Dict[str, Any]) -> None:
-    """Accept plain dict, coerce everything to str & append."""
-    _write_header_if_needed()
-    str_row = [str(row.get(col, "")) for col in _HEADER]
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, _sync_write, str_row)
+    # ── A. guard-rail finished first ────────────────────────────────
+    if guardrail_task in done:
+        gr_json = self.safe_load_json(guardrail_task.result())
+        guardrail_ms = (time.perf_counter() - guardrail_start) * 1_000
 
-def _sync_write(str_row):
-    with _LOCK:
-        with CSV_PATH.open("a", newline="", encoding="utf-8") as fh:
-            csv.writer(fh).writerow(str_row)
+        if metrics is not None:
+            metrics.update({
+                "guardrail_ms":   round(guardrail_ms, 1),
+                "guardrail_output": json.dumps(gr_json),
+            })
 
-# Utility: quick unique ID when caller hasn’t supplied one
-def new_session_id() -> str:
-    return hashlib.sha1(f"{time.time_ns()}".encode()).hexdigest()[:16]
+        # hard reject → cancel the chat and return
+        if gr_json["Status"] == "Reject":
+            chat_task.cancel()
+            return "", gr_json
+
+        # otherwise wait for chat result, then time it
+        answer = await chat_task
+        llm_ms = (time.perf_counter() - llm_start) * 1_000
+        if metrics is not None:
+            metrics.update({
+                "llm_ms": round(llm_ms, 1),
+                "llm_output": answer,
+            })
+        return answer, gr_json
+
+    # ── B. chat finished first ──────────────────────────────────────
+    answer = chat_task.result()
+    llm_ms = (time.perf_counter() - llm_start) * 1_000
+    if metrics is not None:
+        metrics.update({
+            "llm_ms":    round(llm_ms, 1),
+            "llm_output": answer,
+        })
+
+    # wait for guard-rail to finish, then time it
+    gr_json = self.safe_load_json(await guardrail_task)
+    guardrail_ms = (time.perf_counter() - guardrail_start) * 1_000
+    if metrics is not None:
+        metrics.update({
+            "guardrail_ms":   round(guardrail_ms, 1),
+            "guardrail_output": json.dumps(gr_json),
+        })
+
+    return answer, gr_json
