@@ -15,6 +15,7 @@ _LOCK    = FileLock(str(CSV_PATH) + ".lock")
 
 _HEADER = [                     # column order ⇒ rename freely
     "session_id",
+    "question",
     "tokens",
     "guardrail_ms",
     "guardrail_outcome",
