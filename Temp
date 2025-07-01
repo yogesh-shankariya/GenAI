@@ -1,4 +1,7 @@
-structured_ms,   structured_output
-faithfulness_ms, faithfulness_output
-relevance_ms,    relevance_output
-recommend_ms,    recommend_output
+if metrics is not None:
+    metrics.update({
+        "faith_score": faith_dict.get("score"),
+        "faith_just":  faith_dict.get("justification"),
+        "rel_score":   rel_dict.get("score"),
+        "rel_just":    rel_dict.get("justification"),
+    })
