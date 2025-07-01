@@ -1,36 +1,4 @@
-structured_task = asyncio.create_task(
-    _run_timed(
-        self.llm_client.get_structured_answer(response),
-        key="structured",
-        metrics=metrics,
-    )
-)
-faith_task = asyncio.create_task(
-    _run_timed(
-        self.ResponseValidationScoreCalculator.get_faithfulness_score(
-            answer=response, context=file_content
-        ),
-        key="faithfulness",
-        metrics=metrics,
-    )
-)
-rel_task = asyncio.create_task(
-    _run_timed(
-        self.ResponseValidationScoreCalculator.get_relevance_score(
-            answer=response,
-            context=file_content,
-            question=question_with_history,
-        ),
-        key="relevance",
-        metrics=metrics,
-    )
-)
-recommend_task = asyncio.create_task(
-    _run_timed(
-        self.llm_client.get_question_recommendation(
-            conversation=question_with_history
-        ),
-        key="recommend",
-        metrics=metrics,
-    )
-)
+structured_ms,   structured_output
+faithfulness_ms, faithfulness_output
+relevance_ms,    relevance_output
+recommend_ms,    recommend_output
