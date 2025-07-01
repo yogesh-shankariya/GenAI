@@ -1,21 +1,36 @@
-# utils for timing -----------------------------------------------------------
-from typing import Callable, Any, Awaitable
-
-async def _run_timed(
-    coro: Awaitable[Any],
-    *,
-    key: str,
-    metrics: dict | None = None,
-) -> Any:
-    """
-    Await `coro`, store its output & elapsed time (ms) in `metrics`
-    under   ‹key›_ms   and   ‹key›_output.
-    """
-    t0 = time.perf_counter()
-    result = await coro
-    if metrics is not None:
-        metrics.update({
-            f"{key}_ms":     round((time.perf_counter() - t0) * 1_000, 1),
-            f"{key}_output": json.dumps(result) if not isinstance(result, str) else result,
-        })
-    return result
+structured_task = asyncio.create_task(
+    _run_timed(
+        self.llm_client.get_structured_answer(response),
+        key="structured",
+        metrics=metrics,
+    )
+)
+faith_task = asyncio.create_task(
+    _run_timed(
+        self.ResponseValidationScoreCalculator.get_faithfulness_score(
+            answer=response, context=file_content
+        ),
+        key="faithfulness",
+        metrics=metrics,
+    )
+)
+rel_task = asyncio.create_task(
+    _run_timed(
+        self.ResponseValidationScoreCalculator.get_relevance_score(
+            answer=response,
+            context=file_content,
+            question=question_with_history,
+        ),
+        key="relevance",
+        metrics=metrics,
+    )
+)
+recommend_task = asyncio.create_task(
+    _run_timed(
+        self.llm_client.get_question_recommendation(
+            conversation=question_with_history
+        ),
+        key="recommend",
+        metrics=metrics,
+    )
+)
