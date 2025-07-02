@@ -1,7 +1,7 @@
-if metrics is not None:
-    metrics.update({
-        "faith_score": faith_dict.get("score"),
-        "faith_just":  faith_dict.get("justification"),
-        "rel_score":   rel_dict.get("score"),
-        "rel_just":    rel_dict.get("justification"),
-    })
+# ── NEW imports at top of file ───────────────────────────────────────────────
+from pathlib import Path
+import threading, datetime
+# ── choose a persistent logfile (rotates manually or via logrotate) ─────────
+_INVALID_JSON_DUMP = Path("logs/invalid_json_payloads.txt").resolve()
+_INVALID_JSON_LOCK = threading.Lock()
+_INVALID_JSON_DUMP.parent.mkdir(parents=True, exist_ok=True)   # ensure folder
