@@ -1,37 +1,26 @@
-@staticmethod
-def safe_load_json(text: str):
-    """
-    Try `json.loads(text)`.  
-    If it fails, strip Markdown fences *once* and retry.  
-    Regardless of success, write every failed payload to
-    logs/invalid_json_payloads.txt for forensic inspection.
-    """
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError as e_first:
-        # 1️⃣  Log *raw* payload
-        FileHandler._dump_invalid_json("RAW", text, e_first)
+@@
+ 4. Preserve key order: data ▸ content ▸ references.  
+ 5. The final output **must parse** with standard JSON parsers.  
++
++6. If the supplied *answer text* (after cleanup) says **“There is no information
++   available”** (or any close variant) *and* cites an Evidence tag, return **the
++   *minimal* JSON object below** – do **not** fabricate references:
++
++        {
++          "data": { "content": "Information is not available" },
++          "references": []
++        }
++
++   (The empty `references` array is required to preserve the schema.)
 
-        # 2️⃣  Second attempt after removing ```json fences
-        cleaned = FileHandler.strip_markdown_fences(text)
-        try:
-            return json.loads(cleaned)
-        except json.JSONDecodeError as e_second:
-            # 3️⃣  Log cleaned payload too
-            FileHandler._dump_invalid_json("CLEANED", cleaned, e_second)
-            # re-raise so caller handles it
-            raise
 
-@staticmethod
-def _dump_invalid_json(stage: str, payload: str, exc: Exception):
-    """
-    Append one well-delimited record to the dump file.
-    Uses a file lock so concurrent workers won't interleave.
-    """
-    ts   = datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z"
-    head = f"\n--- {ts}  ({stage})  {type(exc).__name__}: {exc} ---\n"
-    with _INVALID_JSON_LOCK:
-        with _INVALID_JSON_DUMP.open("a", encoding="utf-8") as fh:
-            fh.write(head)
-            fh.write(payload)
-            fh.write("\n")            # final newline
+## Example of a *missing-info* input & expected output
+
+Input :
+"There is no information available. Evidence: [Page 2]"
+
+Output :
+{
+  "data": { "content": "Information is not available" },
+  "references": []
+}
