@@ -1,8 +1,28 @@
-responses: list[bool] = []
-
-# process requests one-by-one, waiting for each to finish
-for row in json_data_arr:
-    ok = await call_endpoint(row)     # <- waits here
-    responses.append(ok)
-
-# responses now contains one entry per request in original order
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "string"
+        }
+      },
+      "required": ["content"]
+    },
+    "references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "Evidence": { "type": "string" },
+          "Page": { "type": "integer" }
+        },
+        "required": ["Evidence", "Page"]
+      }
+    }
+  },
+  "required": ["data", "references"],
+  "additionalProperties": false
+}
