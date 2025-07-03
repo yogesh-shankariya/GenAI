@@ -1,21 +1,18 @@
-# -- build compact context ---------------------------------------------------
-history_for_gr = [
-    m for m in (history or []) if m["role"] == "user"
-][-4:]                               # keep only a few recent user turns
-context_block = "Previous user questions (context only):\n" + \
-                json.dumps(history_for_gr)
+from itertools import groupby
+from operator  import itemgetter
 
-messages = [
-    {"role": "system", "content": self.guardrail_prompt},
-    {"role": "system", "content": context_block},
-    {"role": "user",   "content": user_request},
-]
+def order_rows(json_rows: list[dict]) -> list[dict]:
+    """
+    Return the rows ordered first by session_id, then by question.
+    Assumes each row looks like {'session_id': 'session_003',
+                                 'question'  : 'What is ...',
+                                 'file'      : '...pdf'}
+    """
+    # 1) sort by session_id then question text
+    json_rows.sort(key=lambda r: (r["session_id"], r["question"]))
 
-completion = self.chats(
-    authToken      = authToken,
-    address        = Constant.HORIZON_GATEWAY,
-    messages       = messages,
-    response_format={"type": "json_object"},
-    temperature    = 0,
-    top_p          = 0,
-)
+    # 2) flatten back – groupby here is optional, but shows the intent
+    ordered = []
+    for _sid, rows in groupby(json_rows, key=itemgetter("session_id")):
+        ordered.extend(rows)           # keeps original (sorted) order
+    return ordered
