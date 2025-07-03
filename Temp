@@ -20,7 +20,8 @@
           "Page": { "type": "integer" }
         },
         "required": ["Evidence", "Page"]
-      }
+      },
+      "minItems": 0
     }
   },
   "required": ["data", "references"],
