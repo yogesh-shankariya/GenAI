@@ -1,30 +1,21 @@
-def safe_load_json(
-        self,
-        txt: str,
-        *,                  # allows keyword-only extras
-        context: str = ""   # pass the question or any label here
-) -> dict:
-    """
-    Strict JSON loader.
-    • On success → dict
-    • On failure → log the context + raw text and raise again
-    """
-    try:
-        return json.loads(txt)
+# -- build compact context ---------------------------------------------------
+history_for_gr = [
+    m for m in (history or []) if m["role"] == "user"
+][-4:]                               # keep only a few recent user turns
+context_block = "Previous user questions (context only):\n" + \
+                json.dumps(history_for_gr)
 
-    except json.JSONDecodeError as e:
-        # 1. log to console / file
-        self.logger.error(
-            "JSONDecodeError in %s : %s", context or "<no-context>", str(e)
-        )
+messages = [
+    {"role": "system", "content": self.guardrail_prompt},
+    {"role": "system", "content": context_block},
+    {"role": "user",   "content": user_request},
+]
 
-        # 2. append the bad payload to a forensic file
-        with open("invalid_json_payloads.txt", "a", encoding="utf-8") as fh:
-            fh.write(
-                f"\n--- {datetime.now():%Y-%m-%d %H:%M:%S} ---\n"
-                f"context : {context or '<no-context>'}\n"
-                f"raw     :\n{txt}\n"
-            )
-
-        # 3. re-raise so the caller can decide what to do
-        raise
+completion = self.chats(
+    authToken      = authToken,
+    address        = Constant.HORIZON_GATEWAY,
+    messages       = messages,
+    response_format={"type": "json_object"},
+    temperature    = 0,
+    top_p          = 0,
+)
