@@ -1,26 +1,8 @@
-@@
- 4. Preserve key order: data ▸ content ▸ references.  
- 5. The final output **must parse** with standard JSON parsers.  
-+
-+6. If the supplied *answer text* (after cleanup) says **“There is no information
-+   available”** (or any close variant) *and* cites an Evidence tag, return **the
-+   *minimal* JSON object below** – do **not** fabricate references:
-+
-+        {
-+          "data": { "content": "Information is not available" },
-+          "references": []
-+        }
-+
-+   (The empty `references` array is required to preserve the schema.)
+responses: list[bool] = []
 
+# process requests one-by-one, waiting for each to finish
+for row in json_data_arr:
+    ok = await call_endpoint(row)     # <- waits here
+    responses.append(ok)
 
-## Example of a *missing-info* input & expected output
-
-Input :
-"There is no information available. Evidence: [Page 2]"
-
-Output :
-{
-  "data": { "content": "Information is not available" },
-  "references": []
-}
+# responses now contains one entry per request in original order
