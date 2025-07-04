@@ -1,21 +1,9 @@
-async def process_csv(question_path, file_path_path):
-    row_data      = list(get_requets_rows_generator(question_path, file_path_path))
-    json_data_arr = [
-        {"file": f, "question": q, "session_id": sid}
-        for q, (f, sid) in row_data          # <- your original unpack
-    ]
+Here’s the revised version without using “I”:
 
-    # <-- NEW: reorder
-    json_data_arr = order_rows(json_data_arr)
+**Hybrid MRR Chatbot:**
+As per the previous meeting’s discussion, around 1,200 questions were tested (20 files with 71 questions each). Outputs were documented using a framework that captures each step’s result along with time consumption for every process. The analysis includes guardrail accuracy and metrics for validating outputs in line with responsible AI practices.
 
-    responses: list[bool] = []
+**Next Step:**
+Although the files tested were randomly selected and the context size was within the LLM’s context window, the next step is to test larger files with human evaluation.
 
-    # process requests **one by one – fully awaited**
-    for row in json_data_arr:
-        ok = await call_endpoint(row)     # waits for completion
-        responses.append(ok)
-
-    # optional: report success stats
-    resp_ok = sum(responses)
-    print(f"{resp_ok}/{len(responses)} calls succeeded "
-          f"({resp_ok/len(responses):.0%})")
+Let me know if you'd like this further refined.
