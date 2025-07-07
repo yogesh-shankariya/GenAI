@@ -1,4 +1,4 @@
-Here’s a cleaner, more polished rewrite of your text:
+Here’s the updated and polished version with your additions:
 
 1. A total of 20 files were randomly selected, containing 71 questions each — resulting in approximately 1,420 questions used for testing.
 2. Achieved 100% accuracy in guardrails detection.
@@ -7,8 +7,10 @@ Here’s a cleaner, more polished rewrite of your text:
 5. Around 700 questions have been manually verified so far, with most aligning well with the context (verification is still in progress).
 6. The average time to generate an answer across all 1,420 questions is 7 seconds. Please refer to the *Analysis* tab for detailed analysis.
 7. The *conversation\_matrix* tab contains the output of each step along with time consumption details.
+8. The average faithfulness score is 0.58. Answers without available context show a faithfulness score of zero.
+9. The average relevance score is 0.91. Since relevance also considers the question, if no information is available, it is marked as 1 as per the question.
 
 **Next Step:**
 Currently in progress: Testing the chatbot on larger files, particularly those with context exceeding the model’s context window limit.
 
-If you'd like, I can further shorten or reformat this for a report or presentation—let me know!
+If you'd like, I can also help you prepare this as a table or slide summary. Let me know!
