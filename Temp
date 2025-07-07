@@ -1,1 +1,16 @@
-=A2 & "|" & B2 & "|" & C2
+import pandas as pd
+
+# Load your sheets
+sheet1 = pd.read_excel("your_file.xlsx", sheet_name="sheet_1")
+sheet2 = pd.read_excel("your_file.xlsx", sheet_name="sheet_2")
+
+# Merge on the common columns
+merged = pd.merge(
+    sheet1,
+    sheet2[['session_id', 'file_path', 'question', 'Human Verification', 'comments']],
+    on=['session_id', 'file_path', 'question'],
+    how='left'
+)
+
+# Save to new Excel
+merged.to_excel("merged_output.xlsx", index=False)
