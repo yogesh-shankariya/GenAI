@@ -1,16 +1,14 @@
-import pandas as pd
+Here’s a cleaner, more polished rewrite of your text:
 
-# Load your sheets
-sheet1 = pd.read_excel("your_file.xlsx", sheet_name="sheet_1")
-sheet2 = pd.read_excel("your_file.xlsx", sheet_name="sheet_2")
+1. A total of 20 files were randomly selected, containing 71 questions each — resulting in approximately 1,420 questions used for testing.
+2. Achieved 100% accuracy in guardrails detection.
+3. Each answer was generated with evidence provided on the next line, except for guardrail cases and when information was not available in the context.
+4. Successfully converted the raw output into structured JSON format, including title and page number as evidence for all questions.
+5. Around 700 questions have been manually verified so far, with most aligning well with the context (verification is still in progress).
+6. The average time to generate an answer across all 1,420 questions is 7 seconds. Please refer to the *Analysis* tab for detailed analysis.
+7. The *conversation\_matrix* tab contains the output of each step along with time consumption details.
 
-# Merge on the common columns
-merged = pd.merge(
-    sheet1,
-    sheet2[['session_id', 'file_path', 'question', 'Human Verification', 'comments']],
-    on=['session_id', 'file_path', 'question'],
-    how='left'
-)
+**Next Step:**
+Currently in progress: Testing the chatbot on larger files, particularly those with context exceeding the model’s context window limit.
 
-# Save to new Excel
-merged.to_excel("merged_output.xlsx", index=False)
+If you'd like, I can further shorten or reformat this for a report or presentation—let me know!
