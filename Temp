@@ -1,15 +1,18 @@
-Here’s a cleaner rewrite of the email content:
+async def sendHttpRequest(
+    data="", files="", params="", header="", method="", address="", endpoint="", stream=False
+) -> httpx.Response:
+    protocol = "https"
+    url = f"{protocol}://{address}{endpoint}"
 
----
+    async with httpx.AsyncClient() as client:
+        response = await client.request(
+            method=method,
+            url=url,
+            headers=header,
+            data=data,
+            files=files,
+            params=params,
+            follow_redirects=True,
+        )
 
-Hello Harsh,
-
-As discussed, we have tested approximately 1,400 questions across 20 different charts.
-Please refer to the attached Excel sheet for the detailed analysis.
-
-Thanks and regards,
-Yogesh Shankariya (he/him)
-
----
-
-Let me know if you'd like to adjust the tone (e.g., more formal or casual).
+    return response
