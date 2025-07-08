@@ -1,18 +1,6 @@
-async def sendHttpRequest(
-    data="", files="", params="", header="", method="", address="", endpoint="", stream=False
-) -> httpx.Response:
-    protocol = "https"
-    url = f"{protocol}://{address}{endpoint}"
-
-    async with httpx.AsyncClient() as client:
-        response = await client.request(
-            method=method,
-            url=url,
-            headers=header,
-            data=data,
-            files=files,
-            params=params,
-            follow_redirects=True,
-        )
-
-    return response
+session_ids = [
+    "session_022", "session_023", "session_024", "session_025", "session_026",
+    "session_027", "session_028", "session_029", "session_030", "session_031",
+    "session_032", "session_033", "session_034", "session_035", "session_036",
+    "session_037", "session_038", "session_039", "session_040"
+]
