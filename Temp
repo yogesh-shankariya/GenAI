@@ -1,6 +1,8 @@
-session_ids = [
-    "session_022", "session_023", "session_024", "session_025", "session_026",
-    "session_027", "session_028", "session_029", "session_030", "session_031",
-    "session_032", "session_033", "session_034", "session_035", "session_036",
-    "session_037", "session_038", "session_039", "session_040"
-]
+*If the answer is derived from multiple pages and the information cannot be split across individual answers per page, then provide the evidence in the following format:
+# Evidence: [Page N1], [Page N2], etc.
+
+Example:  
+Question: How many encounter visits are there in the patient's chart?  
+Answer: There are two encounter visits available.  
+Evidence: [Page 2], [Page 24]  
+(Note: Since the answer cannot be separated page-wise, you are allowed to list multiple pages as evidence.)
