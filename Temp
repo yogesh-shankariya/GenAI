@@ -1,8 +1,7 @@
-*If the answer is derived from multiple pages and the information cannot be split across individual answers per page, then provide the evidence in the following format:
-# Evidence: [Page N1], [Page N2], etc.
+We are currently using two evaluation metrics:
 
-Example:  
-Question: How many encounter visits are there in the patient's chart?  
-Answer: There are two encounter visits available.  
-Evidence: [Page 2], [Page 24]  
-(Note: Since the answer cannot be separated page-wise, you are allowed to list multiple pages as evidence.)
+* **Faithfulness Score** – measures how well the answer aligns with the given context.
+* **Relevance Score** – measures how relevant the answer is to both the question and the context.
+  Both scores range from 0 to 1, with higher values indicating better performance.
+
+Discussions for production deployment are still in progress.
