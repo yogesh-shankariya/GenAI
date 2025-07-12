@@ -1,34 +1,21 @@
-user_prompt_template: |
-  Question: {user_question}
-
-  Answer:
-  <your answer here>
-
-  # FORMAT INSTRUCTIONS
-  # --------------------------------------------------
-  # 1. Begin each encounter section with ONE line:
-  #    Encounter Date: [yyyy-mm-dd]
-  #
-  # 2. List all factual lines for that encounter.
-  #
-  # 3. Group consecutive factual lines that share the
-  #    same supporting page.  After each group, write ONE line:
-  #    Evidence: [Page N]
-  #
-  #    Example:
-  #      Encounter Date: 2023-07-02
-  #      Medication-3
-  #      Medication-4
-  #      Evidence: [Page 11]
-  #
-  #      Medication-5
-  #      Evidence: [Page 12]
-  #
-  # 4. An encounter can have multiple Evidence lines, but
-  #    each page number must appear only once per consecutive group.
-  #
-  # 5. Never cite page ranges (e.g., [Page 2-5]) or multiple pages
-  #    in a single Evidence line.
-  #
-  # 6. Omit any claim that lacks supporting evidence.
-  # --------------------------------------------------
+##############################################
+## EXAMPLE – DON’T CHANGE THIS FORMAT
+##############################################
+# Example Question:
+#   What are the current medications?
+#
+# Example Answer:
+#   Encounter Date: 2023-07-01
+#   Medication-1
+#   Medication-2
+#   Evidence: [Page 1]
+#
+#   Encounter Date: 2023-07-02
+#   Medication-3
+#   Medication-4
+#   Evidence: [Page 11]
+#
+#   Medication-5
+#   Evidence: [Page 12]
+#
+# (The model should mimic this structure for every answer.)
