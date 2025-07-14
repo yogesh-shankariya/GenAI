@@ -1,21 +1,18 @@
-from langchain.chains import create_history_aware_retriever
-from langchain_core.prompts import MessagesPlaceholder
+Here is a 10-line write-up for your **Hybrid MRR Chatbot** that expands your original line while maintaining clarity and professionalism:
 
-contextualize_q_system_prompt = (
-    "Given a chat history and the latest user question "
-    "which might reference context in the chat history, "
-    "formulate a standalone question which can be understood "
-    "without the chat history. Do NOT answer the question, "
-    "just reformulate it if needed and otherwise return it as is."
-)
+---
 
-contextualize_q_prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", contextualize_q_system_prompt),
-        MessagesPlaceholder("chat_history"),
-        ("human", "{input}"),
-    ]
-)
-history_aware_retriever = create_history_aware_retriever(
-    llm, retriever, contextualize_q_prompt
-)
+The Hybrid MRR Chatbot is a comprehensive AI-driven solution built on OpenAI’s foundation.
+It enables insightful, evidence-backed responses to user queries on medical charts.
+Designed specifically for Hybrid Medical Record Review (MRR) teams, it streamlines clinical data interpretation.
+The chatbot extracts meaningful insights from complex, unstructured documents like office visits, labs, and medications.
+Every answer is grounded in contextual evidence, improving transparency and trust.
+It reduces manual effort and review time, enabling faster, more informed decisions.
+Supports compliance and audit-readiness by preserving traceable document references.
+Offers a conversational interface for quick access to clinically relevant information.
+Empowers reviewers and stakeholders with structured outputs and precise medical facts.
+Overall, it enhances operational efficiency and decision-making accuracy in the MRR workflow.
+
+---
+
+Let me know if you'd like it tailored for a slide, email, or executive summary.
