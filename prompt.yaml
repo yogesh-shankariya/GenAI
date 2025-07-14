@@ -1,21 +1,21 @@
-##############################################
-## EXAMPLE – DON’T CHANGE THIS FORMAT
-##############################################
-# Example Question:
-#   What are the current medications?
-#
-# Example Answer:
-#   Encounter Date: 2023-07-01
-#   Medication-1
-#   Medication-2
-#   Evidence: [Page 1]
-#
-#   Encounter Date: 2023-07-02
-#   Medication-3
-#   Medication-4
-#   Evidence: [Page 11]
-#
-#   Medication-5
-#   Evidence: [Page 12]
-#
-# (The model should mimic this structure for every answer.)
+from langchain.chains import create_history_aware_retriever
+from langchain_core.prompts import MessagesPlaceholder
+
+contextualize_q_system_prompt = (
+    "Given a chat history and the latest user question "
+    "which might reference context in the chat history, "
+    "formulate a standalone question which can be understood "
+    "without the chat history. Do NOT answer the question, "
+    "just reformulate it if needed and otherwise return it as is."
+)
+
+contextualize_q_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", contextualize_q_system_prompt),
+        MessagesPlaceholder("chat_history"),
+        ("human", "{input}"),
+    ]
+)
+history_aware_retriever = create_history_aware_retriever(
+    llm, retriever, contextualize_q_prompt
+)
