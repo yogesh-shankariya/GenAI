@@ -1,3 +1,7 @@
-Here’s a concise paragraph write-up for the **TMV Chatbot**:
+Sure, here are both write-ups condensed into 4-line paragraphs:
 
-The TMV (Total Member View) Chatbot is an intelligent AI assistant designed to provide a unified, 360-degree view of a member’s healthcare journey. Built using a combination of structured JSON data sources (such as claims, office visits, immunizations, etc.) and unstructured PDFs containing encounter information, the chatbot leverages a vector database to perform semantic search and retrieval. This allows it to accurately respond to complex user queries by identifying and referencing the most relevant information across multiple data types. The chatbot enhances care coordination, supports clinical and operational teams in decision-making, and enables efficient data exploration through a conversational interface. It is especially useful for surfacing key medical facts and timelines in a cohesive and evidence-backed manner.
+**Hybrid MRR Chatbot:**
+The Hybrid MRR Chatbot is an AI-powered solution built on OpenAI to answer questions from medical charts with contextual evidence. It processes unstructured documents like office visits, labs, and medications to support accurate and efficient review. Responses are backed by page-level evidence to ensure traceability and audit readiness. This helps MRR teams make faster, more informed decisions.
+
+**TMV Chatbot:**
+The TMV (Total Member View) Chatbot provides a unified view of a member’s healthcare data by combining PDFs (encounter info) and structured JSONs (claims, office visits, immunizations, etc.). Using a vector database, it semantically retrieves relevant insights across diverse sources. The chatbot enables precise, context-aware responses to complex queries. It supports better care coordination and operational efficiency.
