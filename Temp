@@ -1,2 +1,50 @@
-"Would the client secret and Horizon gateway be the same as for Hybrid MRR? I am seeing a 400 status error when using the non-prod client ID with the Hybrid MRR client secret and gateway."
+Step 1 – User Query Initiation
+Description – A member of the business team logs into the TMV chatbot and types a plain-language question.
+Example – “What are the current medications for patient 123?”
 
+Step 2 – Intent Identification via Prompting
+Description – The prompt-tuning layer re-phrases the question so it is clear, unbiased, and context-rich; the Intent Identification Engine classifies the request so downstream systems know what to look for.
+Example – Tuned prompt: “Return a list of active medications for patient 123.”
+Identified intent: medication
+
+Step 3 – Retriever Engine Evaluation
+Description – Using the intent tag and high-level metadata, the Retriever Engine decides where relevant information is likely stored (FHIR store, HOSCDA data mart, JSON extracts, or PDF clinical notes) and issues focused requests.
+Example –
+• Chooses the FHIR store and the latest PDF discharge summary as candidate sources.
+• Pulls only the “MedicationStatement” resources and matching sections from the PDF.
+
+Step 4 – OpenSearch Filtering & Ranking
+Description – All candidate snippets are already indexed in AWS OpenSearch. The query (“active medications”, patient 123) is run against the index to rank, score, and keep only the most relevant chunks.
+Example –
+• 47 snippets retrieved by the Retriever Engine.
+• OpenSearch narrows this to the top 5 chunks (score ≥ 0.85) that mention “current” or “active” medications within the last 30 days.
+
+Step 5 – LLM Processing
+Description – The Horizon-hosted LLM receives two inputs: the user’s original question and the five high-relevance chunks. It generates a concise, human-readable answer, cross-checking each fact against the supplied text.
+Example –
+LLM input:
+
+sql
+Copy
+Edit
+Question: What are the current medications for patient 123?
+Context (5 chunks): …
+LLM output (internal):
+
+Copy
+Edit
+• Metformin 500 mg twice daily  
+• Lisinopril 10 mg once daily  
+• Atorvastatin 20 mg at bedtime
+Step 6 – Response Delivery to User
+Description – The formatted answer is sent back to the TMV UI. The chatbot may include supporting details (e.g., encounter date, last refill date) so business users can act on trustworthy, auditable data.
+Example on screen –
+
+yaml
+Copy
+Edit
+Current medications for patient 123
+• Metformin 500 mg – active since 12 Apr 2025  
+• Lisinopril 10 mg – active since 18 Mar 2025  
+• Atorvastatin 20 mg – active since 07 Jan 2025
+(Information verified from FHIR MedicationStatement and discharge summary, pages 3-4.)
