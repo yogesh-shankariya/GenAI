@@ -1,22 +1,2 @@
-Here’s a simplified and professional version of your email in layman's terms:
+"Would the client secret and Horizon gateway be the same as for Hybrid MRR? I am seeing a 400 status error when using the non-prod client ID with the Hybrid MRR client secret and gateway."
 
----
-
-**Subject:** Request for Cost Center to Enable Horizon API for TMV Chatbot
-
-Hi Joe,
-
-We’ve developed the TMV Chatbot using a local setup and OpenAI’s API. However, the current API access has expired, and to keep the chatbot running smoothly, we need to switch to Horizon API.
-
-To do this, we’ll need access to three specific services in Horizon:
-
-1. Embedding
-2. Document
-3. Search
-
-For us to proceed, could you please share the cost center details so we can enable access to Horizon API for the TMV Chatbot?
-
-Let me know if you need any additional information.
-
-Thanks,
-Yogesh Shankariya
