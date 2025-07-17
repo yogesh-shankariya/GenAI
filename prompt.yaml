@@ -1,5 +1,5 @@
-**Hybrid MRR Chatbot:**
-The Hybrid MRR Chatbot uses OpenAI to answer questions from medical charts with accurate, page-level evidence. It processes unstructured data like office visits and labs, helping MRR teams make faster, audit-ready decisions with confidence.
+Here’s a rewritten version of your prompt:
 
-**TMV Chatbot:**
-The TMV Chatbot combines encounter PDFs and structured JSONs like claims and immunizations, using a vector database for smart retrieval. It offers a unified member view and quick access to key insights for better care decisions.
+**"If the answer cannot be found in the latest visit or encounter, review earlier encounters to retrieve the information. Generate answers based on all encounters unless the user specifically requests only the latest or historical ones."**
+
+Let me know if you’d like a more concise or more formal version.
