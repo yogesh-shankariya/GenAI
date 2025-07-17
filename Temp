@@ -1,8 +1,12 @@
-Hello Team,
+Subject: Request to Arrange SMEs for Hybrid MRR Chatbot UAT Testing
 
-Currently, for every session, the Hybrid MRR Chatbot downloads the patient’s encounter information one record at a time for each question, combines the context, and then sends it to the Horizon API along with the question to generate a response. This repeated downloading and merging of context for every single question introduces significant latency.
+Hello Summer,
 
-To resolve this issue, we would like to evaluate the use of a caching mechanism through the FFZ layer. The idea is to cache the fully combined context at the beginning of each session in the FFZ layer. For all subsequent questions within that session, the chatbot can retrieve the context directly from the FFZ layer, thereby significantly reducing latency and improving overall performance.
+We have deployed the Hybrid MRR Chatbot to the UAT environment. We would now like to test the chatbot using real business questions.
 
-Kindly request your approval to proceed with this enhancement.
+Could you please arrange for the SMEs to assist with validating the chatbot's functionality and the accuracy of its responses?
 
+Thank you for your support.
+
+Best regards,
+\[Your Name]
