@@ -1,15 +1,35 @@
-payload = json.dumps({
-    "prompt": "You are a medical domain expert and …",
-    "output": {
+{
+  "prompt": "You are a medical domain expert and you…",
+  "output": {
+    "type": "object",
+    "properties": {
+      "encounter": {
         "type": "object",
         "properties": {
-            "ind": {
-                "type": "string",
-                "enum": ["cover_page", "not cover_page"]
+          "encounter_details": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "segment_sequence": { "type": "string" },
+                "segment_type":     { "type": "string" },
+                "segment_start_page": { "type": "string" }
+              },
+              "required": [
+                "segment_sequence",
+                "segment_type",
+                "segment_start_page"
+              ],
+              "additionalProperties": false
             }
+          }
         },
-        "required": ["ind"],
-        "additionalProperties": False
+        "required": ["encounter_details"],
+        "additionalProperties": false
+      }
     },
-    "stream": False
-})
+    "required": ["encounter"],
+    "additionalProperties": false
+  },
+  "stream": false
+}
