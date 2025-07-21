@@ -3,27 +3,25 @@
   "output": {
     "type": "object",
     "properties": {
-      "encounters": {
+      "sections": {
         "type": "array",
         "items": {
           "type": "object",
           "properties": {
-            "segment_sequence":        { "type": "string" },
-            "segment_type":            { "type": "string" },
-            "segment_start_page":      { "type": "string" },
-            "reasoning_for_encounter": { "type": "string" }
+            "section_heading":             { "type": "string" },
+            "page_number":                 { "type": "string" },
+            "reasoning_for_section_heading": { "type": "string" }
           },
           "required": [
-            "segment_sequence",
-            "segment_type",
-            "segment_start_page",
-            "reasoning_for_encounter"
+            "section_heading",
+            "page_number",
+            "reasoning_for_section_heading"
           ],
           "additionalProperties": false
         }
       }
     },
-    "required": ["encounters"],
+    "required": ["sections"],
     "additionalProperties": false
   },
   "stream": false
