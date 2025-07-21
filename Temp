@@ -1,38 +1,16 @@
-import json
 from typing import List
 from pydantic import BaseModel, Field
-from pydantic.config import ConfigDict
 
 
-class EncounterDetail(BaseModel):
-    """Single segment inside an encounter."""
-    segment_sequence: str = Field(..., title='Segment Sequence')
-    segment_type: str = Field(..., title='Segment Type')
-    segment_start_page: str = Field(..., title='Segment Start Page')
+class SegmentDetail(BaseModel):
+    segment_sequence: str = Field(title="Segment Sequence")
+    segment_type: str = Field(title="Segment Type")
+    segment_start_page: str = Field(title="Segment Start Page")
 
 
 class Encounter(BaseModel):
-    """Top-level encounter wrapper containing one or more details."""
-    encounter_details: List[EncounterDetail] = Field(
-        ...,
-        title='Encounter Details'
-    )
+    encounter_details: List[SegmentDetail]
 
 
 class EncounterPayload(BaseModel):
-    """
-    Root object that matches:
-
-    {
-      "encounter": {
-        "encounter_details": [ … ]
-      }
-    }
-    """
-    model_config = ConfigDict(title='EncounterSegmentation')
     encounter: Encounter
-
-
-# --- Generate & view the JSON Schema ---
-schema = EncounterPayload.model_json_schema()
-print(json.dumps(schema, indent=2))
