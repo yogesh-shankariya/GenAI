@@ -1,2 +1,15 @@
-Please treat this request as a priority, as we are in the process of incorporating the Structures API into our chatbot and are planning to deploy the solution to production within this month.
-
+payload = json.dumps({
+    "prompt": "You are a medical domain expert and …",
+    "output": {
+        "type": "object",
+        "properties": {
+            "ind": {
+                "type": "string",
+                "enum": ["cover_page", "not cover_page"]
+            }
+        },
+        "required": ["ind"],
+        "additionalProperties": False
+    },
+    "stream": False
+})
