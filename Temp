@@ -1,16 +1,30 @@
-from typing import List
-from pydantic import BaseModel, Field
-
-
-class SegmentDetail(BaseModel):
-    segment_sequence: str = Field(title="Segment Sequence")
-    segment_type: str = Field(title="Segment Type")
-    segment_start_page: str = Field(title="Segment Start Page")
-
-
-class Encounter(BaseModel):
-    encounter_details: List[SegmentDetail]
-
-
-class EncounterPayload(BaseModel):
-    encounter: Encounter
+{
+  "prompt": "You are a medical domain expert and you…",
+  "output": {
+    "type": "object",
+    "properties": {
+      "encounters": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "segment_sequence":        { "type": "string" },
+            "segment_type":            { "type": "string" },
+            "segment_start_page":      { "type": "string" },
+            "reasoning_for_encounter": { "type": "string" }
+          },
+          "required": [
+            "segment_sequence",
+            "segment_type",
+            "segment_start_page",
+            "reasoning_for_encounter"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": ["encounters"],
+    "additionalProperties": false
+  },
+  "stream": false
+}
