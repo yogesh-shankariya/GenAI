@@ -1,16 +1,41 @@
-def inline_refs(schema: dict) -> dict:
-    """Recursively replace $ref with the actual object from $defs."""
-    defs = schema.get("$defs", {})
+from pydantic import BaseModel, Field
+from typing import Optional
 
-    def resolve(obj):
-        if isinstance(obj, dict):
-            if "$ref" in obj:
-                ref_key = obj["$ref"].split("/")[-1]
-                return resolve(defs.get(ref_key, {}))
-            return {k: resolve(v) for k, v in obj.items() if k != "$defs"}
-        elif isinstance(obj, list):
-            return [resolve(i) for i in obj]
-        else:
-            return obj
 
-    return resolve(schema)
+class PatientAddress(BaseModel):
+    address_line_1: Optional[str] = Field(default="", title="Address Line 1")
+    address_line_2: Optional[str] = Field(default="", title="Address Line 2")
+    address_city: Optional[str] = Field(default="", title="City")
+    address_state: Optional[str] = Field(default="", title="State")
+    address_postalcode: Optional[str] = Field(default="", title="Postal Code")
+
+    model_config = {"extra": "forbid"}
+
+
+class MemberDemographics(BaseModel):
+    patient_mrn: Optional[str] = ""
+    patient_first_name: Optional[str] = ""
+    patient_middle_name: Optional[str] = ""
+    patient_last_name: Optional[str] = ""
+    patient_date_of_birth: Optional[str] = ""
+    patient_gender: Optional[str] = ""
+    patient_phone_number: Optional[str] = ""
+    Is_extracted_phone_number_related_to_patient: Optional[str] = Field(
+        default="", alias="Is extracted phone number related to patient?"
+    )
+    Reason_for_phone_number: Optional[str] = Field(
+        default="", alias="Reason for considering extracted phone number is of patient's phone number"
+    )
+    patient_email: Optional[str] = ""
+    patient_address: Optional[PatientAddress] = Field(default_factory=PatientAddress)
+    Is_extracted_address_related_to_patient: Optional[str] = Field(
+        default="", alias="Is extracted address related to patient?"
+    )
+    Reason_for_address: Optional[str] = Field(
+        default="", alias="Reason for considering extracted address is of patient's address"
+    )
+
+    model_config = {
+        "extra": "forbid",
+        "populate_by_name": True  # allows input/output using alias or field name
+    }
