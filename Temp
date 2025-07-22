@@ -1,25 +1,4 @@
-from typing import List
-from pydantic import BaseModel, Field
+import json
 
-class EncounterDetail(BaseModel):
-    segment_sequence: str = Field(..., title="Segment Sequence")
-    segment_type: str = Field(..., title="Segment Type")
-    segment_start_page: str = Field(..., title="Segment Start Page")
-
-    model_config = {
-        "extra": "forbid"
-    }
-
-class Encounter(BaseModel):
-    encounter_details: List[EncounterDetail]
-
-    model_config = {
-        "extra": "forbid"
-    }
-
-class EncounterPayload(BaseModel):
-    encounter: Encounter
-
-    model_config = {
-        "extra": "forbid"
-    }
+schema = EncounterPayload.model_json_schema()
+print(json.dumps(schema, indent=2))
