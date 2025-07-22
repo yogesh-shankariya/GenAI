@@ -1,33 +1,44 @@
-import pandas as pd
-from typing import Any, Dict, List
+from pydantic import BaseModel, Field
 
-def _flatten(d: Dict[str, Any], parent_key: str = "", sep: str = ".") -> Dict[str, Any]:
-    """Convert nested JSON into a flat dict like {'address.city': 'NYC'}."""
-    items: List[tuple] = []
-    for k, v in d.items():
-        new_key = f"{parent_key}{sep}{k}" if parent_key else k
-        if isinstance(v, dict):
-            items.extend(_flatten(v, new_key, sep=sep).items())
-        else:
-            items.append((new_key, v))
-    return dict(items)
 
-def compare_json_df(json1: Dict[str, Any], json2: Dict[str, Any]) -> pd.DataFrame:
-    """Return a DataFrame with columns:
-       json1_key | json2_key | key_match | json1_value | json2_value | value_match
-    """
-    f1 = _flatten(json1)
-    f2 = _flatten(json2)
-    rows = []
-    for key in sorted(set(f1) | set(f2)):     # order of keys doesn’t matter
-        rows.append(
-            {
-                "json1_key": key if key in f1 else None,
-                "json2_key": key if key in f2 else None,
-                "key_match": key in f1 and key in f2,
-                "json1_value": f1.get(key),
-                "json2_value": f2.get(key),
-                "value_match": (f1.get(key) == f2.get(key)) if key in f1 and key in f2 else False,
-            }
-        )
-    return pd.DataFrame(rows)
+class PatientAddress(BaseModel):
+    address_line_1: str = Field(..., title="Address Line 1")
+    address_line_2: str = Field(..., title="Address Line 2")
+    address_city:   str = Field(..., title="City")
+    address_state:  str = Field(..., title="State")
+    address_postalcode: str = Field(..., title="Postal Code")
+
+    model_config = {"extra": "forbid"}
+
+
+class MemberDemographics(BaseModel):
+    patient_mrn: str = Field(...)
+    patient_first_name: str = Field(...)
+    patient_middle_name: str = Field(...)
+    patient_last_name: str = Field(...)
+    patient_date_of_birth: str = Field(...)
+    patient_gender: str = Field(...)
+    patient_phone_number: str = Field(...)
+    is_extracted_phone_number_related_to_patient: str = Field(
+        ...,
+        alias="Is extracted phone number related to patient?"
+    )
+    reason_for_phone_number: str = Field(
+        ...,
+        alias="Reason for considering extracted phone number is of patient's phone number"
+    )
+    patient_email: str = Field(...)
+    patient_address: PatientAddress = Field(...)
+    is_extracted_address_related_to_patient: str = Field(
+        ...,
+        alias="Is extracted address related to patient?"
+    )
+    reason_for_address: str = Field(
+        ...,
+        alias="Reason for considering extracted address is of patient's address"
+    )
+
+    model_config = {
+        "extra": "forbid",
+        "populate_by_name": True   # let you supply data via alias or field name
+    }
