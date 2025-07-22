@@ -1,42 +1,33 @@
+import pandas as pd
 from typing import Any, Dict, List
 
-def _diff(d1: Dict[str, Any], d2: Dict[str, Any], path: str = "") -> List[str]:
-    """Recursively compare two JSON dicts and collect mismatch messages."""
-    issues: List[str] = []
+def _flatten(d: Dict[str, Any], parent_key: str = "", sep: str = ".") -> Dict[str, Any]:
+    """Convert nested JSON into a flat dict like {'address.city': 'NYC'}."""
+    items: List[tuple] = []
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(_flatten(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
 
-    # Union of keys from both dicts
-    for key in d1.keys() | d2.keys():
-        current_path = f"{path}.{key}" if path else key
-
-        # Key-presence checks
-        if key not in d1:
-            issues.append(f"Key missing in first JSON → {current_path}")
-            continue
-        if key not in d2:
-            issues.append(f"Key missing in second JSON → {current_path}")
-            continue
-
-        v1, v2 = d1[key], d2[key]
-
-        # Recurse for nested dicts
-        if isinstance(v1, dict) and isinstance(v2, dict):
-            issues.extend(_diff(v1, v2, current_path))
-        # For lists, compare length and each element (optional: improve as needed)
-        elif isinstance(v1, list) and isinstance(v2, list):
-            if len(v1) != len(v2):
-                issues.append(f"Length mismatch at {current_path}: {len(v1)} != {len(v2)}")
-            else:
-                for i, (item1, item2) in enumerate(zip(v1, v2)):
-                    if item1 != item2:
-                        issues.append(f"List element mismatch at {current_path}[{i}]: {item1!r} != {item2!r}")
-        # Primitive value comparison
-        elif v1 != v2:
-            issues.append(f"Value mismatch at {current_path}: {v1!r} != {v2!r}")
-
-    return issues
-
-
-def compare_json(json1: Dict[str, Any], json2: Dict[str, Any]) -> str:
-    """Return 'All match' if identical; else a report of differences."""
-    problems = _diff(json1, json2)
-    return "All match" if not problems else "\n".join(problems)
+def compare_json_df(json1: Dict[str, Any], json2: Dict[str, Any]) -> pd.DataFrame:
+    """Return a DataFrame with columns:
+       json1_key | json2_key | key_match | json1_value | json2_value | value_match
+    """
+    f1 = _flatten(json1)
+    f2 = _flatten(json2)
+    rows = []
+    for key in sorted(set(f1) | set(f2)):     # order of keys doesn’t matter
+        rows.append(
+            {
+                "json1_key": key if key in f1 else None,
+                "json2_key": key if key in f2 else None,
+                "key_match": key in f1 and key in f2,
+                "json1_value": f1.get(key),
+                "json2_value": f2.get(key),
+                "value_match": (f1.get(key) == f2.get(key)) if key in f1 and key in f2 else False,
+            }
+        )
+    return pd.DataFrame(rows)
