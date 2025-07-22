@@ -1,4 +1,16 @@
-import json
+def inline_refs(schema: dict) -> dict:
+    """Recursively replace $ref with the actual object from $defs."""
+    defs = schema.get("$defs", {})
 
-schema = EncounterPayload.model_json_schema()
-print(json.dumps(schema, indent=2))
+    def resolve(obj):
+        if isinstance(obj, dict):
+            if "$ref" in obj:
+                ref_key = obj["$ref"].split("/")[-1]
+                return resolve(defs.get(ref_key, {}))
+            return {k: resolve(v) for k, v in obj.items() if k != "$defs"}
+        elif isinstance(obj, list):
+            return [resolve(i) for i in obj]
+        else:
+            return obj
+
+    return resolve(schema)
