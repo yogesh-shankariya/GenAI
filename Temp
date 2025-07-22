@@ -1,55 +1,18 @@
-{
-  "prompt": "You are a medical domain expert and you…",
-  "output": {
-    "type": "object",
-    "properties": {
-      "patient_mrn": { "type": "string" },
-      "patient_first_name": { "type": "string" },
-      "patient_middle_name": { "type": "string" },
-      "patient_last_name": { "type": "string" },
-      "patient_date_of_birth": { "type": "string" },
-      "patient_gender": { "type": "string" },
-      "patient_phone_number": { "type": "string" },
-      "Is extracted phone number related to patient?": { "type": "string" },
-      "Reason for considering extracted phone number is of patient's phone number": { "type": "string" },
-      "patient_email": { "type": "string" },
-      "patient_address": {
-        "type": "object",
-        "properties": {
-          "address_line_1": { "type": "string" },
-          "address_line_2": { "type": "string" },
-          "address_city":   { "type": "string" },
-          "address_state":  { "type": "string" },
-          "address_postalcode": { "type": "string" }
-        },
-        "required": [
-          "address_line_1",
-          "address_line_2",
-          "address_city",
-          "address_state",
-          "address_postalcode"
-        ],
-        "additionalProperties": false
-      },
-      "Is extracted address related to patient?": { "type": "string" },
-      "Reason for considering extracted address is of patient's address": { "type": "string" }
-    },
-    "required": [
-      "patient_mrn",
-      "patient_first_name",
-      "patient_middle_name",
-      "patient_last_name",
-      "patient_date_of_birth",
-      "patient_gender",
-      "patient_phone_number",
-      "Is extracted phone number related to patient?",
-      "Reason for considering extracted phone number is of patient's phone number",
-      "patient_email",
-      "patient_address",
-      "Is extracted address related to patient?",
-      "Reason for considering extracted address is of patient's address"
-    ],
-    "additionalProperties": false
-  },
-  "stream": false
-}
+def compare_json(json1: dict, json2: dict) -> str:
+    mismatches = []
+
+    # Get union of keys
+    all_keys = set(json1.keys()).union(set(json2.keys()))
+
+    for key in all_keys:
+        if key not in json1:
+            mismatches.append(f"Key '{key}' missing in first JSON.")
+        elif key not in json2:
+            mismatches.append(f"Key '{key}' missing in second JSON.")
+        elif json1[key] != json2[key]:
+            mismatches.append(f"Value mismatch at key '{key}': '{json1[key]}' != '{json2[key]}'")
+
+    if not mismatches:
+        return "All match"
+    else:
+        return "\n".join(mismatches)
