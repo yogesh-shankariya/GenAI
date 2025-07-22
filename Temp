@@ -1,23 +1,25 @@
-**Primary Care Physician – Dr. Patel**
+from typing import List
+from pydantic import BaseModel, Field
 
-*Goals*
+class EncounterDetail(BaseModel):
+    segment_sequence: str = Field(..., title="Segment Sequence")
+    segment_type: str = Field(..., title="Segment Type")
+    segment_start_page: str = Field(..., title="Segment Start Page")
 
-* Deliver timely, evidence-based care without administrative delays
-* Coordinate seamlessly with specialists and hospitals
-* Minimize avoidable readmissions and care gaps for panel of patients
+    model_config = {
+        "extra": "forbid"
+    }
 
-*Pain Points*
+class Encounter(BaseModel):
+    encounter_details: List[EncounterDetail]
 
-* Incomplete clinical history when patients arrive from outside networks
-* Waiting days for ADT notifications, lab results, or prior-auth approvals
-* Manual follow-ups with nurses and payers, increasing workload and burnout
+    model_config = {
+        "extra": "forbid"
+    }
 
-*How HealthOS Helps*
+class EncounterPayload(BaseModel):
+    encounter: Encounter
 
-* Real-time ADT feeds and consolidated lab / imaging results in a single view
-* One-click access to specialist notes and surgery outcomes for closed-loop follow-up
-* Automated prior-authorization status and alerts, cutting approval cycles from weeks to hours
-* AI/ML prompts highlighting open care gaps and overdue HEDIS measures, enabling proactive outreach
-
-*Benefit*
-HealthOS turns fragmented data into an immediate, patient-centric timeline, letting Dr. Patel focus on clinical decisions instead of paperwork—improving patient satisfaction while helping Elevance avoid costly delays and readmissions.
+    model_config = {
+        "extra": "forbid"
+    }
