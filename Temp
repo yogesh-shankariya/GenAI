@@ -1,18 +1,42 @@
-def compare_json(json1: dict, json2: dict) -> str:
-    mismatches = []
+from typing import Any, Dict, List
 
-    # Get union of keys
-    all_keys = set(json1.keys()).union(set(json2.keys()))
+def _diff(d1: Dict[str, Any], d2: Dict[str, Any], path: str = "") -> List[str]:
+    """Recursively compare two JSON dicts and collect mismatch messages."""
+    issues: List[str] = []
 
-    for key in all_keys:
-        if key not in json1:
-            mismatches.append(f"Key '{key}' missing in first JSON.")
-        elif key not in json2:
-            mismatches.append(f"Key '{key}' missing in second JSON.")
-        elif json1[key] != json2[key]:
-            mismatches.append(f"Value mismatch at key '{key}': '{json1[key]}' != '{json2[key]}'")
+    # Union of keys from both dicts
+    for key in d1.keys() | d2.keys():
+        current_path = f"{path}.{key}" if path else key
 
-    if not mismatches:
-        return "All match"
-    else:
-        return "\n".join(mismatches)
+        # Key-presence checks
+        if key not in d1:
+            issues.append(f"Key missing in first JSON → {current_path}")
+            continue
+        if key not in d2:
+            issues.append(f"Key missing in second JSON → {current_path}")
+            continue
+
+        v1, v2 = d1[key], d2[key]
+
+        # Recurse for nested dicts
+        if isinstance(v1, dict) and isinstance(v2, dict):
+            issues.extend(_diff(v1, v2, current_path))
+        # For lists, compare length and each element (optional: improve as needed)
+        elif isinstance(v1, list) and isinstance(v2, list):
+            if len(v1) != len(v2):
+                issues.append(f"Length mismatch at {current_path}: {len(v1)} != {len(v2)}")
+            else:
+                for i, (item1, item2) in enumerate(zip(v1, v2)):
+                    if item1 != item2:
+                        issues.append(f"List element mismatch at {current_path}[{i}]: {item1!r} != {item2!r}")
+        # Primitive value comparison
+        elif v1 != v2:
+            issues.append(f"Value mismatch at {current_path}: {v1!r} != {v2!r}")
+
+    return issues
+
+
+def compare_json(json1: Dict[str, Any], json2: Dict[str, Any]) -> str:
+    """Return 'All match' if identical; else a report of differences."""
+    problems = _diff(json1, json2)
+    return "All match" if not problems else "\n".join(problems)
