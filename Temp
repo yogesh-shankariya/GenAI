@@ -1,43 +1,36 @@
+from datetime import date
+from typing import List
 from pydantic import BaseModel, Field
 
-class PatientAddress(BaseModel):
-    address_line_1: str = Field(..., description="If missing, return empty string")
-    address_line_2: str = Field(..., description="If missing, return empty string")
-    address_city:   str = Field(..., description="If missing, return empty string")
-    address_state:  str = Field(..., description="If missing, return empty string")
-    address_postalcode: str = Field(..., description="If missing, return empty string")
+
+class EncounterWindow(BaseModel):
+    """
+    Represents a single encounter’s date span.
+    """
+
+    start_date_of_service: date = Field(
+        ...,
+        description="First day in the encounter range (ISO 8601 - YYYY-MM-DD)."
+    )
+    end_date_of_service: date = Field(
+        ...,
+        description="Last day in the encounter range (ISO 8601 - YYYY-MM-DD)."
+    )
 
     model_config = {"extra": "forbid"}
 
-class MemberDemographics(BaseModel):
-    patient_mrn: str = Field(..., description="If missing, return empty string")
-    patient_first_name: str = Field(..., description="If missing, return empty string")
-    patient_middle_name: str = Field(..., description="If missing, return empty string")
-    patient_last_name: str = Field(..., description="If missing, return empty string")
-    patient_date_of_birth: str = Field(..., description="If missing, return empty string")
-    patient_gender: str = Field(..., description="If missing, return empty string")
-    patient_phone_number: str = Field(..., description="If missing, return empty string")
-    is_extracted_phone_number_related_to_patient: str = Field(
+
+class EncounterPeriodPayload(BaseModel):
+    """
+    Root payload expected by the LLM function call.
+
+    • **encounters** – an array of encounter windows,  
+      each containing a required start and end date.
+    """
+
+    encounters: List[EncounterWindow] = Field(
         ...,
-        alias="Is extracted phone number related to patient?",
-        description="If missing, return empty string"
-    )
-    reason_for_phone_number: str = Field(
-        ...,
-        alias="Reason for considering extracted phone number is of patient's phone number",
-        description="If missing, return empty string"
-    )
-    patient_email: str = Field(..., description="If missing, return empty string")
-    patient_address: PatientAddress = Field(..., description="Patient address object")
-    is_extracted_address_related_to_patient: str = Field(
-        ...,
-        alias="Is extracted address related to patient?",
-        description="If missing, return empty string"
-    )
-    reason_for_address: str = Field(
-        ...,
-        alias="Reason for considering extracted address is of patient's address",
-        description="If missing, return empty string"
+        description="Collection of patient encounter date ranges."
     )
 
-    model_config = {"extra": "forbid", "populate_by_name": True}
+    model_config = {"extra": "forbid"}
