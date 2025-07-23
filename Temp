@@ -1,19 +1,27 @@
+from enum import Enum
 from pydantic import BaseModel, Field
 
 
-class EncounterDateSpan(BaseModel):
+class DocClass(str, Enum):
+    outpatient_medical_record = "outpatient_medical_record"
+    inpatient_medical_record  = "inpatient_medical_record"
+    lab_report                = "lab_report"
+    exam_report               = "exam_report"
+    radiology_report          = "radiology_report"
+
+
+class DocClassificationPayload(BaseModel):
     """
-    Payload containing a single encounter’s start and end dates.
-    All dates must be supplied in **mm/dd/yyyy** format.
+    Result of classifying an EMR document into a single category.
     """
 
-    encounter_start_date: str = Field(
+    doc_classification: DocClass = Field(
         ...,
-        description="Date should be in mm/dd/yyyy format (e.g. 07/22/2025)"
-    )
-    encounter_end_date: str = Field(
-        ...,
-        description="Date should be in mm/dd/yyyy format (e.g. 07/29/2025)"
+        description=(
+            "One of: "
+            "outpatient_medical_record / inpatient_medical_record / "
+            "lab_report / exam_report / radiology_report"
+        )
     )
 
-    model_config = {"extra": "forbid"}  # reject unexpected keys
+    model_config = {"extra": "forbid"}
