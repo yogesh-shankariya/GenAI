@@ -1,50 +1,20 @@
-from typing import List
-
-
-class EncounterProvider(BaseModel):
-    provider_role: str = Field(
+class EncounterPages(BaseModel):
+    start_page_number: str = Field(
         ...,
-        description="Role of the healthcare provider (e.g. Attending Physician)."
+        description="First page of the encounter section."
     )
-    evidence_for_provider_role: str = Field(
+    end_page_number: str = Field(
         ...,
-        description="Sentence / paragraph supporting the role."
-    )
-
-    provider_name: str = Field(..., description="Full name of the provider.")
-    evidence_for_provider_name: str = Field(
-        ..., description="Sentence supporting the provider name."
-    )
-
-    provider_speciality: str = Field(..., description="Medical speciality.")
-    evidence_for_provider_speciality: str = Field(
-        ..., description="Sentence supporting the speciality."
-    )
-
-    provider_npi: str = Field(
-        ...,
-        description="National Provider Identifier (10-digit)."
-    )
-    evidence_for_provider_npi: str = Field(
-        ..., description="Sentence supporting the NPI."
-    )
-
-    provider_health_organization: str = Field(
-        ...,
-        description="Healthcare organization (if present)."
-    )
-    evidence_for_provider_health_organization: str = Field(
-        ...,
-        description="Sentence supporting the organization."
+        description="Last page of the encounter section."
     )
 
     model_config = {"extra": "forbid"}
 
 
-class EncounterProvidersPayload(BaseModel):
-    encounter_providers: List[EncounterProvider] = Field(
+class EncounterPagesPayload(BaseModel):
+    encounters: List[EncounterPages] = Field(
         ...,
-        description="List of providers associated with the encounter."
+        description="Array of page-number spans—one per encounter."
     )
 
     model_config = {"extra": "forbid"}
