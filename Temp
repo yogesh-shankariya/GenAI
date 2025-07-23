@@ -1,11 +1,18 @@
-class EncounterClassPayload(BaseModel):
+class EncounterServiceFacilityPayload(BaseModel):
     """
-    Indicates whether the encounter is inpatient, outpatient, etc.
+    Extracted facility name together with evidence text.
     """
 
-    encounter_class: str = Field(
+    encounter_service_facility: str = Field(
         ...,
-        description="Encounter class (e.g. outpatient, inpatient, emergency)."
+        description="Name of the service facility."
+    )
+    evidence_for_service_facility: str = Field(
+        ...,
+        description=(
+            "The exact sentence or paragraph in the chart that contains "
+            "the facility information."
+        )
     )
 
     model_config = {"extra": "forbid"}
