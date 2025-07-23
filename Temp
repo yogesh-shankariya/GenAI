@@ -1,20 +1,7 @@
-class EncounterPages(BaseModel):
-    start_page_number: str = Field(
+class ReasonForVisitPayload(BaseModel):
+    reason_for_visit: List[str] = Field(
         ...,
-        description="First page of the encounter section."
-    )
-    end_page_number: str = Field(
-        ...,
-        description="Last page of the encounter section."
-    )
-
-    model_config = {"extra": "forbid"}
-
-
-class EncounterPagesPayload(BaseModel):
-    encounters: List[EncounterPages] = Field(
-        ...,
-        description="Array of page-number spans—one per encounter."
+        description="One or more reasons for the patient visit."
     )
 
     model_config = {"extra": "forbid"}
