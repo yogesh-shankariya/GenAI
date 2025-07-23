@@ -1,7 +1,11 @@
-class ReasonForVisitPayload(BaseModel):
-    reason_for_visit: List[str] = Field(
+class SimpleValidationPayload(BaseModel):
+    validation_result: str = Field(
         ...,
-        description="One or more reasons for the patient visit."
+        description='Literal "TRUE" or "FALSE".'
+    )
+    reasoning_for_validation_result: str = Field(
+        ...,
+        description="Explanation justifying the decision."
     )
 
     model_config = {"extra": "forbid"}
