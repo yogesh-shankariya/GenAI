@@ -1,11 +1,29 @@
-class SimpleValidationPayload(BaseModel):
-    validation_result: str = Field(
+class PatientAddress(BaseModel):
+    address_line_1: str = ""
+    address_line_2: str = ""
+    address_city:   str = ""
+    address_state:  str = ""
+    address_postalcode: str = ""
+
+    model_config = {"extra": "forbid"}
+
+
+class PatientAddressValidationPayload(BaseModel):
+    patient_address_present: str = Field(
         ...,
-        description='Literal "TRUE" or "FALSE".'
+        description='Must be "Yes" or "No".'
     )
-    reasoning_for_validation_result: str = Field(
+    exact_paragraph_in_medical_record_where_patient_address_is_present: str = Field(
         ...,
-        description="Explanation justifying the decision."
+        description="The literal text that contains the address."
+    )
+    reason_for_considering_extracted_address_is_of_patient_address: str = Field(
+        ...,
+        description="Why this address is believed to be the patient’s."
+    )
+    patient_address: PatientAddress = Field(
+        ...,
+        description="The extracted address itself."
     )
 
     model_config = {"extra": "forbid"}
