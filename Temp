@@ -1,44 +1,43 @@
 from pydantic import BaseModel, Field
 
-
 class PatientAddress(BaseModel):
-    address_line_1: str = Field(..., title="Address Line 1")
-    address_line_2: str = Field(..., title="Address Line 2")
-    address_city:   str = Field(..., title="City")
-    address_state:  str = Field(..., title="State")
-    address_postalcode: str = Field(..., title="Postal Code")
+    address_line_1: str = Field(..., description="If missing, return empty string")
+    address_line_2: str = Field(..., description="If missing, return empty string")
+    address_city:   str = Field(..., description="If missing, return empty string")
+    address_state:  str = Field(..., description="If missing, return empty string")
+    address_postalcode: str = Field(..., description="If missing, return empty string")
 
     model_config = {"extra": "forbid"}
 
-
 class MemberDemographics(BaseModel):
-    patient_mrn: str = Field(...)
-    patient_first_name: str = Field(...)
-    patient_middle_name: str = Field(...)
-    patient_last_name: str = Field(...)
-    patient_date_of_birth: str = Field(...)
-    patient_gender: str = Field(...)
-    patient_phone_number: str = Field(...)
+    patient_mrn: str = Field(..., description="If missing, return empty string")
+    patient_first_name: str = Field(..., description="If missing, return empty string")
+    patient_middle_name: str = Field(..., description="If missing, return empty string")
+    patient_last_name: str = Field(..., description="If missing, return empty string")
+    patient_date_of_birth: str = Field(..., description="If missing, return empty string")
+    patient_gender: str = Field(..., description="If missing, return empty string")
+    patient_phone_number: str = Field(..., description="If missing, return empty string")
     is_extracted_phone_number_related_to_patient: str = Field(
         ...,
-        alias="Is extracted phone number related to patient?"
+        alias="Is extracted phone number related to patient?",
+        description="If missing, return empty string"
     )
     reason_for_phone_number: str = Field(
         ...,
-        alias="Reason for considering extracted phone number is of patient's phone number"
+        alias="Reason for considering extracted phone number is of patient's phone number",
+        description="If missing, return empty string"
     )
-    patient_email: str = Field(...)
-    patient_address: PatientAddress = Field(...)
+    patient_email: str = Field(..., description="If missing, return empty string")
+    patient_address: PatientAddress = Field(..., description="Patient address object")
     is_extracted_address_related_to_patient: str = Field(
         ...,
-        alias="Is extracted address related to patient?"
+        alias="Is extracted address related to patient?",
+        description="If missing, return empty string"
     )
     reason_for_address: str = Field(
         ...,
-        alias="Reason for considering extracted address is of patient's address"
+        alias="Reason for considering extracted address is of patient's address",
+        description="If missing, return empty string"
     )
 
-    model_config = {
-        "extra": "forbid",
-        "populate_by_name": True   # let you supply data via alias or field name
-    }
+    model_config = {"extra": "forbid", "populate_by_name": True}
