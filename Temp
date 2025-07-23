@@ -1,18 +1,19 @@
 from pydantic import BaseModel, Field
 
 
-class DateOfServicePayload(BaseModel):
+class EncounterDateSpan(BaseModel):
     """
-    Single-field payload returned by the LLM.
-
-    • **date_of_service_date** – must be provided in **mm/dd/yyyy** format
-      (e.g. `07/22/2025`). If the date cannot be found, the model should
-      still return an empty string `""`, not any other placeholder.
+    Payload containing a single encounter’s start and end dates.
+    All dates must be supplied in **mm/dd/yyyy** format.
     """
 
-    date_of_service_date: str = Field(
+    encounter_start_date: str = Field(
         ...,
-        description="Date of service in mm/dd/yyyy format (e.g. 07/22/2025)."
+        description="Date should be in mm/dd/yyyy format (e.g. 07/22/2025)"
+    )
+    encounter_end_date: str = Field(
+        ...,
+        description="Date should be in mm/dd/yyyy format (e.g. 07/29/2025)"
     )
 
-    model_config = {"extra": "forbid"}  # disallow unexpected keys
+    model_config = {"extra": "forbid"}  # reject unexpected keys
