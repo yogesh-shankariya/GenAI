@@ -1,29 +1,19 @@
-class PatientAddress(BaseModel):
-    address_line_1: str = ""
-    address_line_2: str = ""
-    address_city:   str = ""
-    address_state:  str = ""
-    address_postalcode: str = ""
-
-    model_config = {"extra": "forbid"}
-
-
-class PatientAddressValidationPayload(BaseModel):
-    patient_address_present: str = Field(
+class PatientPhoneValidationPayload(BaseModel):
+    patient_phone_number_present: str = Field(
         ...,
         description='Must be "Yes" or "No".'
     )
-    exact_paragraph_in_medical_record_where_patient_address_is_present: str = Field(
+    exact_paragraph_in_medical_record_where_patient_phone_number_is_present: str = Field(
         ...,
-        description="The literal text that contains the address."
+        description="The literal text that contains the phone number."
     )
-    reason_for_considering_extracted_address_is_of_patient_address: str = Field(
+    reason_for_considering_extracted_phone_number_is_of_patient_phone_number: str = Field(
         ...,
-        description="Why this address is believed to be the patient’s."
+        description="Why this phone number is believed to be the patient’s."
     )
-    patient_address: PatientAddress = Field(
+    patient_phone_number: str = Field(
         ...,
-        description="The extracted address itself."
+        description="The extracted phone number."
     )
 
     model_config = {"extra": "forbid"}
