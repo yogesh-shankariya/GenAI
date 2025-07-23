@@ -1,19 +1,43 @@
-class PatientPhoneValidationPayload(BaseModel):
-    patient_phone_number_present: str = Field(
-        ...,
-        description='Must be "Yes" or "No".'
-    )
-    exact_paragraph_in_medical_record_where_patient_phone_number_is_present: str = Field(
-        ...,
-        description="The literal text that contains the phone number."
-    )
-    reason_for_considering_extracted_phone_number_is_of_patient_phone_number: str = Field(
-        ...,
-        description="Why this phone number is believed to be the patient’s."
-    )
-    patient_phone_number: str = Field(
-        ...,
-        description="The extracted phone number."
-    )
+#!/usr/bin/env python3
+"""
+rename_txt_to_json.py
+---------------------
+Bulk‑renames all `.txt` files in a directory so their extension becomes `.json`.
+Uses *only* renaming—no parsing or rewriting of content.
 
-    model_config = {"extra": "forbid"}
+Usage
+-----
+    python rename_txt_to_json.py [TARGET_DIR]
+
+If TARGET_DIR is omitted, the current working directory is used.
+"""
+
+import sys
+import pathlib
+
+def rename_all_txt_to_json(target_dir: pathlib.Path) -> None:
+    if not target_dir.is_dir():
+        sys.exit(f"Error: {target_dir} is not a directory.")
+
+    txt_files = sorted(target_dir.glob("*.txt"))
+    if not txt_files:
+        print("No .txt files found.")
+        return
+
+    print(f"Found {len(txt_files)} .txt files. Renaming…\n")
+
+    for txt_path in txt_files:
+        json_path = txt_path.with_suffix(".json")
+
+        if json_path.exists():
+            # Skip or handle according to your policy; here we skip and warn.
+            print(f"⚠︎ Skipped {txt_path.name} — {json_path.name} already exists")
+            continue
+
+        txt_path.rename(json_path)
+        print(f"✓ {txt_path.name}  →  {json_path.name}")
+
+if __name__ == "__main__":
+    # Use command‑line argument if provided, else current directory
+    dir_arg = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path.cwd()
+    rename_all_txt_to_json(dir_arg.resolve())
