@@ -1,18 +1,50 @@
-class EncounterServiceFacilityPayload(BaseModel):
-    """
-    Extracted facility name together with evidence text.
-    """
+from typing import List
 
-    encounter_service_facility: str = Field(
+
+class EncounterProvider(BaseModel):
+    provider_role: str = Field(
         ...,
-        description="Name of the service facility."
+        description="Role of the healthcare provider (e.g. Attending Physician)."
     )
-    evidence_for_service_facility: str = Field(
+    evidence_for_provider_role: str = Field(
         ...,
-        description=(
-            "The exact sentence or paragraph in the chart that contains "
-            "the facility information."
-        )
+        description="Sentence / paragraph supporting the role."
+    )
+
+    provider_name: str = Field(..., description="Full name of the provider.")
+    evidence_for_provider_name: str = Field(
+        ..., description="Sentence supporting the provider name."
+    )
+
+    provider_speciality: str = Field(..., description="Medical speciality.")
+    evidence_for_provider_speciality: str = Field(
+        ..., description="Sentence supporting the speciality."
+    )
+
+    provider_npi: str = Field(
+        ...,
+        description="National Provider Identifier (10-digit)."
+    )
+    evidence_for_provider_npi: str = Field(
+        ..., description="Sentence supporting the NPI."
+    )
+
+    provider_health_organization: str = Field(
+        ...,
+        description="Healthcare organization (if present)."
+    )
+    evidence_for_provider_health_organization: str = Field(
+        ...,
+        description="Sentence supporting the organization."
+    )
+
+    model_config = {"extra": "forbid"}
+
+
+class EncounterProvidersPayload(BaseModel):
+    encounter_providers: List[EncounterProvider] = Field(
+        ...,
+        description="List of providers associated with the encounter."
     )
 
     model_config = {"extra": "forbid"}
