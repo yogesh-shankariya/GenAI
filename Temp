@@ -1,36 +1,18 @@
-from datetime import date
-from typing import List
 from pydantic import BaseModel, Field
 
 
-class EncounterWindow(BaseModel):
+class DateOfServicePayload(BaseModel):
     """
-    Represents a single encounter’s date span.
+    Single-field payload returned by the LLM.
+
+    • **date_of_service_date** – must be provided in **mm/dd/yyyy** format
+      (e.g. `07/22/2025`). If the date cannot be found, the model should
+      still return an empty string `""`, not any other placeholder.
     """
 
-    start_date_of_service: date = Field(
+    date_of_service_date: str = Field(
         ...,
-        description="First day in the encounter range (ISO 8601 - YYYY-MM-DD)."
-    )
-    end_date_of_service: date = Field(
-        ...,
-        description="Last day in the encounter range (ISO 8601 - YYYY-MM-DD)."
-    )
-
-    model_config = {"extra": "forbid"}
-
-
-class EncounterPeriodPayload(BaseModel):
-    """
-    Root payload expected by the LLM function call.
-
-    • **encounters** – an array of encounter windows,  
-      each containing a required start and end date.
-    """
-
-    encounters: List[EncounterWindow] = Field(
-        ...,
-        description="Collection of patient encounter date ranges."
+        description="Date of service in mm/dd/yyyy format (e.g. 07/22/2025)."
     )
 
-    model_config = {"extra": "forbid"}
+    model_config = {"extra": "forbid"}  # disallow unexpected keys
