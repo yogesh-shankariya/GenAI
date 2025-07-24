@@ -1,28 +1,86 @@
-from pathlib import Path
+from typing import List
+from pydantic import BaseModel, Field, field_validator
 
-# --- configuration ---------------------------------------------------------
-# Folder that holds the 200 text files (relative or absolute path)
-folder = Path("Input_Files").resolve()
-# ---------------------------------------------------------------------------
 
-if not folder.is_dir():
-    raise FileNotFoundError(f"Directory {folder} doesn’t exist")
+class EncounterProvider(BaseModel):
+    """
+    Detailed info about a single healthcare provider associated with the encounter,
+    plus evidence text for each extracted field.
+    """
+    provider_role: str = Field(
+        ...,
+        description="Role of the healthcare provider found in medical chart."
+    )
+    evidence_for_provider_role: str = Field(
+        ...,
+        description="Sentence/paragraph showing where the provider role was found."
+    )
 
-txt_files = sorted(folder.glob("*.txt"))
-if not txt_files:
-    print("No .txt files found.")
-else:
-    print(f"Found {len(txt_files)} .txt files. Renaming…\n")
+    provider_name: str = Field(
+        ...,
+        description="Full name of the healthcare provider found in medical chart."
+    )
+    evidence_for_provider_name: str = Field(
+        ...,
+        description="Sentence/paragraph showing where the provider name was found."
+    )
 
-for txt_path in txt_files:
-    json_path = txt_path.with_suffix(".json")
-    
-    if json_path.exists():
-        # Skip (or overwrite if you prefer—just delete this check)
-        print(f"⚠︎ Skipped {txt_path.name} — {json_path.name} already exists")
-        continue
-    
-    txt_path.rename(json_path)
-    print(f"✓ {txt_path.name}  →  {json_path.name}")
+    provider_speciality: str = Field(
+        ...,
+        description="Medical speciality of the healthcare provider found in medical chart."
+    )
+    evidence_for_provider_speciality: str = Field(
+        ...,
+        description="Sentence/paragraph showing where the speciality was found."
+    )
 
-print("\nDone.")
+    provider_npi: str = Field(
+        ...,
+        description="National Provider Identifier (10-digit) found in the chart."
+    )
+    evidence_for_provider_npi: str = Field(
+        ...,
+        description="Sentence/paragraph showing where the NPI was found."
+    )
+
+    provider_health_organization: str = Field(
+        ...,
+        description="Healthcare organization affiliated with the provider (if mentioned)."
+    )
+    evidence_for_provider_health_organization: str = Field(
+        ...,
+        description="Sentence/paragraph showing where the organization was found."
+    )
+
+    # Optional: automatic bytearray/bytes → str fix
+    @field_validator("*", mode="before")
+    @classmethod
+    def decode_bytes(cls, v):
+        if isinstance(v, (bytes, bytearray)):
+            return v.decode()
+        return v
+
+    model_config = {"extra": "forbid"}
+
+
+class EncounterProviderItem(BaseModel):
+    """
+    Wrapper for a single provider entry inside the encounter_providers array.
+    Matches the JSON where each object has a single key: 'encounter_provider'.
+    """
+    encounter_provider: EncounterProvider
+
+    model_config = {"extra": "forbid"}
+
+
+class EncounterProvidersPayload(BaseModel):
+    """
+    Top-level payload containing a list of provider items.
+    The list can contain multiple entries (even if they are duplicates in shape).
+    """
+    encounter_providers: List[EncounterProviderItem] = Field(
+        ...,
+        description="Array of encounter providers with evidence fields."
+    )
+
+    model_config = {"extra": "forbid"}
