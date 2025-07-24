@@ -1,49 +1,140 @@
-from typing import List, Annotated
-from pydantic import BaseModel, Field, field_validator
-
-# ---------- Base provider schema ----------
-class EncounterProvider(BaseModel):
-    provider_role: str = Field(...)
-    evidence_for_provider_role: str = Field(...)
-
-    provider_name: str = Field(...)
-    evidence_for_provider_name: str = Field(...)
-
-    provider_speciality: str = Field(...)
-    evidence_for_provider_speciality: str = Field(...)
-
-    provider_npi: str = Field(...)
-    evidence_for_provider_npi: str = Field(...)
-
-    provider_health_organization: str = Field(...)
-    evidence_for_provider_health_organization: str = Field(...)
-
-    @field_validator("*", mode="before")
-    @classmethod
-    def _decode_bytes(cls, v):
-        if isinstance(v, (bytes, bytearray)):
-            return v.decode()
-        return v
-
-    model_config = {"extra": "forbid"}
+import re
+from datetime import datetime
+from pathlib import Path
+import pandas as pd
+import numpy as np
 
 
-# ---------- Wrapper to keep the "encounter_provider" key ----------
-class EncounterProviderItem(BaseModel):
-    encounter_provider: EncounterProvider
-    model_config = {"extra": "forbid"}
+def parse_docmeta_log(log_source,
+                      start_marker=r"in main_test:",
+                      time_regex=r"^\[(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\]",
+                      ts_fmt="%Y-%m-%d %H:%M:%S,%f"):
+    """
+    Parse a docmetadata log and compute per-file execution times plus summary statistics.
 
+    Parameters
+    ----------
+    log_source : str or Path
+        Path to the log file or the raw log text itself.
+    start_marker : str or regex
+        Pattern that marks the start of processing for a new file (e.g., 'in main_test:').
+    time_regex : str
+        Regex that captures the timestamp at the beginning of each log line.
+    ts_fmt : str
+        Datetime format corresponding to the captured timestamp.
 
-# ---------- Final payload enforcing EXACTLY two items ----------
-class EncounterProvidersPayload(BaseModel):
-    encounter_providers: Annotated[
-        List[EncounterProviderItem],
-        Field(
-            ...,
-            min_length=2,
-            max_length=2,
-            description='Exactly two items: [{"encounter_provider": {...}}, {"encounter_provider": {...}}]'
-        )
-    ]
+    Returns
+    -------
+    per_file_df : pandas.DataFrame
+        One row per processed file with start_time, end_time, and time_taken_for_execution (seconds).
+    summary_df : pandas.DataFrame
+        One row with min/max/avg/percentiles for time_taken_for_execution.
+    """
 
-    model_config = {"extra": "forbid"}
+    # ------------------------------------------------------------------
+    # 1) Get text
+    # ------------------------------------------------------------------
+    if isinstance(log_source, (str, Path)) and Path(str(log_source)).exists():
+        text = Path(str(log_source)).read_text(encoding="utf-8", errors="ignore")
+    else:
+        # assume raw text passed
+        text = str(log_source)
+
+    lines = text.splitlines()
+
+    # ------------------------------------------------------------------
+    # 2) Compile regexes
+    # ------------------------------------------------------------------
+    ts_pattern = re.compile(time_regex)
+    start_pattern = re.compile(start_marker)
+
+    # Optional: capture file identifier (S3 path) if present
+    # e.g. "Received binary S3 path: <path>" on same line as start_marker
+    s3_path_pattern = re.compile(r"Received binary S3 path:\s*([^\s]+)")
+
+    # ------------------------------------------------------------------
+    # 3) Iterate & find blocks
+    # ------------------------------------------------------------------
+    blocks = []  # list of dicts: {start_time, end_time, path, start_idx, end_idx}
+    current = None
+
+    for idx, line in enumerate(lines):
+        # timestamp
+        ts_match = ts_pattern.search(line)
+        if not ts_match:
+            continue
+        ts = datetime.strptime(ts_match.group("ts"), ts_fmt)
+
+        # check for new file start
+        if start_pattern.search(line):
+            # if there is an open block, close it before starting new
+            if current is not None:
+                current["end_time"] = prev_ts  # last timestamp encountered
+                current["end_idx"] = idx - 1
+                blocks.append(current)
+
+            # start a new block
+            current = {
+                "start_time": ts,
+                "start_idx": idx,
+                "path": None
+            }
+
+            spm = s3_path_pattern.search(line)
+            if spm:
+                current["path"] = spm.group(1)
+
+        prev_ts = ts  # keep last timestamp seen
+
+    # close the last block if any
+    if current is not None:
+        current["end_time"] = prev_ts
+        current["end_idx"] = len(lines) - 1
+        blocks.append(current)
+
+    # ------------------------------------------------------------------
+    # 4) Build per-file dataframe
+    # ------------------------------------------------------------------
+    rows = []
+    for i, b in enumerate(blocks, start=1):
+        duration_sec = (b["end_time"] - b["start_time"]).total_seconds()
+        rows.append({
+            "file_seq": i,
+            "s3_path": b["path"],
+            "start_time": b["start_time"],
+            "end_time": b["end_time"],
+            "time_taken_for_execution": duration_sec
+        })
+
+    per_file_df = pd.DataFrame(rows)
+
+    # ------------------------------------------------------------------
+    # 5) Summary metrics (time only, as requested)
+    # ------------------------------------------------------------------
+    if per_file_df.empty:
+        summary_df = pd.DataFrame([{
+            "min_execution_time": None,
+            "max_execution_time": None,
+            "average_execution_time": None,
+            "percentile_25_value": None,
+            "percentile_50_value": None,
+            "percentile_75_value": None,
+            "percentile_99_value": None
+        }]).T
+        return per_file_df, summary_df
+
+    times = per_file_df["time_taken_for_execution"].to_numpy()
+
+    summary_row = {
+        "min_execution_time": times.min(),
+        "max_execution_time": times.max(),
+        "average_execution_time": times.mean(),
+        "percentile_25_value": np.percentile(times, 25),
+        "percentile_50_value": np.percentile(times, 50),
+        "percentile_75_value": np.percentile(times, 75),
+        "percentile_99_value": np.percentile(times, 99)
+    }
+    summary_df = pd.DataFrame([summary_row]).T
+    summary_df.columns = ["value"]
+
+    return per_file_df, summary_df
