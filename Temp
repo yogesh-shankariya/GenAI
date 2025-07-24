@@ -1,19 +1,10 @@
-import os
-import json
+from pathlib import Path
 
-# Specify the folder path
-folder_path = "path/to/your/folder"
+# Specify the folder containing .txt files
+folder_path = Path("path/to/your/folder")
 
-# List all JSON files in the folder
-json_files = [f for f in os.listdir(folder_path) if f.endswith('.json')]
-
-# Loop through each file and load it
-for file_name in json_files:
-    file_path = os.path.join(folder_path, file_name)
-    
-    with open(file_path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-        print(f"Loaded {file_name}")
-        # Do something with the loaded data
-        # For example, print the first level keys
-        print(data.keys())
+# Iterate through all .txt files and rename to .json
+for txt_file in folder_path.glob("*.txt"):
+    json_file = txt_file.with_suffix(".json")
+    txt_file.rename(json_file)
+    print(f"Renamed: {txt_file.name} → {json_file.name}")
