@@ -1,4 +1,133 @@
-per_file_df, summary_df = parse_docmeta_log("docmetadata_retry_logs.txt")
+import re
+from datetime import datetime
+from pathlib import Path
+import pandas as pd
+import numpy as np
 
-print(per_file_df.head())
-print(summary_df)
+
+def parse_docmeta_log(
+    log_source,
+    start_marker_regex=r"in main_test:\s+\*+",           # matches: in main_test: **********
+    time_regex=r"^\[(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\]",
+    ts_fmt="%Y-%m-%d %H:%M:%S,%f"
+):
+    """
+    Parse log, split by 'main_test' marker, compute per-file execution time and summary stats.
+
+    Parameters
+    ----------
+    log_source : str or Path
+        Path to log file OR raw log text.
+    start_marker_regex : str
+        Regex for the line that signals the start of a new file's processing.
+    time_regex : str
+        Regex capturing the timestamp at beginning of each log line.
+    ts_fmt : str
+        Datetime format of the captured timestamp.
+
+    Returns
+    -------
+    per_file_df : pd.DataFrame
+        Columns: file_seq, s3_path, start_time, end_time, time_taken_for_execution
+    summary_df : pd.DataFrame
+        Single-column dataframe (index = metric name, column = 'value')
+    """
+
+    # --- 1) Read text -------------------------------------------------
+    if isinstance(log_source, (str, Path)) and Path(str(log_source)).exists():
+        text = Path(str(log_source)).read_text(encoding="utf-8", errors="ignore")
+    else:
+        text = str(log_source)
+
+    lines = text.splitlines()
+
+    # --- 2) Compile regexes -------------------------------------------
+    ts_pattern = re.compile(time_regex)
+    start_pattern = re.compile(start_marker_regex)
+    s3_path_pattern = re.compile(r"Received binary S3 path:\s*([^\s]+)")
+
+    # --- 3) Find blocks ------------------------------------------------
+    blocks = []
+    current = None
+    prev_ts = None
+
+    for idx, line in enumerate(lines):
+        ts_match = ts_pattern.search(line)
+        if not ts_match:
+            continue
+        ts = datetime.strptime(ts_match.group("ts"), ts_fmt)
+
+        if start_pattern.search(line):
+            # close current block
+            if current is not None:
+                current["end_time"] = prev_ts
+                current["end_idx"] = idx - 1
+                blocks.append(current)
+
+            # start new block
+            current = {
+                "start_time": ts,
+                "start_idx": idx,
+                "path": None
+            }
+            s3m = s3_path_pattern.search(line)
+            if s3m:
+                current["path"] = s3m.group(1)
+
+        prev_ts = ts
+
+    # close last block
+    if current is not None and prev_ts is not None:
+        current["end_time"] = prev_ts
+        current["end_idx"] = len(lines) - 1
+        blocks.append(current)
+
+    # --- 4) Per-file dataframe ----------------------------------------
+    rows = []
+    for i, b in enumerate(blocks, start=1):
+        dur = (b["end_time"] - b["start_time"]).total_seconds()
+        rows.append({
+            "file_seq": i,
+            "s3_path": b["path"],
+            "start_time": b["start_time"],
+            "end_time": b["end_time"],
+            "time_taken_for_execution": dur
+        })
+
+    per_file_df = pd.DataFrame(rows)
+
+    # --- 5) Summary stats (time only) ---------------------------------
+    if per_file_df.empty:
+        summary_df = pd.DataFrame(
+            [{"min_execution_time": None,
+              "max_execution_time": None,
+              "average_execution_time": None,
+              "percentile_25_value": None,
+              "percentile_50_value": None,
+              "percentile_75_value": None,
+              "percentile_99_value": None}]
+        ).T
+        summary_df.columns = ["value"]
+        return per_file_df, summary_df
+
+    times = per_file_df["time_taken_for_execution"].to_numpy()
+    summary_row = {
+        "min_execution_time": times.min(),
+        "max_execution_time": times.max(),
+        "average_execution_time": times.mean(),
+        "percentile_25_value": np.percentile(times, 25),
+        "percentile_50_value": np.percentile(times, 50),
+        "percentile_75_value": np.percentile(times, 75),
+        "percentile_99_value": np.percentile(times, 99)
+    }
+    summary_df = pd.DataFrame([summary_row]).T
+    summary_df.columns = ["value"]
+
+    return per_file_df, summary_df
+
+
+
+per_file_df, summary_df = parse_docmeta_log(
+    "docmetadata_retry_logs.txt",
+    start_marker_regex=re.escape("in main_test: ***********")
+)
