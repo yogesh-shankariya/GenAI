@@ -7,33 +7,28 @@ import numpy as np
 
 def parse_docmeta_log(
     log_source,
-    start_marker_regex=r"in main_test:\s+\*+",           # matches: in main_test: **********
+    start_marker_regex=r"in main_test:\s+\*+",
     time_regex=r"^\[(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\]",
     ts_fmt="%Y-%m-%d %H:%M:%S,%f"
 ):
     """
-    Parse log, split by 'main_test' marker, compute per-file execution time and summary stats.
-
-    Parameters
-    ----------
-    log_source : str or Path
-        Path to log file OR raw log text.
-    start_marker_regex : str
-        Regex for the line that signals the start of a new file's processing.
-    time_regex : str
-        Regex capturing the timestamp at beginning of each log line.
-    ts_fmt : str
-        Datetime format of the captured timestamp.
+    Parse the log to:
+      1) Split execution blocks by 'main_test' marker and compute per-file time.
+      2) Extract ERROR and WARNING lines, grouped with counts.
 
     Returns
     -------
-    per_file_df : pd.DataFrame
-        Columns: file_seq, s3_path, start_time, end_time, time_taken_for_execution
-    summary_df : pd.DataFrame
-        Single-column dataframe (index = metric name, column = 'value')
+    per_file_df : DataFrame
+        One row per file with start_time, end_time, time_taken_for_execution.
+    summary_df  : DataFrame
+        One row (index as metric names) of min/max/avg/percentiles for execution time.
+    error_df    : DataFrame
+        ERROR counts grouped by 'where' (module/block) and message.
+    warning_df  : DataFrame
+        WARNING counts grouped by 'where' (module/block) and message.
     """
 
-    # --- 1) Read text -------------------------------------------------
+    # ------------- read text -------------
     if isinstance(log_source, (str, Path)) and Path(str(log_source)).exists():
         text = Path(str(log_source)).read_text(encoding="utf-8", errors="ignore")
     else:
@@ -41,93 +36,145 @@ def parse_docmeta_log(
 
     lines = text.splitlines()
 
-    # --- 2) Compile regexes -------------------------------------------
-    ts_pattern = re.compile(time_regex)
-    start_pattern = re.compile(start_marker_regex)
-    s3_path_pattern = re.compile(r"Received binary S3 path:\s*([^\s]+)")
+    # ------------- regexes ---------------
+    ts_pat = re.compile(time_regex)
+    start_pat = re.compile(start_marker_regex)
+    s3_pat = re.compile(r"Received binary S3 path:\s*([^\s]+)")
+    # generic line parser: level + where + message
+    line_pat = re.compile(
+        r"^\[(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\]\s+"
+        r"(?P<level>INFO|WARNING|ERROR)\s+\[[^\]]+\]\s+in\s+"
+        r"(?P<where>[^:]+):\s+(?P<msg>.*)$"
+    )
 
-    # --- 3) Find blocks ------------------------------------------------
+    # ------------- block detection -------
     blocks = []
     current = None
     prev_ts = None
 
-    for idx, line in enumerate(lines):
-        ts_match = ts_pattern.search(line)
-        if not ts_match:
-            continue
-        ts = datetime.strptime(ts_match.group("ts"), ts_fmt)
+    # also keep line->file_seq mapping for later grouping of errors/warnings by file
+    file_seq_for_line = []
+    current_seq = 0
 
-        if start_pattern.search(line):
-            # close current block
+    for idx, line in enumerate(lines):
+        ts_m = ts_pat.search(line)
+        if not ts_m:
+            file_seq_for_line.append(current_seq)
+            continue
+        ts = datetime.strptime(ts_m.group("ts"), ts_fmt)
+
+        if start_pat.search(line):
             if current is not None:
                 current["end_time"] = prev_ts
                 current["end_idx"] = idx - 1
                 blocks.append(current)
-
-            # start new block
+            current_seq += 1
             current = {
                 "start_time": ts,
                 "start_idx": idx,
-                "path": None
+                "path": None,
+                "seq": current_seq
             }
-            s3m = s3_path_pattern.search(line)
+            s3m = s3_pat.search(line)
             if s3m:
                 current["path"] = s3m.group(1)
 
         prev_ts = ts
+        file_seq_for_line.append(current_seq)
 
-    # close last block
     if current is not None and prev_ts is not None:
         current["end_time"] = prev_ts
         current["end_idx"] = len(lines) - 1
         blocks.append(current)
 
-    # --- 4) Per-file dataframe ----------------------------------------
+    # ------------- per-file dataframe ----
     rows = []
-    for i, b in enumerate(blocks, start=1):
+    for b in blocks:
         dur = (b["end_time"] - b["start_time"]).total_seconds()
         rows.append({
-            "file_seq": i,
+            "file_seq": b["seq"],
             "s3_path": b["path"],
             "start_time": b["start_time"],
             "end_time": b["end_time"],
             "time_taken_for_execution": dur
         })
-
     per_file_df = pd.DataFrame(rows)
 
-    # --- 5) Summary stats (time only) ---------------------------------
+    # summary metrics (time only)
     if per_file_df.empty:
-        summary_df = pd.DataFrame(
-            [{"min_execution_time": None,
-              "max_execution_time": None,
-              "average_execution_time": None,
-              "percentile_25_value": None,
-              "percentile_50_value": None,
-              "percentile_75_value": None,
-              "percentile_99_value": None}]
-        ).T
-        summary_df.columns = ["value"]
-        return per_file_df, summary_df
-
-    times = per_file_df["time_taken_for_execution"].to_numpy()
-    summary_row = {
-        "min_execution_time": times.min(),
-        "max_execution_time": times.max(),
-        "average_execution_time": times.mean(),
-        "percentile_25_value": np.percentile(times, 25),
-        "percentile_50_value": np.percentile(times, 50),
-        "percentile_75_value": np.percentile(times, 75),
-        "percentile_99_value": np.percentile(times, 99)
-    }
-    summary_df = pd.DataFrame([summary_row]).T
+        metrics = {
+            "min_execution_time": None,
+            "max_execution_time": None,
+            "average_execution_time": None,
+            "percentile_25_value": None,
+            "percentile_50_value": None,
+            "percentile_75_value": None,
+            "percentile_99_value": None
+        }
+    else:
+        times = per_file_df["time_taken_for_execution"].to_numpy()
+        metrics = {
+            "min_execution_time": times.min(),
+            "max_execution_time": times.max(),
+            "average_execution_time": times.mean(),
+            "percentile_25_value": np.percentile(times, 25),
+            "percentile_50_value": np.percentile(times, 50),
+            "percentile_75_value": np.percentile(times, 75),
+            "percentile_99_value": np.percentile(times, 99)
+        }
+    summary_df = pd.DataFrame([metrics]).T
     summary_df.columns = ["value"]
 
-    return per_file_df, summary_df
+    # ------------- extract ERRORS/WARNINGS -------------
+    log_rows = []
+    for idx, line in enumerate(lines):
+        m = line_pat.match(line)
+        if not m:
+            continue
+        level = m.group("level")
+        if level not in ("ERROR", "WARNING"):
+            continue
+        ts = datetime.strptime(m.group("ts"), ts_fmt)
+        log_rows.append({
+            "ts": ts,
+            "level": level,
+            "where": m.group("where").strip(),
+            "message": m.group("msg").strip(),
+            "line_no": idx,
+            "file_seq": file_seq_for_line[idx]
+        })
+
+    if log_rows:
+        log_df = pd.DataFrame(log_rows)
+    else:
+        log_df = pd.DataFrame(columns=["ts", "level", "where", "message", "line_no", "file_seq"])
+
+    # errors
+    error_df = (
+        log_df[log_df.level == "ERROR"]
+        .groupby(["file_seq", "where", "message"], dropna=False)
+        .agg(count=("message", "size"),
+             first_seen=("ts", "min"),
+             last_seen=("ts", "max"))
+        .reset_index()
+        .sort_values(["file_seq", "count"], ascending=[True, False])
+    )
+
+    # warnings
+    warning_df = (
+        log_df[log_df.level == "WARNING"]
+        .groupby(["file_seq", "where", "message"], dropna=False)
+        .agg(count=("message", "size"),
+             first_seen=("ts", "min"),
+             last_seen=("ts", "max"))
+        .reset_index()
+        .sort_values(["file_seq", "count"], ascending=[True, False])
+    )
+
+    return per_file_df, summary_df, error_df, warning_df
 
 
+per_file_df, summary_df, error_df, warning_df = parse_docmeta_log("docmetadata_retry_logs.txt")
 
-per_file_df, summary_df = parse_docmeta_log(
-    "docmetadata_retry_logs.txt",
-    start_marker_regex=re.escape("in main_test: ***********")
-)
+print(error_df.head())      # errors by module/message with counts
+print(warning_df.head())    # warnings by module/message with counts
