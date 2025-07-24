@@ -1,9 +1,19 @@
-per_file_df, summary_df, error_df, warning_df = parse_docmeta_log_accurate(
-    "docmetadata_retry_logs.txt",
-    start_marker_regex=r"in\s+main_test:\s+\*{5,}"   # your exact marker
-)
+import os
+import json
 
-print(per_file_df.head())
-print(summary_df)
-print(error_df.head())
-print(warning_df.head())
+# Specify the folder path
+folder_path = "path/to/your/folder"
+
+# List all JSON files in the folder
+json_files = [f for f in os.listdir(folder_path) if f.endswith('.json')]
+
+# Loop through each file and load it
+for file_name in json_files:
+    file_path = os.path.join(folder_path, file_name)
+    
+    with open(file_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+        print(f"Loaded {file_name}")
+        # Do something with the loaded data
+        # For example, print the first level keys
+        print(data.keys())
