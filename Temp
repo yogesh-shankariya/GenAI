@@ -1,61 +1,26 @@
-from typing import List
+from typing import List, Annotated
 from pydantic import BaseModel, Field, field_validator
 
-
+# ---------- Base provider schema ----------
 class EncounterProvider(BaseModel):
-    """
-    Detailed info about a single healthcare provider associated with the encounter,
-    plus evidence text for each extracted field.
-    """
-    provider_role: str = Field(
-        ...,
-        description="Role of the healthcare provider found in medical chart."
-    )
-    evidence_for_provider_role: str = Field(
-        ...,
-        description="Sentence/paragraph showing where the provider role was found."
-    )
+    provider_role: str = Field(...)
+    evidence_for_provider_role: str = Field(...)
 
-    provider_name: str = Field(
-        ...,
-        description="Full name of the healthcare provider found in medical chart."
-    )
-    evidence_for_provider_name: str = Field(
-        ...,
-        description="Sentence/paragraph showing where the provider name was found."
-    )
+    provider_name: str = Field(...)
+    evidence_for_provider_name: str = Field(...)
 
-    provider_speciality: str = Field(
-        ...,
-        description="Medical speciality of the healthcare provider found in medical chart."
-    )
-    evidence_for_provider_speciality: str = Field(
-        ...,
-        description="Sentence/paragraph showing where the speciality was found."
-    )
+    provider_speciality: str = Field(...)
+    evidence_for_provider_speciality: str = Field(...)
 
-    provider_npi: str = Field(
-        ...,
-        description="National Provider Identifier (10-digit) found in the chart."
-    )
-    evidence_for_provider_npi: str = Field(
-        ...,
-        description="Sentence/paragraph showing where the NPI was found."
-    )
+    provider_npi: str = Field(...)
+    evidence_for_provider_npi: str = Field(...)
 
-    provider_health_organization: str = Field(
-        ...,
-        description="Healthcare organization affiliated with the provider (if mentioned)."
-    )
-    evidence_for_provider_health_organization: str = Field(
-        ...,
-        description="Sentence/paragraph showing where the organization was found."
-    )
+    provider_health_organization: str = Field(...)
+    evidence_for_provider_health_organization: str = Field(...)
 
-    # Optional: automatic bytearray/bytes → str fix
     @field_validator("*", mode="before")
     @classmethod
-    def decode_bytes(cls, v):
+    def _decode_bytes(cls, v):
         if isinstance(v, (bytes, bytearray)):
             return v.decode()
         return v
@@ -63,24 +28,22 @@ class EncounterProvider(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+# ---------- Wrapper to keep the "encounter_provider" key ----------
 class EncounterProviderItem(BaseModel):
-    """
-    Wrapper for a single provider entry inside the encounter_providers array.
-    Matches the JSON where each object has a single key: 'encounter_provider'.
-    """
     encounter_provider: EncounterProvider
-
     model_config = {"extra": "forbid"}
 
 
+# ---------- Final payload enforcing EXACTLY two items ----------
 class EncounterProvidersPayload(BaseModel):
-    """
-    Top-level payload containing a list of provider items.
-    The list can contain multiple entries (even if they are duplicates in shape).
-    """
-    encounter_providers: List[EncounterProviderItem] = Field(
-        ...,
-        description="Array of encounter providers with evidence fields."
-    )
+    encounter_providers: Annotated[
+        List[EncounterProviderItem],
+        Field(
+            ...,
+            min_length=2,
+            max_length=2,
+            description='Exactly two items: [{"encounter_provider": {...}}, {"encounter_provider": {...}}]'
+        )
+    ]
 
     model_config = {"extra": "forbid"}
