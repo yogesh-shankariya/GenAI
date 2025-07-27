@@ -1,15 +1,11 @@
 from pathlib import Path
 
-def count_txt_files(folder_path):
-    """
-    Counts the number of .txt files in the given folder.
+input_jsons_path = Path("/home/jovyan/AM38605_YOGESH/ncr_aedleks_hossysdocmdsrv_app/scripts/MetadataService/test_input/")
 
-    Args:
-        folder_path (str or Path): Path to the folder.
+json_files = list(input_jsons_path.glob("*.json"))
+txt_files = set(file.stem for file in input_jsons_path.glob("*.txt"))
 
-    Returns:
-        int: Total number of .txt files.
-    """
-    folder = Path(folder_path)
-    txt_files = list(folder.glob("*.txt"))
-    return len(txt_files)
+# Only keep JSON files that do not have a corresponding .txt file
+input_files = [file for file in json_files if file.stem not in txt_files]
+
+print(len(input_files))
