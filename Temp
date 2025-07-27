@@ -1,31 +1,15 @@
-# ⬇️ Customize these two paths before running
-FOLDER_PATH = "/path/to/your/folder"          # folder that holds the .txt files
-OUTPUT_FILE = "retry_logs_combined.txt"       # where the merged text will go
-
-# --- combine all *.txt files whose names end with "_retry_logs" ---
 from pathlib import Path
 
-def combine_retry_logs(folder_path: str, output_file: str) -> None:
+def count_txt_files(folder_path):
+    """
+    Counts the number of .txt files in the given folder.
+
+    Args:
+        folder_path (str or Path): Path to the folder.
+
+    Returns:
+        int: Total number of .txt files.
+    """
     folder = Path(folder_path)
-
-    # grab only regular files that (1) are .txt and (2) end with _retry_logs
-    retry_txt_files = sorted(
-        p for p in folder.iterdir()
-        if p.is_file() and p.suffix == ".txt" and p.stem.endswith("_retry_logs")
-    )
-
-    print(f"Found {len(retry_txt_files)} matching files:")
-    for f in retry_txt_files:
-        print("  •", f.name)
-
-    with open(output_file, "w", encoding="utf-8") as outfile:
-        for file in retry_txt_files:
-            with file.open("r", encoding="utf-8") as infile:
-                outfile.write(f"\n--- Start of {file.name} ---\n")
-                outfile.write(infile.read())
-                outfile.write(f"\n--- End of {file.name} ---\n")
-
-    print(f"\n✅  Combined file written to: {Path(output_file).resolve()}")
-
-# run it ➜
-combine_retry_logs(FOLDER_PATH, OUTPUT_FILE)
+    txt_files = list(folder.glob("*.txt"))
+    return len(txt_files)
