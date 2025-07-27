@@ -1,11 +1,21 @@
 from pathlib import Path
 
-input_jsons_path = Path("/home/jovyan/AM38605_YOGESH/ncr_aedleks_hossysdocmdsrv_app/scripts/MetadataService/test_input/")
+def get_unique_files(input_jsons_path, output_txt_path):
+    """
+    Returns a list of .json files from input_jsons_path whose stem doesn't exist in .txt files in output_txt_path.
 
-json_files = list(input_jsons_path.glob("*.json"))
-txt_files = set(file.stem for file in input_jsons_path.glob("*.txt"))
+    Args:
+        input_jsons_path (str): Path to input folder containing .json files.
+        output_txt_path (str): Path to output folder containing .txt files.
 
-# Only keep JSON files that do not have a corresponding .txt file
-input_files = [file for file in json_files if file.stem not in txt_files]
+    Returns:
+        list: List of Path objects (.json files) that don't have a matching .txt file by name.
+    """
+    input_jsons_path = Path(input_jsons_path)
+    output_txt_path = Path(output_txt_path)
 
-print(len(input_files))
+    json_files = list(input_jsons_path.glob("*.json"))
+    txt_stems = set(file.stem for file in output_txt_path.glob("*.txt"))
+
+    unique_json_files = [file for file in json_files if file.stem not in txt_stems]
+    return unique_json_files
