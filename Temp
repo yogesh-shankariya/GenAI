@@ -71,3 +71,13 @@ def extract_err_warn_with_s3(log_source):
     warning_df = aggregate(warn_rows)
 
     return error_df, warning_df
+
+
+
+
+
+
+error_df, warning_df = extract_err_warn_with_s3("retry_logs_combined.txt")
+print(error_df.head())
+print(warning_df.head())
+
