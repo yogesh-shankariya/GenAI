@@ -5,59 +5,78 @@ import pandas as pd
 
 def extract_err_warn_with_s3(log_source):
     """
-    Returns
-    -------
-    error_df   : columns -> ['message', 'count', 's3_path']
-    warning_df : columns -> ['message', 'count', 's3_path']
+    Return two DataFrames:
+      error_df   : ['message', 'count', 's3_path']
+      warning_df : ['message', 'count', 's3_path']
+
+    Logic:
+      - Detect blocks that start at:  "in main_test: ***********"
+      - Grab S3 path from the next line that contains "Received binary S3 path:"
+      - All ERROR/WARNING lines that fall inside that block inherit the block's s3_path
     """
 
-    # --- read text ---
+    # -------- read ----------
     if isinstance(log_source, (str, Path)) and Path(str(log_source)).exists():
         text = Path(str(log_source)).read_text(encoding="utf-8", errors="ignore")
     else:
         text = str(log_source)
     lines = text.splitlines()
 
-    # --- regexes ---
-    # marker lines that contain S3 path right after main_test
-    main_s3_re = re.compile(
-        r"in\s+main_test:\s+Received binary S3 path:\s*([^\s]+).*?\[trace_id=([0-9a-fA-F-]+)\]",
-        re.IGNORECASE
-    )
-    # general ERROR/WARNING lines
-    log_re = re.compile(
-        r"^\[\d{4}-\d{2}-\d{2} .*?\]\s+"
-        r"(?P<level>ERROR|WARNING)\s+\[trace_id=(?P<trace>[0-9a-fA-F-]+)\]\s+in\s+"
-        r"(?P<where>[^:]+):\s+(?P<msg>.*)$"
+    # -------- regexes --------
+    ts_re   = re.compile(r"^\[(?P<ts>\d{4}-\d{2}-\d{2} .*?)\]")          # just to know it’s a log line
+    start_re = re.compile(r"in\s+main_test:\s+\*+")                      # marker line
+    s3_re    = re.compile(r"Received binary S3 path:\s*([^\s]+)")        # S3 path grabber
+    lvl_re   = re.compile(
+        r"^\[\d{4}-\d{2}-\d{2} .*?\]\s+(?P<lvl>ERROR|WARNING)\s+\[trace_id=.*?\]\s+in\s+[^:]+:\s+(?P<msg>.*)$"
     )
 
-    # --- build trace_id -> s3_path map ---
-    trace_to_s3 = {}
-    for ln in lines:
-        m = main_s3_re.search(ln)
-        if m:
-            s3_path = m.group(1).strip()
-            trace_id = m.group(2)
-            trace_to_s3[trace_id] = s3_path
+    # -------- find blocks (start_idx, end_idx, s3_path) -------------
+    blocks = []
+    current = None
 
-    # --- collect errors & warnings ---
+    for i, ln in enumerate(lines):
+        if start_re.search(ln):
+            # close previous
+            if current is not None:
+                current["end"] = i - 1
+                blocks.append(current)
+            current = {"start": i, "end": None, "s3": None}
+
+            # try to read S3 path either on same line or the next few lines
+            # (your examples show it on the very next line)
+        if current is not None and current["s3"] is None:
+            m = s3_re.search(ln)
+            if m:
+                current["s3"] = m.group(1).strip()
+
+    # close last block
+    if current is not None:
+        current["end"] = len(lines) - 1
+        blocks.append(current)
+
+    # Map every line index to its block's s3_path
+    idx_to_s3 = {}
+    for b in blocks:
+        for j in range(b["start"], b["end"] + 1):
+            idx_to_s3[j] = b["s3"]
+
+    # -------- collect error/warning rows ----------------------------
     err_rows, warn_rows = [], []
-    for ln in lines:
-        m = log_re.match(ln)
+    for i, ln in enumerate(lines):
+        m = lvl_re.match(ln)
         if not m:
             continue
-        level = m.group("level")
-        trace = m.group("trace")
         msg = m.group("msg").strip()
-        s3_path = trace_to_s3.get(trace)  # may be None if mapping not found
-        row = {"message": msg, "s3_path": s3_path}
-        if level == "ERROR":
+        lvl = m.group("lvl")
+        s3 = idx_to_s3.get(i)  # None if outside any block
+        row = {"message": msg, "s3_path": s3}
+        if lvl == "ERROR":
             err_rows.append(row)
         else:
             warn_rows.append(row)
 
-    # --- aggregate ---
-    def aggregate(rows):
+    # -------- aggregate ---------------------------------------------
+    def agg(rows):
         if not rows:
             return pd.DataFrame(columns=["message", "count", "s3_path"])
         df = pd.DataFrame(rows)
@@ -67,17 +86,7 @@ def extract_err_warn_with_s3(log_source):
                   .sort_values("count", ascending=False)
                   .reset_index(drop=True))
 
-    error_df   = aggregate(err_rows)
-    warning_df = aggregate(warn_rows)
+    error_df   = agg(err_rows)
+    warning_df = agg(warn_rows)
 
     return error_df, warning_df
-
-
-
-
-
-
-error_df, warning_df = extract_err_warn_with_s3("retry_logs_combined.txt")
-print(error_df.head())
-print(warning_df.head())
-
