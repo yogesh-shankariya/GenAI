@@ -1,6 +1,73 @@
+import re
 from pathlib import Path
+import pandas as pd
 
-def count_json_files(folder_path: str) -> int:
-    folder = Path(folder_path)
-    json_files = list(folder.glob("*.json"))
-    return len(json_files)
+
+def extract_err_warn_with_s3(log_source):
+    """
+    Returns
+    -------
+    error_df   : columns -> ['message', 'count', 's3_path']
+    warning_df : columns -> ['message', 'count', 's3_path']
+    """
+
+    # --- read text ---
+    if isinstance(log_source, (str, Path)) and Path(str(log_source)).exists():
+        text = Path(str(log_source)).read_text(encoding="utf-8", errors="ignore")
+    else:
+        text = str(log_source)
+    lines = text.splitlines()
+
+    # --- regexes ---
+    # marker lines that contain S3 path right after main_test
+    main_s3_re = re.compile(
+        r"in\s+main_test:\s+Received binary S3 path:\s*([^\s]+).*?\[trace_id=([0-9a-fA-F-]+)\]",
+        re.IGNORECASE
+    )
+    # general ERROR/WARNING lines
+    log_re = re.compile(
+        r"^\[\d{4}-\d{2}-\d{2} .*?\]\s+"
+        r"(?P<level>ERROR|WARNING)\s+\[trace_id=(?P<trace>[0-9a-fA-F-]+)\]\s+in\s+"
+        r"(?P<where>[^:]+):\s+(?P<msg>.*)$"
+    )
+
+    # --- build trace_id -> s3_path map ---
+    trace_to_s3 = {}
+    for ln in lines:
+        m = main_s3_re.search(ln)
+        if m:
+            s3_path = m.group(1).strip()
+            trace_id = m.group(2)
+            trace_to_s3[trace_id] = s3_path
+
+    # --- collect errors & warnings ---
+    err_rows, warn_rows = [], []
+    for ln in lines:
+        m = log_re.match(ln)
+        if not m:
+            continue
+        level = m.group("level")
+        trace = m.group("trace")
+        msg = m.group("msg").strip()
+        s3_path = trace_to_s3.get(trace)  # may be None if mapping not found
+        row = {"message": msg, "s3_path": s3_path}
+        if level == "ERROR":
+            err_rows.append(row)
+        else:
+            warn_rows.append(row)
+
+    # --- aggregate ---
+    def aggregate(rows):
+        if not rows:
+            return pd.DataFrame(columns=["message", "count", "s3_path"])
+        df = pd.DataFrame(rows)
+        return (df.groupby(["message", "s3_path"], dropna=False)
+                  .size()
+                  .reset_index(name="count")
+                  .sort_values("count", ascending=False)
+                  .reset_index(drop=True))
+
+    error_df   = aggregate(err_rows)
+    warning_df = aggregate(warn_rows)
+
+    return error_df, warning_df
