@@ -1,21 +1,11 @@
 from pathlib import Path
+import shutil
 
-def get_unique_files(input_jsons_path, output_txt_path):
-    """
-    Returns a list of .json files from input_jsons_path whose stem doesn't exist in .txt files in output_txt_path.
+def convert_txt_to_json(input_folder: str, output_folder: str):
+    input_path = Path(input_folder)
+    output_path = Path(output_folder)
+    output_path.mkdir(parents=True, exist_ok=True)  # Create output folder if it doesn't exist
 
-    Args:
-        input_jsons_path (str): Path to input folder containing .json files.
-        output_txt_path (str): Path to output folder containing .txt files.
-
-    Returns:
-        list: List of Path objects (.json files) that don't have a matching .txt file by name.
-    """
-    input_jsons_path = Path(input_jsons_path)
-    output_txt_path = Path(output_txt_path)
-
-    json_files = list(input_jsons_path.glob("*.json"))
-    txt_stems = set(file.stem for file in output_txt_path.glob("*.txt"))
-
-    unique_json_files = [file for file in json_files if file.stem not in txt_stems]
-    return unique_json_files
+    for txt_file in input_path.glob("*.txt"):
+        json_file = output_path / (txt_file.stem + ".json")
+        shutil.copy(txt_file, json_file)  # Copy content with new extension
