@@ -1,11 +1,6 @@
 from pathlib import Path
-import shutil
 
-def convert_txt_to_json(input_folder: str, output_folder: str):
-    input_path = Path(input_folder)
-    output_path = Path(output_folder)
-    output_path.mkdir(parents=True, exist_ok=True)  # Create output folder if it doesn't exist
-
-    for txt_file in input_path.glob("*.txt"):
-        json_file = output_path / (txt_file.stem + ".json")
-        shutil.copy(txt_file, json_file)  # Copy content with new extension
+def count_json_files(folder_path: str) -> int:
+    folder = Path(folder_path)
+    json_files = list(folder.glob("*.json"))
+    return len(json_files)
