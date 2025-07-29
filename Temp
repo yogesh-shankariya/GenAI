@@ -1,6 +1,42 @@
 from pathlib import Path
+from pdf2image import convert_from_path
 
-def count_json_files(folder_path: str) -> int:
-    folder = Path(folder_path)
-    json_files = list(folder.glob("*.json"))
-    return len(json_files)
+def pdf_to_jpgs(
+    pdf_path: str | Path,
+    output_dir: str | Path,
+    dpi: int = 300,
+    prefix: str = "page"
+) -> list[Path]:
+    """
+    Convert every page of `pdf_path` to a separate JPG image.
+
+    Parameters
+    ----------
+    pdf_path : str | Path
+        Path to the source PDF.
+    output_dir : str | Path
+        Directory where JPGs will be saved (created if absent).
+    dpi : int, optional
+        Resolution of the output images. Default is 300 dpi.
+    prefix : str, optional
+        Filename prefix for each image (e.g., 'page' ➜ page-1.jpg).
+
+    Returns
+    -------
+    list[Path]
+        A list of Path objects pointing to the generated JPG files.
+    """
+    pdf_path = Path(pdf_path).expanduser().resolve()
+    output_dir = Path(output_dir).expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Convert PDF pages to PIL images
+    pil_pages = convert_from_path(pdf_path, dpi=dpi)
+
+    output_paths = []
+    for idx, page in enumerate(pil_pages, start=1):
+        img_path = output_dir / f"{prefix}-{idx}.jpg"
+        page.save(img_path, "JPEG")
+        output_paths.append(img_path)
+
+    return output_paths
