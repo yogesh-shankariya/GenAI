@@ -40,3 +40,12 @@ def pdf_to_jpgs(
         output_paths.append(img_path)
 
     return output_paths
+
+
+
+# Convert and save pages under ./output_images
+jpg_files = pdf_to_jpgs("input_docs/report.pdf", "output_images")
+print(f"Saved {len(jpg_files)} images:")
+for p in jpg_files:
+    print("  •", p)
+
