@@ -1,66 +1,62 @@
-[
-    "Agency info",
-    "Patient info",
-    "Patient info/General",
-    "General",
-    "Diagnosis / History",
-    "Medical History",
-    "Prior Medical History",
-    "Pre admission /history",
-    "Social Supports / Safety Hazards",
-    "Assistance /home environment",
-    "At risk behaviors/Domestic violence/home and fire safety",
-    "Homebound status",
-    "Prior Function",
-    "Mental status",
-    "Psychosocial",
-    "Physical Assessment",
-    "Functional Assessment",
-    "Evaluation Assessment",
-    "Perception/Cognition",
-    "Prognosis",
-    "Endurance",
-    "Treatment Goals",
-    "Discharge Plan",
-    "Posture",
-    "Coordination",
-    "Therapist and Physician sign and date",
-    "Standardized Tests and Measures",
-    "Muscle tone",
-    "Sensation",
-    "Proprioception",
-    "Equipment has",
-    "Equipment needs",
-    "Wheelchair mobility",
-    "Subjective",
-    "Skills Impairment Level",
-    "Potential Barriers to Progress",
-    "ADL",
-    "IADL",
-    "Transfers",
-    "Balance",
-    "Muscle Range of Motion/Strength",
-    "Functional Mobility",
-    "Assessments",
-    "Skilled Interventions Performed",
-    "ROM/Neuro",
-    "Skin/ Integument",
-    "Pain",
-    "Swallowing /Diet",
-    "Attention/Cognition",
-    "Communication/Learning",
-    "GU/GI",
-    "Cardio/pulmonary",
-    "Advance care plan",
-    "Consent/Rights and Responsibilities",
-    "Vitals",
-    "Vital signs",
-    "Labs/Tests/Adverse Events",
-    "Visit Frequency",
-    "ED Visits/re hospitalization risk",
-    "Eligibility status",
-    "Care plan/Goals",
-    "DME and supplies",
-    "Provider Info/summary",
-    "Patient and physician sign and date"
-]
+import re
+from pathlib import Path
+from typing import Dict
+
+def extract_page_blocks(
+    txt_path: str | Path,
+    marker: str = r"<ocr_service_page_start>",
+    page_num_pattern: str = r"\d+",
+    encoding: str = "utf-8"
+) -> Dict[int, str]:
+    """
+    Parse a plain-text OCR dump that uses page markers like
+    '<ocr_service_page_start>42' and return a dictionary mapping
+    each page number to the text that falls between that marker and
+    the next.
+
+    Parameters
+    ----------
+    txt_path : str | Path
+        Path to the input .txt file.
+    marker : str, default '<ocr_service_page_start>'
+        The literal marker that precedes every page number.
+    page_num_pattern : str, default r'\\d+'
+        Regex for the page number that immediately follows the marker.
+        Override if page IDs contain letters, dashes, etc.
+    encoding : str, default 'utf-8'
+        File encoding used to read the text file.
+
+    Returns
+    -------
+    Dict[int, str]
+        { page_number : page_content }
+        Page numbers are returned as integers; page_content is the
+        raw substring between one marker and the next (trimmed).
+    """
+    txt_path = Path(txt_path).expanduser().resolve()
+    text = txt_path.read_text(encoding=encoding)
+
+    # Build one regex that captures both the marker and page number
+    regex = re.compile(
+        rf"{re.escape(marker)}\s*({page_num_pattern})",
+        re.IGNORECASE
+    )
+
+    matches = list(regex.finditer(text))
+    if not matches:
+        raise ValueError(f"No page markers '{marker}' found in {txt_path}")
+
+    pages: Dict[int, str] = {}
+    for idx, m in enumerate(matches):
+        start_of_content = m.end()
+        end_of_content = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+        page_num = int(m.group(1))          # cast to int; drop `int()` if IDs are alphanum
+        content = text[start_of_content:end_of_content].strip()
+        pages[page_num] = content
+
+    return pages
+
+
+# ─── example usage ───────────────────────────────────────────────────────────
+# pages_dict = extract_page_blocks("ocr_dump.txt")
+# print(pages_dict[1])          # content of page 1
