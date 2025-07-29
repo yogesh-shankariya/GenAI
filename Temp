@@ -1,62 +1,10 @@
-"""
-Batch-convert every PDF in a folder to JPG pages at high resolution.
-
-• Default resolution = 600 dpi  (change via the dpi argument).
-• For each <name>.pdf a sub-directory  <output_root>/<name>/  is created.
-• Pages are saved as  page-1.jpg, page-2.jpg, …  inside that sub-directory.
-"""
-
 from pathlib import Path
-from typing import Dict, List
-from pdf2image import convert_from_path
 
+def list_pdf_filenames(input_folder_path):
+    input_folder = Path(input_folder_path)
+    pdf_files = [pdf.name for pdf in input_folder.glob("*.pdf")]
+    return pdf_files
 
-def pdf_to_jpgs(
-    pdf_path: str | Path,
-    output_dir: str | Path,
-    dpi: int = 600,               # ← HIGH-RES default
-    prefix: str = "page",
-) -> List[Path]:
-    """Convert one PDF to JPG images (one per page)."""
-    pdf_path   = Path(pdf_path).expanduser().resolve()
-    output_dir = Path(output_dir).expanduser().resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    pages = convert_from_path(pdf_path, dpi=dpi)
-
-    out_paths: List[Path] = []
-    for i, page in enumerate(pages, start=1):
-        img_path = output_dir / f"{prefix}-{i}.jpg"
-        page.save(img_path, "JPEG")
-        out_paths.append(img_path)
-
-    return out_paths
-
-
-def batch_convert_pdfs(
-    input_dir: str | Path,
-    output_root: str | Path = "output_images",
-    dpi: int = 600               # ← propagated to each PDF
-) -> Dict[str, List[Path]]:
-    """
-    Convert **all** PDFs in `input_dir`.  
-    Returns a mapping  {pdf_filename: [list_of_image_paths]}.
-    """
-    input_dir   = Path(input_dir).expanduser().resolve()
-    output_root = Path(output_root).expanduser().resolve()
-    output_root.mkdir(parents=True, exist_ok=True)
-
-    results: Dict[str, List[Path]] = {}
-    for pdf in sorted(input_dir.glob("*.pdf")):
-        subdir = output_root / pdf.stem           # e.g. output_images/abc/
-        images = pdf_to_jpgs(pdf, subdir, dpi=dpi)
-        results[pdf.name] = images
-
-    return results
-
-
-# ── example run ──────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    all_exports = batch_convert_pdfs("input_files", "output_images")
-    for pdf_name, imgs in all_exports.items():
-        print(f"{pdf_name}: saved {len(imgs)} pages at 600 dpi -> {imgs[0].parent}")
+# Example usage
+pdf_list = list_pdf_filenames("input_files")
+print(pdf_list)
