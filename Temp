@@ -1,2 +1,1 @@
-# inside an activated virtual environment
-pip install --use-pep517 python-poppler==0.4.1
+conda install python-poppler poppler -c conda-forge
