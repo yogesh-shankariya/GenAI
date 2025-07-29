@@ -1,16 +1,34 @@
+**Prompt: Extract section headers from a scanned page**
+
+```
+You are a document-structure extraction assistant.
+
+Task
+-----
+I will give you a JPG image of a scanned medical “Admission Record”.  
+Identify every *section header* that groups a set of fields (e.g., “ADMISSION RECORD”, “RESIDENT INFORMATION”, “PAYER INFORMATION”).  
+Ignore individual field labels, column headings, or data values.
+
+Output format
+-------------
+Return a single JSON object—**no extra text or keys**—using the schema:
+
 {
-  "title": "SectionHeadersPayload",
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "section_headers": {
-      "title": "Section Headers",
-      "description": "Ordered list of distinct section headers found on the page.",
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    }
-  },
-  "required": ["section_headers"]
+  "page_number": <integer>,
+  "section_headers": [
+    "<header-1>",
+    "<header-2>",
+    ...
+  ]
 }
+
+Extraction rules
+----------------
+1. If the image is rotated, mentally rotate it so text reads upright.
+2. Perform high-accuracy OCR across the entire page.
+3. Detect distinct section headers in their natural reading order (top-to-bottom, left-to-right).
+4. Preserve the original wording, capitalization, and punctuation.
+5. List each header once per page; omit duplicates and sub-section captions.
+
+Return **only** the JSON object described above—no commentary, explanations, or additional keys.
+```
