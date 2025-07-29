@@ -1,50 +1,60 @@
-from pathlib import Path
-import json
-import mimetypes
-import asyncio
+You are a document‑structure extraction assistant.
 
-# ---------- helper -----------------------------------------------------------
-def _mime(path: Path) -> str:
-    return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+## Task
 
+I will supply a JPG image of a scanned medical document page.
+Identify every true section header that belongs to the meaning‑based allow‑list below.
+• A header may differ slightly in wording (e.g. “Medical History” instead of “Family Medical History”) – use common sense to match the intent.
+• Ignore anything that is obviously a field label, table column, or data value (for example “Order Date”, “Communication Method”, “Order ID”, “Order Summary”, “Confirmed By” are not section headers).
 
-# ---------- main -------------------------------------------------------------
-async def sequential_vision_extract(
-    input_dir: str | Path = "output_images",
-    output_dir: str | Path = "output_final",
-    prompt_path: str | Path = "prompt_1.txt",
-    schema_path: str | Path = "schema.json",
-) -> None:
-    """
-    Reads every *.jpg image under `input_dir`, sends it to `vision_structure`
-    (await‑able), and stores the JSON result under `output_dir` using the same
-    filename stem (page‑1.json, page‑2.json, …).
+## Allow‑list (case‑insensitive, minor wording variations acceptable)
 
-    Processing is strictly sequential – one request at a time.
-    """
-    input_dir  = Path(input_dir).expanduser().resolve()
-    output_dir = Path(output_dir).expanduser().resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
+* Patient info
+* Therapist
+* Administration Information
+* Residential Infectious Risk screening
+* Patient vitals
+* Pain assessment
+* Homebound status
+* Orientation and Mental
+* Cognition
+* ADLs/IADLs
+* Sensory Deficits
+* Shoulder ROM and strength
+* Home and Fire safety
+* Learning needs
+* OT Problems
+* Teaching assessments
+* OT Skilled Interventions Performed
+* OT Goals/Outcomes
+* Short Term Goal
+* Additional Goals
+* Physician Name
+* Frequency and Duration
+* Adaptive Equipment Needed
+* Discharge Plan
+* Careplan visit documentation ‑ occupational therapy
+* Encounter Notes
+* Triage code
+* Documents ‑ Encounter level/Order level
+* AVS Reports
+* Coding summary
+* 60 Day Summary at Recertification
+* Therapist and Physician sign and date
 
-    prompt = Path(prompt_path).read_text(encoding="utf-8")
-    schema = json.loads(Path(schema_path).read_text(encoding="utf-8"))
+## Output format
 
-    img_paths = sorted(input_dir.rglob("*.jpg"))
-    if not img_paths:
-        raise FileNotFoundError(f"No JPG images found under {input_dir}")
+Return only the JSON object below—no extra keys, commentary, or text:
 
-    for img in img_paths:
-        with img.open("rb") as fh:
-            files = [("images", (img.name, fh, _mime(img)))]
-            response = await vision_structure(schema, prompt, files)
+{
+"section\_headers": \["\<header‑1>", "\<header‑2>", "..."]
+}
 
-        out_path = output_dir / f"{img.stem}.json"
-        out_path.write_text(json.dumps(response, ensure_ascii=False, indent=2),
-                            encoding="utf-8")
-        print(f"✓ {img.name} → {out_path.relative_to(output_dir.parent)}")
+## Extraction rules
 
-
-# ---------- usage (Jupyter/IPython cell) -------------------------------------
-# await sequential_vision_extract()          # runs with default paths
-# await sequential_vision_extract("output_images", "output_final",
-#                                 "prompt_1.txt", "schema.json")
+1. Rotate the image mentally if needed so text reads upright.
+2. Run accurate OCR over the whole page.
+3. Compare each candidate phrase to the allow‑list meanings; capture the header if it matches semantically.
+4. Preserve the original wording, capitalization, and punctuation from the image.
+5. List headers once each, in natural reading order (top‑to‑bottom, left‑to‑right).
+6. If no valid headers are found, return an empty list.
