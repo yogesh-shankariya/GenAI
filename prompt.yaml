@@ -28,3 +28,18 @@ Extraction rules
 5. List each header once per page; omit duplicates and sub-section captions.
 
 Return **only** the JSON object described above—no commentary, explanations, or additional keys.
+
+
+
+from typing import List
+from pydantic import BaseModel, Field
+
+class SectionHeadersPayload(BaseModel):
+    """
+    List of section headers extracted from one page of a scanned document.
+    """
+    section_headers: List[str] = Field(
+        ...,
+        description="Ordered list of distinct section headers found on the page."
+    )
+
