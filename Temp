@@ -1,54 +1,68 @@
 from pathlib import Path
 from typing import List
-from pdf2image import convert_from_path
-from PIL.Image import Image as PilImage  # for type hints
+from PIL import Image
 
-def pdf_to_jpgs(
-    pdf_path: str | Path,
-    output_dir: str | Path,
-    dpi: int = 300,
-    prefix: str = "page",
-    max_side: int | None = 2048,
-    jpeg_quality: int = 85,
-) -> List[Path]:
+
+def combine_images(
+    input_dir: str | Path,
+    output_image: str | Path,
+    file_prefix: str = "page",
+    file_suffix: str = ".jpg",
+) -> Path:
     """
-    Convert every page of a PDF to a separate JPG image.
+    Combine page images (page-1.jpg, page-2.jpg, …) into one tall image.
 
     Parameters
     ----------
-    pdf_path : str | Path
-        Path to the source PDF.
-    output_dir : str | Path
-        Directory where JPGs will be saved (created if absent).
-    dpi : int, default 300
-        Resolution used when rasterising the PDF.
-    prefix : str, default "page"
-        Filename prefix for each image (e.g., 'page' -> page-1.jpg).
-    max_side : int | None, default 2048
-        If given, down‑scale so the longer dimension ≤ max_side pixels.
-        Set to None to keep the original 300‑dpi size.
-    jpeg_quality : int, default 85
-        JPEG compression quality (1–95). 85 is a good balance.
+    input_dir : str | Path
+        Folder containing the page images.
+    output_image : str | Path
+        Path (including filename) for the combined image to be saved.
+    file_prefix : str, default "page"
+        Common prefix in filenames (e.g., "page" for page-1.jpg).
+    file_suffix : str, default ".jpg"
+        Image file extension in the folder (".jpg", ".png", …).
 
     Returns
     -------
-    List[Path]
-        Paths to the generated JPG files.
+    Path
+        Path to the combined image that was created.
     """
-    pdf_path   = Path(pdf_path).expanduser().resolve()
-    output_dir = Path(output_dir).expanduser().resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
+    input_dir = Path(input_dir).expanduser().resolve()
+    output_image = Path(output_image).expanduser().resolve()
+    output_image.parent.mkdir(parents=True, exist_ok=True)
 
-    # Rasterise PDF -> list[ PIL.Image ]
-    pil_pages: list[PilImage] = convert_from_path(pdf_path, dpi=dpi)
+    # Collect and sort images by page number
+    def _page_number(p: Path) -> int:
+        # Extract number between prefix- and .suffix  -> page-12.jpg -> 12
+        return int(p.stem.replace(f"{file_prefix}-", ""))
 
-    output_paths: List[Path] = []
-    for idx, page in enumerate(pil_pages, start=1):
-        if max_side:
-            page.thumbnail((max_side, max_side))   # in‑place down‑scale
+    img_paths: List[Path] = sorted(
+        input_dir.glob(f"{file_prefix}-*{file_suffix}"),
+        key=_page_number
+    )
+    if not img_paths:
+        raise FileNotFoundError(f"No images found in {input_dir}")
 
-        img_path = output_dir / f"{prefix}-{idx}.jpg"
-        page.save(img_path, "JPEG", quality=jpeg_quality)
-        output_paths.append(img_path)
+    # Open all images to compute final canvas size
+    images = [Image.open(p) for p in img_paths]
 
-    return output_paths
+    total_width = max(img.width for img in images)
+    total_height = sum(img.height for img in images)
+
+    # Create a blank canvas and paste each page one below the other
+    combined = Image.new("RGB", (total_width, total_height), color="white")
+
+    y_offset = 0
+    for img in images:
+        combined.paste(img, (0, y_offset))
+        y_offset += img.height
+
+    combined.save(output_image, quality=95)  # 95 keeps good quality / reasonable size
+    return output_image
+
+
+# ─── example ───────────────────────────────────────────────────────────────
+# combine all page-*.jpg from ./output_images into combined_pages.jpg
+# combined_path = combine_images("output_images", "combined_pages.jpg")
+# print(f"Combined image saved at: {combined_path}")
