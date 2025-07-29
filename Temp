@@ -1,60 +1,54 @@
-You are a document‑structure extraction assistant.
+from pathlib import Path
+from typing import List
+from pdf2image import convert_from_path
+from PIL.Image import Image as PilImage  # for type hints
 
-## Task
+def pdf_to_jpgs(
+    pdf_path: str | Path,
+    output_dir: str | Path,
+    dpi: int = 300,
+    prefix: str = "page",
+    max_side: int | None = 2048,
+    jpeg_quality: int = 85,
+) -> List[Path]:
+    """
+    Convert every page of a PDF to a separate JPG image.
 
-I will supply a JPG image of a scanned medical document page.
-Identify every true section header that belongs to the meaning‑based allow‑list below.
-• A header may differ slightly in wording (e.g. “Medical History” instead of “Family Medical History”) – use common sense to match the intent.
-• Ignore anything that is obviously a field label, table column, or data value (for example “Order Date”, “Communication Method”, “Order ID”, “Order Summary”, “Confirmed By” are not section headers).
+    Parameters
+    ----------
+    pdf_path : str | Path
+        Path to the source PDF.
+    output_dir : str | Path
+        Directory where JPGs will be saved (created if absent).
+    dpi : int, default 300
+        Resolution used when rasterising the PDF.
+    prefix : str, default "page"
+        Filename prefix for each image (e.g., 'page' -> page-1.jpg).
+    max_side : int | None, default 2048
+        If given, down‑scale so the longer dimension ≤ max_side pixels.
+        Set to None to keep the original 300‑dpi size.
+    jpeg_quality : int, default 85
+        JPEG compression quality (1–95). 85 is a good balance.
 
-## Allow‑list (case‑insensitive, minor wording variations acceptable)
+    Returns
+    -------
+    List[Path]
+        Paths to the generated JPG files.
+    """
+    pdf_path   = Path(pdf_path).expanduser().resolve()
+    output_dir = Path(output_dir).expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-* Patient info
-* Therapist
-* Administration Information
-* Residential Infectious Risk screening
-* Patient vitals
-* Pain assessment
-* Homebound status
-* Orientation and Mental
-* Cognition
-* ADLs/IADLs
-* Sensory Deficits
-* Shoulder ROM and strength
-* Home and Fire safety
-* Learning needs
-* OT Problems
-* Teaching assessments
-* OT Skilled Interventions Performed
-* OT Goals/Outcomes
-* Short Term Goal
-* Additional Goals
-* Physician Name
-* Frequency and Duration
-* Adaptive Equipment Needed
-* Discharge Plan
-* Careplan visit documentation ‑ occupational therapy
-* Encounter Notes
-* Triage code
-* Documents ‑ Encounter level/Order level
-* AVS Reports
-* Coding summary
-* 60 Day Summary at Recertification
-* Therapist and Physician sign and date
+    # Rasterise PDF -> list[ PIL.Image ]
+    pil_pages: list[PilImage] = convert_from_path(pdf_path, dpi=dpi)
 
-## Output format
+    output_paths: List[Path] = []
+    for idx, page in enumerate(pil_pages, start=1):
+        if max_side:
+            page.thumbnail((max_side, max_side))   # in‑place down‑scale
 
-Return only the JSON object below—no extra keys, commentary, or text:
+        img_path = output_dir / f"{prefix}-{idx}.jpg"
+        page.save(img_path, "JPEG", quality=jpeg_quality)
+        output_paths.append(img_path)
 
-{
-"section\_headers": \["\<header‑1>", "\<header‑2>", "..."]
-}
-
-## Extraction rules
-
-1. Rotate the image mentally if needed so text reads upright.
-2. Run accurate OCR over the whole page.
-3. Compare each candidate phrase to the allow‑list meanings; capture the header if it matches semantically.
-4. Preserve the original wording, capitalization, and punctuation from the image.
-5. List headers once each, in natural reading order (top‑to‑bottom, left‑to‑right).
-6. If no valid headers are found, return an empty list.
+    return output_paths
