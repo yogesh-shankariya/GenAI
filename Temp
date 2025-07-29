@@ -1,68 +1,68 @@
-from pathlib import Path
-from typing import List
-from PIL import Image
-
-
-def combine_images(
-    input_dir: str | Path,
-    output_image: str | Path,
-    file_prefix: str = "page",
-    file_suffix: str = ".jpg",
-) -> Path:
-    """
-    Combine page images (page-1.jpg, page-2.jpg, …) into one tall image.
-
-    Parameters
-    ----------
-    input_dir : str | Path
-        Folder containing the page images.
-    output_image : str | Path
-        Path (including filename) for the combined image to be saved.
-    file_prefix : str, default "page"
-        Common prefix in filenames (e.g., "page" for page-1.jpg).
-    file_suffix : str, default ".jpg"
-        Image file extension in the folder (".jpg", ".png", …).
-
-    Returns
-    -------
-    Path
-        Path to the combined image that was created.
-    """
-    input_dir = Path(input_dir).expanduser().resolve()
-    output_image = Path(output_image).expanduser().resolve()
-    output_image.parent.mkdir(parents=True, exist_ok=True)
-
-    # Collect and sort images by page number
-    def _page_number(p: Path) -> int:
-        # Extract number between prefix- and .suffix  -> page-12.jpg -> 12
-        return int(p.stem.replace(f"{file_prefix}-", ""))
-
-    img_paths: List[Path] = sorted(
-        input_dir.glob(f"{file_prefix}-*{file_suffix}"),
-        key=_page_number
-    )
-    if not img_paths:
-        raise FileNotFoundError(f"No images found in {input_dir}")
-
-    # Open all images to compute final canvas size
-    images = [Image.open(p) for p in img_paths]
-
-    total_width = max(img.width for img in images)
-    total_height = sum(img.height for img in images)
-
-    # Create a blank canvas and paste each page one below the other
-    combined = Image.new("RGB", (total_width, total_height), color="white")
-
-    y_offset = 0
-    for img in images:
-        combined.paste(img, (0, y_offset))
-        y_offset += img.height
-
-    combined.save(output_image, quality=95)  # 95 keeps good quality / reasonable size
-    return output_image
-
-
-# ─── example ───────────────────────────────────────────────────────────────
-# combine all page-*.jpg from ./output_images into combined_pages.jpg
-# combined_path = combine_images("output_images", "combined_pages.jpg")
-# print(f"Combined image saved at: {combined_path}")
+[
+    "Agency Info",
+    "Patient Info",
+    "Patient Info (General)",
+    "Vital Signs",
+    "Admission History",
+    "Diagnosis",
+    "Medical History",
+    "Medical Support/Safety",
+    "Assistance/Home Environment",
+    "Behaviors/Domestic Violence/Home and Fire Safety",
+    "Vital Signs",
+    "Prior Function",
+    "At Risk Behavior",
+    "Physical Assessment",
+    "Functional Assessment",
+    "Prognosis",
+    "Physical Therapy",
+    "Occupational Therapy",
+    "Cognitive/Perceptual",
+    "Pain",
+    "Skin Integrity",
+    "Treatment Goals",
+    "Physician",
+    "Therapist and Discipline",
+    "Mean and Date",
+    "Standardized Tests and Measures",
+    "Sensation",
+    "Muscle Tone",
+    "ROM/Neuro",
+    "ADL/IADL",
+    "Medical Diagnosis",
+    "Medications",
+    "Allergies/Intolerance",
+    "DME",
+    "Equipment and Supplies",
+    "Wheelchair",
+    "Mobility",
+    "UI",
+    "Swallowing/Dilation",
+    "Communication/Learning",
+    "Attention",
+    "Cognition",
+    "Cardio/Pulmonary",
+    "Level",
+    "Potential Barriers",
+    "Skills Impairment",
+    "Strength",
+    "Balance",
+    "Range of Motion (ROM)",
+    "Mobility",
+    "ED Status",
+    "Hospitalization Risk",
+    "Visit Frequency",
+    "Planned Visits/Re-visits",
+    "Adverse Events",
+    "Labs/Tests",
+    "Vitals",
+    "ADL",
+    "Functional Abilities",
+    "Plan of Care/Goal",
+    "Discipline",
+    "Assessment",
+    "Patient and Therapist Info",
+    "Patient and Physician",
+    "Summary and Date",
+    "Provider Info"
+]
