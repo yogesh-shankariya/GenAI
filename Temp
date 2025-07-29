@@ -1,10 +1,99 @@
+"""
+Asynchronous batch-caller for Horizon Vision-Structure
+------------------------------------------------------
+
+• Finds **all .JPG pages** under an input tree (e.g. output_images/…/page-1.jpg).
+• For every page it calls `vision_structure(schema, prompt, files)` **concurrently**.
+• Each JSON response is saved as
+
+      output_final/<pdf-folder>/<page-N>.json
+
+  mirroring the image layout produced by the earlier pdf-to-jpg step.
+• Default parallelism is limited with an `asyncio.Semaphore` so you don’t
+  overwhelm the API.
+
+Prerequisites
+-------------
+– Your existing async helper  `vision_structure(schema, prompt, files)`  
+  must already be in scope (import or define it above).
+
+– `prompt_1.txt`  and  `schema.json`  are the shared prompt & schema files.
+
+Adjust `INPUT_ROOT`, `OUTPUT_ROOT`, or `MAX_CONCURRENCY` as needed.
+"""
+
+import asyncio, json, mimetypes
 from pathlib import Path
+from typing import List
 
-def list_pdf_filenames(input_folder_path):
-    input_folder = Path(input_folder_path)
-    pdf_files = [pdf.name for pdf in input_folder.glob("*.pdf")]
-    return pdf_files
+# ───────────────────────── configuration ──────────────────────────
+INPUT_ROOT       = Path("output_images")      # where the .jpg pages live
+OUTPUT_ROOT      = Path("output_final")       # where JSON results go
+PROMPT_FILE      = Path("prompt_1.txt")
+SCHEMA_FILE      = Path("schema.json")
+MAX_CONCURRENCY  = 5                          # simultaneous requests
+# ───────────────────────────────────────────────────────────────────
 
-# Example usage
-pdf_list = list_pdf_filenames("input_files")
-print(pdf_list)
+
+def _guess_mime(p: Path) -> str:
+    """Return 'image/jpeg' or a best-guess MIME type for the file."""
+    return mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+
+
+async def _process_page(img_path: Path,
+                        prompt: str,
+                        schema: dict,
+                        out_root: Path,
+                        sem: asyncio.Semaphore) -> Path:
+    """Call the vision endpoint for one page and save its JSON."""
+    async with sem:                       # limit concurrency
+        with open(img_path, "rb") as fh:  # file must stay open for the call
+            files = [("images", (img_path.name, fh, _guess_mime(img_path)))]
+            response = await vision_structure(schema, prompt, files)
+
+    # Mirror the image sub-folder inside the output tree
+    rel_subdir = img_path.parent.relative_to(INPUT_ROOT)
+    out_dir    = out_root / rel_subdir
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    out_path = out_dir / f"{img_path.stem}.json"
+    with open(out_path, "w", encoding="utf-8") as fp:
+        json.dump(response, fp, ensure_ascii=False, indent=2)
+
+    return out_path
+
+
+async def batch_vision_structure(input_root: Path,
+                                 output_root: Path,
+                                 prompt_path: Path,
+                                 schema_path: Path,
+                                 max_concurrency: int = 5) -> List[Path]:
+    """Run vision_structure on **all** .jpg pages under `input_root`."""
+    prompt = prompt_path.read_text(encoding="utf-8")
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    img_paths = sorted(input_root.rglob("*.jpg"))
+    if not img_paths:
+        raise FileNotFoundError(f"No .jpg pages found under {input_root!s}")
+
+    sem   = asyncio.Semaphore(max_concurrency)
+    tasks = [
+        asyncio.create_task(
+            _process_page(p, prompt, schema, output_root, sem)
+        ) for p in img_paths
+    ]
+    return await asyncio.gather(*tasks)
+
+
+# ── run it ─────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    saved_jsons = asyncio.run(
+        batch_vision_structure(INPUT_ROOT,
+                               OUTPUT_ROOT,
+                               PROMPT_FILE,
+                               SCHEMA_FILE,
+                               MAX_CONCURRENCY)
+    )
+    print(f"Saved {len(saved_jsons)} JSON files:")
+    for jp in saved_jsons:
+        print("  •", jp)
