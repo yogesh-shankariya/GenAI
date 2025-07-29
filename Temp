@@ -1,1 +1,16 @@
-conda install python-poppler poppler -c conda-forge
+{
+  "title": "SectionHeadersPayload",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "section_headers": {
+      "title": "Section Headers",
+      "description": "Ordered list of distinct section headers found on the page.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": ["section_headers"]
+}
