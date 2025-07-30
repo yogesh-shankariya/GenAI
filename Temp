@@ -1,28 +1,29 @@
 from pathlib import Path
-import json, mimetypes, asyncio
+import json, mimetypes, asyncio, traceback
+from datetime import datetime
 
 # --------------------------------------------------------------------
-# helper: pick a reasonable MIME for the multipart request
 def _mime(p: Path) -> str:
     return mimetypes.guess_type(p.name)[0] or "application/octet-stream"
 
 
 # --------------------------------------------------------------------
 async def vision_extract_mirror_tree(
-    input_root: str | Path = "Output_Files/HELIX",   # where page‑*.jpg live
-    output_root: str | Path = "Output_Final/HELIX",  # where *.json will go
+    input_root: str | Path = "Output_Files/HELIX",
+    output_root: str | Path = "Output_Final/HELIX",
     prompt_path: str | Path = "prompt_1.txt",
     schema_path: str | Path = "schema.json",
+    error_log: str | Path = "failed_pages.txt",
 ) -> None:
     """
-    Walks every *.jpg below `input_root`, calls `vision_structure`, and stores
-    the JSON under `output_root`, preserving the same sub‑folder hierarchy and
-    filename stem (page-1.jpg -> page-1.json).
-
-    Processing is strictly sequential (one request at a time).
+    Convert every *.jpg under `input_root` to JSON under `output_root`,
+    mirroring the folder tree. Skips images whose JSON already exists.
+    Any error is logged to `failed_pages.txt`; processing continues.
     """
     input_root  = Path(input_root).expanduser().resolve()
     output_root = Path(output_root).expanduser().resolve()
+    error_log   = Path(error_log).expanduser().resolve()
+
     output_root.mkdir(parents=True, exist_ok=True)
 
     prompt = Path(prompt_path).read_text(encoding="utf-8")
@@ -32,30 +33,44 @@ async def vision_extract_mirror_tree(
     if not img_paths:
         raise FileNotFoundError(f"No JPG images found under {input_root}")
 
+    async def _log_error(img: Path, exc: Exception) -> None:
+        error_log.parent.mkdir(parents=True, exist_ok=True)
+        with error_log.open("a", encoding="utf-8") as fp:
+            fp.write(
+                f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {img}\n"
+                f"{type(exc).__name__}: {exc}\n"
+                f"{traceback.format_exc()}\n{'-'*60}\n"
+            )
+
     for img in img_paths:
-        # --- call the Vision endpoint ---------------------------------------
-        with img.open("rb") as fh:
-            files = [("images", (img.name, fh, _mime(img)))]
-            response = await vision_structure(schema, prompt, files)
+        rel_path  = img.relative_to(input_root)
+        json_path = (output_root / rel_path).with_suffix(".json")
 
-        # --- compute mirrored JSON path --------------------------------------
-        rel_path  = img.relative_to(input_root)          # e.g. Reauth_01/pdf_A/page-1.jpg
-        json_path = output_root / rel_path.with_suffix(".json")
-        json_path.parent.mkdir(parents=True, exist_ok=True)
+        # ---- Skip if JSON already exists -----------------------------------
+        if json_path.exists():
+            print(f"⏭  Skipping {rel_path} (JSON already present)")
+            continue
 
-        json_path.write_text(
-            json.dumps(response, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        print(f"✓ {rel_path}  →  {json_path.relative_to(output_root)}")
+        try:
+            with img.open("rb") as fh:
+                files = [("images", (img.name, fh, _mime(img)))]
+                response = await vision_structure(schema, prompt, files)
+
+            json_path.parent.mkdir(parents=True, exist_ok=True)
+            json_path.write_text(
+                json.dumps(response, ensure_ascii=False, indent=2),
+                encoding="utf-8"
+            )
+            print(f"✓ {rel_path}  →  {json_path.relative_to(output_root)}")
+
+        except Exception as e:
+            await _log_error(img, e)
+            print(f"✗ Error on {rel_path}  (logged and continuing)")
+
+    print("\nProcessing complete.")
+    if error_log.exists():
+        print(f"Any failures were logged to: {error_log}")
 
 
-# ----------------- Example (Jupyter/IPython) --------------------------
-# await vision_extract_mirror_tree()   # uses defaults above
-# await vision_extract_mirror_tree(
-#         input_root="Output_Files/HELIX",
-#         output_root="Output_Final/HELIX",
-#         prompt_path="prompt_1.txt",
-#         schema_path="schema.json")
-
-
-
+# ---------------------- Example run (Jupyter) -----------------------
+# await vision_extract_mirror_tree()
