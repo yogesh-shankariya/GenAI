@@ -1,62 +1,62 @@
-import re
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 
-def extract_page_blocks(
-    txt_path: str | Path,
-    marker: str = r"<ocr_service_page_start>",
-    page_num_pattern: str = r"\d+",
-    encoding: str = "utf-8"
-) -> Dict[int, str]:
+# --- assume the enhanced pdf_to_jpgs you already have is imported ----------
+# from my_module import pdf_to_jpgs
+
+def batch_pdf_to_jpgs(
+    input_root: str | Path = "Input_Files/HELIX",
+    output_root: str | Path = "Output_Files/HELIX",
+    dpi: int = 300,
+    prefix: str = "page",
+    **pdf_kwargs
+) -> Dict[Path, List[Path]]:
     """
-    Parse a plain-text OCR dump that uses page markers like
-    '<ocr_service_page_start>42' and return a dictionary mapping
-    each page number to the text that falls between that marker and
-    the next.
+    Convert *every* PDF under `input_root` to JPG pages while mirroring
+    the same directory structure under `output_root`.
 
     Parameters
     ----------
-    txt_path : str | Path
-        Path to the input .txt file.
-    marker : str, default '<ocr_service_page_start>'
-        The literal marker that precedes every page number.
-    page_num_pattern : str, default r'\\d+'
-        Regex for the page number that immediately follows the marker.
-        Override if page IDs contain letters, dashes, etc.
-    encoding : str, default 'utf-8'
-        File encoding used to read the text file.
+    input_root : str | Path
+        Top-level folder containing sub-folders with PDFs.
+    output_root : str | Path
+        Where the page images will be written (mirrors input layout).
+    dpi, prefix
+        Passed straight through to `pdf_to_jpgs`.
+    **pdf_kwargs
+        Any extra args your pdf_to_jpgs version accepts (e.g., max_side).
 
     Returns
     -------
-    Dict[int, str]
-        { page_number : page_content }
-        Page numbers are returned as integers; page_content is the
-        raw substring between one marker and the next (trimmed).
+    Dict[Path, List[Path]]
+        Mapping  {pdf_path : [generated_image_paths]}.
     """
-    txt_path = Path(txt_path).expanduser().resolve()
-    text = txt_path.read_text(encoding=encoding)
+    input_root  = Path(input_root).expanduser().resolve()
+    output_root = Path(output_root).expanduser().resolve()
 
-    # Build one regex that captures both the marker and page number
-    regex = re.compile(
-        rf"{re.escape(marker)}\s*({page_num_pattern})",
-        re.IGNORECASE
-    )
+    results: Dict[Path, List[Path]] = {}
 
-    matches = list(regex.finditer(text))
-    if not matches:
-        raise ValueError(f"No page markers '{marker}' found in {txt_path}")
+    for pdf_path in input_root.rglob("*.pdf"):
+        # Relative sub-dir (e.g. Reauth_04) to reproduce under output_root
+        rel_parent = pdf_path.parent.relative_to(input_root)
+        out_dir    = output_root / rel_parent
 
-    pages: Dict[int, str] = {}
-    for idx, m in enumerate(matches):
-        start_of_content = m.end()
-        end_of_content = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
-        page_num = int(m.group(1))          # cast to int; drop `int()` if IDs are alphanum
-        content = text[start_of_content:end_of_content].strip()
-        pages[page_num] = content
+        images = pdf_to_jpgs(
+            pdf_path=pdf_path,
+            output_dir=out_dir,
+            dpi=dpi,
+            prefix=prefix,
+            **pdf_kwargs,
+        )
+        results[pdf_path] = images
+        print(f"✓ {pdf_path}  ->  {len(images)} pages in {out_dir}")
 
-    return pages
+    if not results:
+        print(f"No PDFs found under {input_root}")
+
+    return results
 
 
-# ─── example usage ───────────────────────────────────────────────────────────
-# pages_dict = extract_page_blocks("ocr_dump.txt")
-# print(pages_dict[1])          # content of page 1
+# ─── example run ──────────────────────────────────────────────────────────
+# batch_pdf_to_jpgs()                    # uses defaults shown above
+# batch_pdf_to_jpgs(dpi=300, max_side=2048)   # pass extras your helper supports
