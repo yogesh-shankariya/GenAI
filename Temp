@@ -47,7 +47,16 @@
             "description": "Always true because only selected checkboxes are returned."
           }
         },
-        "required": ["context", "checked"]
+        "required": [
+          "context",
+          "question",
+          "answer",
+          "table_title",
+          "row",
+          "column",
+          "cell_label",
+          "checked"
+        ]
       }
     }
   },
