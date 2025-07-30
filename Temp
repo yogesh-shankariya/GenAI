@@ -1,78 +1,57 @@
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict
 
-# ---------------------------------------------------------------------------
-# Assume your enhanced `pdf_to_jpgs` is already imported or defined above.
-# from my_module import pdf_to_jpgs
-# ---------------------------------------------------------------------------
 
-def nested_batch_pdf_to_jpgs(
-    input_root: str | Path = "Input_Files/HELIX",
+def count_json_per_pdf(
     output_root: str | Path = "Output_Files/HELIX",
-    dpi: int = 300,
-    prefix: str = "page",
-    **pdf_kwargs
-) -> Dict[Path, List[Path]]:
+    summary_txt: str | Path = "json_page_counts.txt"
+) -> Dict[Path, int]:
     """
-    Convert every PDF under `input_root` and reproduce this folder layout:
-
-        Input_Files/HELIX/Reauth_01/<file_A>.pdf
-                                        <file_B>.pdf
-                          /Reauth_02/<file_C>.pdf
-                          ...
-
-        ─────────────────────────── becomes ───────────────────────────
-
-        Output_Files/HELIX/Reauth_01/<file_A>/page-1.jpg  page-2.jpg ...
-                                        <file_B>/page-1.jpg  ...
-                          /Reauth_02/<file_C>/page-1.jpg  ...
+    Walk an output hierarchy like
+        Output_Files/HELIX/Reauth_01/<PDF_A>/page-1.json ...
+                                  /<PDF_B>/page-1.json ...
+    and count how many *.json files each <PDF_X> folder holds.
 
     Parameters
     ----------
-    input_root : str | Path
-        Top-level folder with Reauth_* sub-folders containing PDFs.
     output_root : str | Path
-        All images will be written here, preserving the same hierarchy.
-    dpi, prefix
-        Passed unchanged to `pdf_to_jpgs`.
-    **pdf_kwargs
-        Extra keyword arguments accepted by your `pdf_to_jpgs`
-        (e.g., max_side, jpeg_quality).
+        Top-level folder created by `nested_batch_pdf_to_jpgs`.
+    summary_txt : str | Path
+        Path to the text file where the report will be saved.
 
     Returns
     -------
-    Dict[Path, List[Path]]
-        Mapping { pdf_path : [ list_of_generated_image_paths ] }.
+    Dict[Path, int]
+        { pdf_folder_path : json_file_count }.
     """
-    input_root  = Path(input_root).expanduser().resolve()
     output_root = Path(output_root).expanduser().resolve()
+    summary_txt = Path(summary_txt).expanduser().resolve()
 
-    results: Dict[Path, List[Path]] = {}
+    if not output_root.exists():
+        raise FileNotFoundError(output_root)
 
-    for pdf_path in input_root.rglob("*.pdf"):
-        # Example: pdf_path = Input_Files/HELIX/Reauth_01/my_report.pdf
-        reauth_subdir: Path = pdf_path.parent.relative_to(input_root)  # Reauth_01
-        pdf_folder: Path    = Path(pdf_path.stem)                     # my_report
-        out_dir: Path       = output_root / reauth_subdir / pdf_folder
+    pdf_counts: Dict[Path, int] = {}
 
-        images = pdf_to_jpgs(
-            pdf_path=pdf_path,
-            output_dir=out_dir,
-            dpi=dpi,
-            prefix=prefix,
-            **pdf_kwargs,
-        )
+    # Pattern: every directory that contains at least one .json page file
+    for pdf_dir in [p for p in output_root.rglob("*") if p.is_dir()]:
+        json_files = list(pdf_dir.glob("*.json"))
+        if json_files:
+            pdf_counts[pdf_dir] = len(json_files)
 
-        results[pdf_path] = images
-        print(f"✓ {pdf_path.name:<50} -> {len(images):>3} pages in {out_dir}")
+    # Write report
+    with summary_txt.open("w", encoding="utf-8") as fp:
+        for pdf_dir, n in sorted(pdf_counts.items()):
+            line = f"{pdf_dir.relative_to(output_root)} -> {n}"
+            print(line)
+            fp.write(line + "\n")
 
-    if not results:
-        print(f"No PDFs found under {input_root}")
-
-    return results
+    print(f"\nReport saved to {summary_txt}")
+    return pdf_counts
 
 
-# ── Example call ───────────────────────────────────────────────────────────
-# nested_batch_pdf_to_jpgs()                    # uses default 300 dpi, prefix 'page'
-# nested_batch_pdf_to_jpgs(dpi=300, max_side=2048)  # pass any extra args accepted by pdf_to_jpgs
-
+# ── example run ───────────────────────────────────────────────────────────
+# counts = count_json_per_pdf("Output_Files/HELIX", "json_page_counts.txt")
+# The console will show lines like:
+#   Reauth_01/Plan_of_Care_485_for_1st ... -> 2
+#   Reauth_01/PT_Initial_Eval_Visit_Note    -> 2
+# and the same lines will be stored in json_page_counts.txt
