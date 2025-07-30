@@ -1,20 +1,71 @@
-import asyncio, requests, json
+from pathlib import Path
+import json
+from typing import Dict
 
-async def vision_structure(schema: str, prompt: str, files: list) -> dict:
-    """Async wrapper around the blocking requests.request call."""
-    def _do_request():
-        return requests.request(
-            method="POST",
-            url="https://api.horizon.elevancehealth.com/v2/images/structures",
-            headers={"Authorization": f"Bearer " + authToken},
-            files=files,
-            data={
-                "model": "gpt-4o-vision-preview",
-                "prompt": prompt,
-                "response_format": json.dumps({"type": "json_object"})
-            },
+def combine_page_jsons(
+    input_root: str | Path = "Output_Final/HELIX",
+    combined_root: str | Path = "Combined_Output/HELIX",
+    combined_name: str = "combined.json",
+    overwrite: bool = True,
+) -> Dict[Path, Path]:
+    """
+    Merge every page-*.json in each PDF folder into one file:
+
+        {
+          "page-1": ["header-A", "header-B"],
+          "page-2": ["header-X"],
+          ...
+        }
+
+    Parameters and Returns are the same as before; only the merge logic changed.
+    """
+    input_root   = Path(input_root).expanduser().resolve()
+    combined_root = Path(combined_root).expanduser().resolve()
+    combined_root.mkdir(parents=True, exist_ok=True)
+
+    combined_paths: Dict[Path, Path] = {}
+
+    # Folders that contain at least one page-*.json
+    pdf_dirs = [
+        p for p in input_root.rglob("*")
+        if p.is_dir() and any(f.name.startswith("page-") and f.suffix == ".json"
+                              for f in p.iterdir())
+    ]
+
+    for pdf_dir in pdf_dirs:
+        combined_path = (
+            combined_root / pdf_dir.relative_to(input_root) / combined_name
         )
 
-    response = await asyncio.to_thread(_do_request)
-    response.raise_for_status()
-    return json.loads(response.content).get("content")
+        if combined_path.exists() and not overwrite:
+            print(f"⏭  Skipping existing {combined_path}")
+            continue
+
+        merged: Dict[str, list] = {}
+        for page_file in sorted(pdf_dir.glob("page-*.json")):
+            page_key = page_file.stem                 # "page-1"
+            try:
+                data = json.loads(page_file.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as e:
+                print(f"✗ Bad JSON {page_file}: {e}")
+                continue
+
+            # Keep only the list of headers
+            headers = data.get("section_headers", [])
+            merged[page_key] = headers
+
+        combined_path.parent.mkdir(parents=True, exist_ok=True)
+        combined_path.write_text(
+            json.dumps(merged, ensure_ascii=False, indent=2),
+            encoding="utf-8"
+        )
+        combined_paths[pdf_dir] = combined_path
+        print(f"✓  {pdf_dir.relative_to(input_root)} -> {combined_path}")
+
+    if not combined_paths:
+        print("No PDF folders with page JSONs found.")
+    return combined_paths
+
+
+# Example
+# combine_page_jsons()
