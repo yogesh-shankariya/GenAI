@@ -1,104 +1,20 @@
-```python
-import asyncio
-import json
-import mimetypes
-import traceback
-from datetime import datetime
-from pathlib import Path
-from typing import List
+import asyncio, requests, json
 
-# ----------------------------------------------------------------------------
-def _mime(p: Path) -> str:
-    return mimetypes.guess_type(p.name)[0] or "application/octet-stream"
-
-
-# ----------------------------------------------------------------------------
-async def _log_error(error_log: Path, img: Path, exc: Exception) -> None:
-    error_log.parent.mkdir(parents=True, exist_ok=True)
-    async with asyncio.Lock():
-        with error_log.open("a", encoding="utf-8") as fp:
-            fp.write(
-                f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {img}\n"
-                f"{type(exc).__name__}: {exc}\n"
-                f"{traceback.format_exc()}\n{'-'*60}\n"
-            )
-
-
-async def _process_page(
-    img: Path,
-    json_path: Path,
-    prompt: str,
-    schema: dict,
-    sem: asyncio.Semaphore,
-    error_log: Path,
-):
-    if json_path.exists():                       # skip if already done
-        print(f"⏭  {json_path.relative_to(json_path.parents[3])} (exists)")
-        return
-
-    try:
-        async with sem:
-            with img.open("rb") as fh:
-                files = [("images", (img.name, fh, _mime(img)))]
-                response = await vision_structure(schema, prompt, files)
-
-        json_path.parent.mkdir(parents=True, exist_ok=True)
-        json_path.write_text(
-            json.dumps(response, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        print(f"✓  {json_path.relative_to(json_path.parents[3])}")
-
-    except Exception as e:
-        await _log_error(error_log, img, e)
-        print(f"✗  {img.relative_to(img.parents[3])}  (logged)")
-
-
-# ----------------------------------------------------------------------------
-async def vision_extract_parallel(
-    input_root: str | Path = "Output_Files/HELIX",
-    output_root: str | Path = "Output_Final/HELIX",
-    prompt_path: str | Path = "prompt_1.txt",
-    schema_path: str | Path = "schema.json",
-    error_log: str | Path = "failed_pages.txt",
-    max_concurrency: int = 20,
-) -> None:
-    """
-    Convert every *.jpg under `input_root` to JSON under `output_root`
-    (mirrored tree). Up to `max_concurrency` page requests run in parallel.
-
-    • Skips pages whose JSON already exists.
-    • Any exception is logged to `failed_pages.txt`; processing continues.
-    """
-    input_root  = Path(input_root).expanduser().resolve()
-    output_root = Path(output_root).expanduser().resolve()
-    error_log   = Path(error_log).expanduser().resolve()
-
-    output_root.mkdir(parents=True, exist_ok=True)
-
-    prompt = Path(prompt_path).read_text(encoding="utf-8")
-    schema = json.loads(Path(schema_path).read_text(encoding="utf-8"))
-
-    img_paths: List[Path] = sorted(input_root.rglob("*.jpg"))
-    if not img_paths:
-        raise FileNotFoundError(f"No JPG images found under {input_root}")
-
-    sem    = asyncio.Semaphore(max_concurrency)
-    tasks  = []
-
-    for img in img_paths:
-        rel_path  = img.relative_to(input_root)
-        json_path = (output_root / rel_path).with_suffix(".json")
-        tasks.append(
-            asyncio.create_task(
-                _process_page(img, json_path, prompt, schema, sem, error_log)
-            )
+async def vision_structure(schema: str, prompt: str, files: list) -> dict:
+    """Async wrapper around the blocking requests.request call."""
+    def _do_request():
+        return requests.request(
+            method="POST",
+            url="https://api.horizon.elevancehealth.com/v2/images/structures",
+            headers={"Authorization": f"Bearer " + authToken},
+            files=files,
+            data={
+                "model": "gpt-4o-vision-preview",
+                "prompt": prompt,
+                "response_format": json.dumps({"type": "json_object"})
+            },
         )
 
-    await asyncio.gather(*tasks)
-    print("\nFinished. Any failures were logged to:", error_log)
-
-
-# ---------------- Example (Jupyter/IPython) -------------------------
-# await vision_extract_parallel()
-# await vision_extract_parallel(max_concurrency=20)
-```
+    response = await asyncio.to_thread(_do_request)
+    response.raise_for_status()
+    return json.loads(response.content).get("content")
