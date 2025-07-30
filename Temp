@@ -1,37 +1,55 @@
-You are an expert OCR and medical-form parser.
-
-Goal ➜ Extract **only those checkboxes that are marked** (✓, ✗, X, solid fill, or any visible mark). Ignore every empty/unchecked box.
-
-Return a structured JSON summary that captures, for each *selected* checkbox:
-
-1. **Checkbox state**  
-   • `checked` is always true (because only marked boxes are reported).
-
-2. **Context**  
-   • If the checkbox belongs to a normal question/answer line:  
-     – `question`  ⇢ the full question text that precedes the answer options  
-     – `answer`    ⇢ the label that sits directly beside the box (the chosen answer)  
-   • If the checkbox sits inside a table:  
-     – `table_title` ⇢ the table title (if printed)  
-     – `row`         ⇢ the row header or left-most text for that row  
-     – `column`      ⇢ the column header for that cell  
-     – `cell_label`  ⇢ any text printed inside the same cell as the checkbox
-
-3. **Output format** – return **only** the following JSON (no additional prose):
-
-```json
 {
-  "checkboxes": [
-    {
-      "context": "question",          // "question" or "table"
-      "question": "<full question>",  // null if context = table
-      "answer": "<answer label>",     // null if context = table
-      "table_title": null,            // string if context = table, else null
-      "row": null,                    // row header or number if context = table
-      "column": null,                 // column header or number if context = table
-      "cell_label": null,             // text inside cell; null if context = question
-      "checked": true                 // always true — only selected boxes are listed
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SelectedCheckboxesPayload",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "checkboxes": {
+      "title": "Selected Checkboxes",
+      "description": "List of all checkboxes that are marked on the form.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "context": {
+            "type": "string",
+            "enum": ["question", "table"],
+            "description": "Location of the checkbox: a standalone question line or a table cell."
+          },
+          "question": {
+            "type": ["string", "null"],
+            "description": "Full question text if context = \"question\"; otherwise null."
+          },
+          "answer": {
+            "type": ["string", "null"],
+            "description": "Answer label beside the checkbox if context = \"question\"; otherwise null."
+          },
+          "table_title": {
+            "type": ["string", "null"],
+            "description": "Title of the table if context = \"table\"; otherwise null."
+          },
+          "row": {
+            "type": ["string", "null"],
+            "description": "Row header or index if context = \"table\"; otherwise null."
+          },
+          "column": {
+            "type": ["string", "null"],
+            "description": "Column header or index if context = \"table\"; otherwise null."
+          },
+          "cell_label": {
+            "type": ["string", "null"],
+            "description": "Text inside the cell that contains the checkbox if context = \"table\"; otherwise null."
+          },
+          "checked": {
+            "type": "boolean",
+            "const": true,
+            "description": "Always true because only selected checkboxes are returned."
+          }
+        },
+        "required": ["context", "checked"]
+      }
     }
-    // …one object per selected checkbox…
-  ]
+  },
+  "required": ["checkboxes"]
 }
