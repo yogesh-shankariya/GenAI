@@ -1,40 +1,27 @@
 from pathlib import Path
 from typing import List
 
-def list_pdf_names(
-    directory: str | Path,
-    recursive: bool = True,
-    sort_: bool = True
-) -> List[str]:
+def pdf_names_in_dir(folder: str | Path) -> List[str]:
     """
-    Return all PDF filenames **without** the '.pdf' extension.
+    List all *.pdf files in `folder` and return their names without '.pdf'.
 
-    Parameters
-    ----------
-    directory : str | Path
-        Folder to scan.
-    recursive : bool, default True
-        • True  → search through all sub‑folders (Path.rglob)  
-        • False → onlylook at files directly in `directory` (Path.glob)
-    sort_ : bool, default True
-        Sort the result alphabetically.
-
-    Returns
+    Example
     -------
-    List[str]
-        ["file_A", "another_report", ...]
+    >>> pdf_names_in_dir("Input_Files/HELIX/Reauth_01")
+    ['file_A', 'report_2023_05', 'summary']
+
+    Notes
+    -----
+    • Searches **only** that directory (no sub-folders).  
+    • Returns an empty list if no PDFs are found.
     """
-    directory = Path(directory).expanduser().resolve()
-    pattern   = "**/*.pdf" if recursive else "*.pdf"
-    stems     = [p.stem for p in directory.glob(pattern)]
-    return sorted(stems) if sort_ else stems
+    folder = Path(folder).expanduser().resolve()
+    if not folder.is_dir():
+        raise NotADirectoryError(folder)
+
+    return [p.stem for p in folder.iterdir() if p.suffix.lower() == ".pdf"]
 
 
-# ── examples ─────────────────────────────────────────────────────────
-# 1) All PDFs anywhere under Input_Files/HELIX
-# names = list_pdf_names("Input_Files/HELIX")
-
-# 2) Only PDFs directly in a folder (no recursion)
-# names = list_pdf_names("Input_Files/HELIX/Reauth_01", recursive=False)
-
-# print(names)
+# --- quick test -------------------------------------------------------------
+if __name__ == "__main__":
+    print(pdf_names_in_dir("Input_Files/HELIX/Reauth_01"))
