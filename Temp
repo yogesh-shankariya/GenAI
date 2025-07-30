@@ -1,10 +1,12 @@
 from pathlib import Path
 from typing import Dict, List
 
-# --- assume the enhanced pdf_to_jpgs you already have is imported ----------
+# ---------------------------------------------------------------------------
+# Assume your enhanced `pdf_to_jpgs` is already imported or defined above.
 # from my_module import pdf_to_jpgs
+# ---------------------------------------------------------------------------
 
-def batch_pdf_to_jpgs(
+def nested_batch_pdf_to_jpgs(
     input_root: str | Path = "Input_Files/HELIX",
     output_root: str | Path = "Output_Files/HELIX",
     dpi: int = 300,
@@ -12,24 +14,35 @@ def batch_pdf_to_jpgs(
     **pdf_kwargs
 ) -> Dict[Path, List[Path]]:
     """
-    Convert *every* PDF under `input_root` to JPG pages while mirroring
-    the same directory structure under `output_root`.
+    Convert every PDF under `input_root` and reproduce this folder layout:
+
+        Input_Files/HELIX/Reauth_01/<file_A>.pdf
+                                        <file_B>.pdf
+                          /Reauth_02/<file_C>.pdf
+                          ...
+
+        ─────────────────────────── becomes ───────────────────────────
+
+        Output_Files/HELIX/Reauth_01/<file_A>/page-1.jpg  page-2.jpg ...
+                                        <file_B>/page-1.jpg  ...
+                          /Reauth_02/<file_C>/page-1.jpg  ...
 
     Parameters
     ----------
     input_root : str | Path
-        Top-level folder containing sub-folders with PDFs.
+        Top-level folder with Reauth_* sub-folders containing PDFs.
     output_root : str | Path
-        Where the page images will be written (mirrors input layout).
+        All images will be written here, preserving the same hierarchy.
     dpi, prefix
-        Passed straight through to `pdf_to_jpgs`.
+        Passed unchanged to `pdf_to_jpgs`.
     **pdf_kwargs
-        Any extra args your pdf_to_jpgs version accepts (e.g., max_side).
+        Extra keyword arguments accepted by your `pdf_to_jpgs`
+        (e.g., max_side, jpeg_quality).
 
     Returns
     -------
     Dict[Path, List[Path]]
-        Mapping  {pdf_path : [generated_image_paths]}.
+        Mapping { pdf_path : [ list_of_generated_image_paths ] }.
     """
     input_root  = Path(input_root).expanduser().resolve()
     output_root = Path(output_root).expanduser().resolve()
@@ -37,9 +50,10 @@ def batch_pdf_to_jpgs(
     results: Dict[Path, List[Path]] = {}
 
     for pdf_path in input_root.rglob("*.pdf"):
-        # Relative sub-dir (e.g. Reauth_04) to reproduce under output_root
-        rel_parent = pdf_path.parent.relative_to(input_root)
-        out_dir    = output_root / rel_parent
+        # Example: pdf_path = Input_Files/HELIX/Reauth_01/my_report.pdf
+        reauth_subdir: Path = pdf_path.parent.relative_to(input_root)  # Reauth_01
+        pdf_folder: Path    = Path(pdf_path.stem)                     # my_report
+        out_dir: Path       = output_root / reauth_subdir / pdf_folder
 
         images = pdf_to_jpgs(
             pdf_path=pdf_path,
@@ -48,8 +62,9 @@ def batch_pdf_to_jpgs(
             prefix=prefix,
             **pdf_kwargs,
         )
+
         results[pdf_path] = images
-        print(f"✓ {pdf_path}  ->  {len(images)} pages in {out_dir}")
+        print(f"✓ {pdf_path.name:<50} -> {len(images):>3} pages in {out_dir}")
 
     if not results:
         print(f"No PDFs found under {input_root}")
@@ -57,6 +72,6 @@ def batch_pdf_to_jpgs(
     return results
 
 
-# ─── example run ──────────────────────────────────────────────────────────
-# batch_pdf_to_jpgs()                    # uses defaults shown above
-# batch_pdf_to_jpgs(dpi=300, max_side=2048)   # pass extras your helper supports
+# ── Example call ───────────────────────────────────────────────────────────
+# nested_batch_pdf_to_jpgs()                    # uses default 300 dpi, prefix 'page'
+# nested_batch_pdf_to_jpgs(dpi=300, max_side=2048)  # pass any extra args accepted by pdf_to_jpgs
