@@ -1,31 +1,38 @@
 from pathlib import Path
 import json
+from datetime import datetime
 from typing import Dict
+
 
 def combine_page_jsons(
     input_root: str | Path = "Output_Final/HELIX",
     combined_root: str | Path = "Combined_Output/HELIX",
     combined_name: str = "combined.json",
+    error_log: str | Path = "combine_errors.txt",
     overwrite: bool = True,
 ) -> Dict[Path, Path]:
     """
-    Merge every page-*.json in each PDF folder into one file:
+    Merge page-*.json files into one combined.json per PDF folder.
 
-        {
-          "page-1": ["header-A", "header-B"],
-          "page-2": ["header-X"],
-          ...
-        }
-
-    Parameters and Returns are the same as before; only the merge logic changed.
+    • Keeps only the `"section_headers"` list under each page key.
+    • Any exception (file missing, bad JSON, etc.) is logged and the loop
+      continues; other PDFs are not affected.
     """
-    input_root   = Path(input_root).expanduser().resolve()
+    input_root    = Path(input_root).expanduser().resolve()
     combined_root = Path(combined_root).expanduser().resolve()
+    error_log     = Path(error_log).expanduser().resolve()
+
     combined_root.mkdir(parents=True, exist_ok=True)
+    error_log.parent.mkdir(parents=True, exist_ok=True)
 
     combined_paths: Dict[Path, Path] = {}
 
-    # Folders that contain at least one page-*.json
+    def log(msg: str):
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with error_log.open("a", encoding="utf-8") as fp:
+            fp.write(f"[{ts}] {msg}\n")
+
+    # Identify every directory that has at least one page-*.json
     pdf_dirs = [
         p for p in input_root.rglob("*")
         if p.is_dir() and any(f.name.startswith("page-") and f.suffix == ".json"
@@ -33,39 +40,45 @@ def combine_page_jsons(
     ]
 
     for pdf_dir in pdf_dirs:
-        combined_path = (
-            combined_root / pdf_dir.relative_to(input_root) / combined_name
-        )
+        try:
+            combined_path = (
+                combined_root / pdf_dir.relative_to(input_root) / combined_name
+            )
 
-        if combined_path.exists() and not overwrite:
-            print(f"⏭  Skipping existing {combined_path}")
-            continue
-
-        merged: Dict[str, list] = {}
-        for page_file in sorted(pdf_dir.glob("page-*.json")):
-            page_key = page_file.stem                 # "page-1"
-            try:
-                data = json.loads(page_file.read_text(encoding="utf-8"))
-            except json.JSONDecodeError as e:
-                print(f"✗ Bad JSON {page_file}: {e}")
+            if combined_path.exists() and not overwrite:
+                print(f"⏭  Exists, skipping: {combined_path}")
                 continue
 
-            # Keep only the list of headers
-            headers = data.get("section_headers", [])
-            merged[page_key] = headers
+            merged: Dict[str, list] = {}
+            for page_file in sorted(pdf_dir.glob("page-*.json")):
+                page_key = page_file.stem  # "page-1"
+                try:
+                    data = json.loads(page_file.read_text(encoding="utf-8"))
+                except Exception as e:
+                    log(f"Bad JSON {page_file}: {e}")
+                    continue
 
-        combined_path.parent.mkdir(parents=True, exist_ok=True)
-        combined_path.write_text(
-            json.dumps(merged, ensure_ascii=False, indent=2),
-            encoding="utf-8"
-        )
-        combined_paths[pdf_dir] = combined_path
-        print(f"✓  {pdf_dir.relative_to(input_root)} -> {combined_path}")
+                headers = data.get("section_headers", [])
+                merged[page_key] = headers
 
-    if not combined_paths:
-        print("No PDF folders with page JSONs found.")
+            combined_path.parent.mkdir(parents=True, exist_ok=True)
+            combined_path.write_text(
+                json.dumps(merged, ensure_ascii=False, indent=2),
+                encoding="utf-8"
+            )
+            combined_paths[pdf_dir] = combined_path
+            print(f"✓  {pdf_dir.relative_to(input_root)} -> {combined_path}")
+
+        except Exception as e:
+            # Any unexpected error for this PDF folder
+            log(f"Fatal error in {pdf_dir}: {type(e).__name__}: {e}")
+
+    if combined_paths:
+        print("\nFinished. Any issues were logged to:", error_log)
+    else:
+        print("No PDF folders processed.")
     return combined_paths
 
 
-# Example
+# ---------- example ----------
 # combine_page_jsons()
