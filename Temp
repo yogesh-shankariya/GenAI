@@ -75,3 +75,4 @@ def nested_batch_pdf_to_jpgs(
 # ── Example call ───────────────────────────────────────────────────────────
 # nested_batch_pdf_to_jpgs()                    # uses default 300 dpi, prefix 'page'
 # nested_batch_pdf_to_jpgs(dpi=300, max_side=2048)  # pass any extra args accepted by pdf_to_jpgs
+
