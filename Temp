@@ -1,88 +1,40 @@
 from pathlib import Path
-import json
-import re
-from datetime import datetime
-from typing import Dict, OrderedDict
+from typing import List
 
-
-def combine_page_jsons(
-    input_root: str | Path = "Output_Final/HELIX",
-    combined_root: str | Path = "Combined_Output/HELIX",
-    combined_name: str = "combined.json",
-    error_log: str | Path = "combine_errors.txt",
-    overwrite: bool = True,
-) -> Dict[Path, Path]:
+def list_pdf_names(
+    directory: str | Path,
+    recursive: bool = True,
+    sort_: bool = True
+) -> List[str]:
     """
-    Merge page-*.json files into one combined.json per PDF folder.
+    Return all PDF filenames **without** the '.pdf' extension.
 
-    • Each key is "page-N" and appears in ascending page order.
-    • Value is the list stored under "section_headers" in that page file.
-    • Any malformed JSON is logged and skipped.
+    Parameters
+    ----------
+    directory : str | Path
+        Folder to scan.
+    recursive : bool, default True
+        • True  → search through all sub‑folders (Path.rglob)  
+        • False → onlylook at files directly in `directory` (Path.glob)
+    sort_ : bool, default True
+        Sort the result alphabetically.
+
+    Returns
+    -------
+    List[str]
+        ["file_A", "another_report", ...]
     """
+    directory = Path(directory).expanduser().resolve()
+    pattern   = "**/*.pdf" if recursive else "*.pdf"
+    stems     = [p.stem for p in directory.glob(pattern)]
+    return sorted(stems) if sort_ else stems
 
-    input_root    = Path(input_root).expanduser().resolve()
-    combined_root = Path(combined_root).expanduser().resolve()
-    error_log     = Path(error_log).expanduser().resolve()
 
-    combined_root.mkdir(parents=True, exist_ok=True)
-    error_log.parent.mkdir(parents=True, exist_ok=True)
+# ── examples ─────────────────────────────────────────────────────────
+# 1) All PDFs anywhere under Input_Files/HELIX
+# names = list_pdf_names("Input_Files/HELIX")
 
-    combined_paths: Dict[Path, Path] = {}
+# 2) Only PDFs directly in a folder (no recursion)
+# names = list_pdf_names("Input_Files/HELIX/Reauth_01", recursive=False)
 
-    def log(msg: str):
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with error_log.open("a", encoding="utf-8") as fp:
-            fp.write(f"[{ts}] {msg}\n")
-
-    # --- helper: numeric sort by page number --------------------------------
-    page_num_re = re.compile(r"page-(\d+)\.json")
-
-    def _page_sort_key(p: Path):
-        m = page_num_re.match(p.name)
-        return int(m.group(1)) if m else 0
-
-    # ------------------------------------------------------------------------
-    pdf_dirs = [
-        p for p in input_root.rglob("*")
-        if p.is_dir() and any(f.name.startswith("page-") and f.suffix == ".json"
-                              for f in p.iterdir())
-    ]
-
-    for pdf_dir in pdf_dirs:
-        try:
-            combined_path = (
-                combined_root / pdf_dir.relative_to(input_root) / combined_name
-            )
-
-            if combined_path.exists() and not overwrite:
-                print(f"⏭  Exists, skipping: {combined_path}")
-                continue
-
-            merged: "OrderedDict[str, list]" = OrderedDict()
-
-            for page_file in sorted(pdf_dir.glob("page-*.json"), key=_page_sort_key):
-                page_key = page_file.stem  # e.g. "page-1"
-                try:
-                    data = json.loads(page_file.read_text(encoding="utf-8"))
-                except Exception as e:
-                    log(f"Bad JSON {page_file}: {e}")
-                    continue
-
-                merged[page_key] = data.get("section_headers", [])
-
-            combined_path.parent.mkdir(parents=True, exist_ok=True)
-            combined_path.write_text(
-                json.dumps(merged, ensure_ascii=False, indent=2),
-                encoding="utf-8"
-            )
-            combined_paths[pdf_dir] = combined_path
-            print(f"✓  {pdf_dir.relative_to(input_root)} -> {combined_path}")
-
-        except Exception as e:
-            log(f"Fatal error in {pdf_dir}: {type(e).__name__}: {e}")
-
-    if combined_paths:
-        print("\nFinished. Any issues were logged to:", error_log)
-    else:
-        print("No PDF folders processed.")
-    return combined_paths
+# print(names)
