@@ -1,57 +1,58 @@
 from pathlib import Path
-from typing import Dict
+import json, mimetypes, asyncio
+
+# --------------------------------------------------------------------
+# helper: pick a reasonable MIME for the multipart request
+def _mime(p: Path) -> str:
+    return mimetypes.guess_type(p.name)[0] or "application/octet-stream"
 
 
-def count_json_per_pdf(
-    output_root: str | Path = "Output_Files/HELIX",
-    summary_txt: str | Path = "json_page_counts.txt"
-) -> Dict[Path, int]:
+# --------------------------------------------------------------------
+async def vision_extract_mirror_tree(
+    input_root: str | Path = "Output_Files/HELIX",   # where page‑*.jpg live
+    output_root: str | Path = "Output_Final/HELIX",  # where *.json will go
+    prompt_path: str | Path = "prompt_1.txt",
+    schema_path: str | Path = "schema.json",
+) -> None:
     """
-    Walk an output hierarchy like
-        Output_Files/HELIX/Reauth_01/<PDF_A>/page-1.json ...
-                                  /<PDF_B>/page-1.json ...
-    and count how many *.json files each <PDF_X> folder holds.
+    Walks every *.jpg below `input_root`, calls `vision_structure`, and stores
+    the JSON under `output_root`, preserving the same sub‑folder hierarchy and
+    filename stem (page-1.jpg -> page-1.json).
 
-    Parameters
-    ----------
-    output_root : str | Path
-        Top-level folder created by `nested_batch_pdf_to_jpgs`.
-    summary_txt : str | Path
-        Path to the text file where the report will be saved.
-
-    Returns
-    -------
-    Dict[Path, int]
-        { pdf_folder_path : json_file_count }.
+    Processing is strictly sequential (one request at a time).
     """
+    input_root  = Path(input_root).expanduser().resolve()
     output_root = Path(output_root).expanduser().resolve()
-    summary_txt = Path(summary_txt).expanduser().resolve()
+    output_root.mkdir(parents=True, exist_ok=True)
 
-    if not output_root.exists():
-        raise FileNotFoundError(output_root)
+    prompt = Path(prompt_path).read_text(encoding="utf-8")
+    schema = json.loads(Path(schema_path).read_text(encoding="utf-8"))
 
-    pdf_counts: Dict[Path, int] = {}
+    img_paths = sorted(input_root.rglob("*.jpg"))
+    if not img_paths:
+        raise FileNotFoundError(f"No JPG images found under {input_root}")
 
-    # Pattern: every directory that contains at least one .json page file
-    for pdf_dir in [p for p in output_root.rglob("*") if p.is_dir()]:
-        json_files = list(pdf_dir.glob("*.json"))
-        if json_files:
-            pdf_counts[pdf_dir] = len(json_files)
+    for img in img_paths:
+        # --- call the Vision endpoint ---------------------------------------
+        with img.open("rb") as fh:
+            files = [("images", (img.name, fh, _mime(img)))]
+            response = await vision_structure(schema, prompt, files)
 
-    # Write report
-    with summary_txt.open("w", encoding="utf-8") as fp:
-        for pdf_dir, n in sorted(pdf_counts.items()):
-            line = f"{pdf_dir.relative_to(output_root)} -> {n}"
-            print(line)
-            fp.write(line + "\n")
+        # --- compute mirrored JSON path --------------------------------------
+        rel_path  = img.relative_to(input_root)          # e.g. Reauth_01/pdf_A/page-1.jpg
+        json_path = output_root / rel_path.with_suffix(".json")
+        json_path.parent.mkdir(parents=True, exist_ok=True)
 
-    print(f"\nReport saved to {summary_txt}")
-    return pdf_counts
+        json_path.write_text(
+            json.dumps(response, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(f"✓ {rel_path}  →  {json_path.relative_to(output_root)}")
 
 
-# ── example run ───────────────────────────────────────────────────────────
-# counts = count_json_per_pdf("Output_Files/HELIX", "json_page_counts.txt")
-# The console will show lines like:
-#   Reauth_01/Plan_of_Care_485_for_1st ... -> 2
-#   Reauth_01/PT_Initial_Eval_Visit_Note    -> 2
-# and the same lines will be stored in json_page_counts.txt
+# ----------------- Example (Jupyter/IPython) --------------------------
+# await vision_extract_mirror_tree()   # uses defaults above
+# await vision_extract_mirror_tree(
+#         input_root="Output_Files/HELIX",
+#         output_root="Output_Final/HELIX",
+#         prompt_path="prompt_1.txt",
+#         schema_path="schema.json")
