@@ -1,9 +1,10 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Selected Checkboxes",
-  "description": "List of all checkboxes that are marked on the form.",
+  "description": "List of all check-boxes that are visibly marked on the page.",
   "type": "object",
   "additionalProperties": false,
+
   "properties": {
     "checkboxes": {
       "type": "array",
@@ -11,11 +12,12 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
+
         "properties": {
           "context": {
             "type": "string",
             "enum": ["question", "table", "not_defined"],
-            "description": "Location of the checkbox."
+            "description": "Logical location of the checkbox."
           },
           "row_label": {
             "type": ["string", "null"],
@@ -31,12 +33,20 @@
           },
           "answer": {
             "type": ["string", "null"],
-            "description": "Printed answer text beside the selected box; null if none."
+            "description": "Printed answer text beside/inside the selected box; null if none."
           }
         },
-        "required": ["context", "answer"]
+
+        "required": [
+          "context",
+          "row_label",
+          "column_label",
+          "question",
+          "answer"
+        ]
       }
     }
   },
+
   "required": ["checkboxes"]
 }
