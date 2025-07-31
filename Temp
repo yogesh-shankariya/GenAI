@@ -1,64 +1,133 @@
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "SelectedCheckboxesPayload",
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "checkboxes": {
-      "title": "Selected Checkboxes",
-      "description": "List of all checkboxes that are marked on the form.",
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "context": {
-            "type": "string",
-            "enum": ["question", "table"],
-            "description": "Location of the checkbox: a standalone question line or a table cell."
-          },
-          "question": {
-            "type": ["string", "null"],
-            "description": "Full question text if context = \"question\"; otherwise null."
-          },
-          "answer": {
-            "type": ["string", "null"],
-            "description": "Answer label beside the checkbox if context = \"question\"; otherwise null."
-          },
-          "table_title": {
-            "type": ["string", "null"],
-            "description": "Title of the table if context = \"table\"; otherwise null."
-          },
-          "row": {
-            "type": ["string", "null"],
-            "description": "Row header or index if context = \"table\"; otherwise null."
-          },
-          "column": {
-            "type": ["string", "null"],
-            "description": "Column header or index if context = \"table\"; otherwise null."
-          },
-          "cell_label": {
-            "type": ["string", "null"],
-            "description": "Text inside the cell that contains the checkbox if context = \"table\"; otherwise null."
-          },
-          "checked": {
-            "type": "boolean",
-            "const": true,
-            "description": "Always true because only selected checkboxes are returned."
-          }
-        },
-        "required": [
-          "context",
-          "question",
-          "answer",
-          "table_title",
-          "row",
-          "column",
-          "cell_label",
-          "checked"
-        ]
-      }
-    }
-  },
-  "required": ["checkboxes"]
-}
+from pathlib import Path
+import json
+from datetime import datetime
+from typing import Dict, Iterable, List
+
+# pip install fuzzywuzzy[speedup]  (the [speedup] variant pulls in python-Levenshtein)
+from fuzzywuzzy import fuzz
+
+
+# ----------------------------------------------------------------------------
+def _max_ratio(s: str, choices: Iterable[str]) -> int:
+    """Highest token_set_ratio (%) between `s` and any phrase in `choices`."""
+    return max(
+        (fuzz.token_set_ratio(s, c) for c in choices),
+        default=0
+    )
+
+
+# ----------------------------------------------------------------------------
+def postprocess_combined_jsons(
+    combined_root: str | Path = "Combined_Output/HELIX",
+    allow_phrases: List[str] | Path = None,
+    threshold: int = 70,
+    post_root: str | Path = "Combined_Output_Post/HELIX",
+    combined_name: str = "combined.json",
+    error_log: str | Path = "postprocess_errors.txt",
+    overwrite: bool = True,
+) -> Dict[Path, Path]:
+    """
+    Build a *filtered* copy of every combined.json, keeping only headers that
+    fuzzy-match the allow-list at ≥ `threshold` (0-100).
+
+    Output structure:
+        Combined_Output_Post/HELIX/<Reauth>/<pdf_folder>/combined.json   (filtered)
+
+    Parameters
+    ----------
+    combined_root : path where original combined.json files live.
+    allow_phrases  : list[str] or path (.json array or .txt one-per-line).
+    threshold      : int  fuzzy score to keep a header (default 70).
+    post_root      : top folder for filtered JSONs (mirrors layout).
+    combined_name  : filename to look for and to write (default "combined.json").
+    error_log      : append any problems here and continue.
+    overwrite      : if False, skip pdf folders whose output already exists.
+
+    Returns
+    -------
+    Dict[Path, Path]  maps original combined path ➜ filtered path.
+    """
+    combined_root = Path(combined_root).expanduser().resolve()
+    post_root     = Path(post_root).expanduser().resolve()
+    error_log     = Path(error_log).expanduser().resolve()
+    post_root.mkdir(parents=True, exist_ok=True)
+    error_log.parent.mkdir(parents=True, exist_ok=True)
+
+    # ---------- Load allow-list --------------------------------------------
+    if allow_phrases is None:
+        raise ValueError("allow_phrases must be provided (list or path).")
+
+    if isinstance(allow_phrases, (str, Path)):
+        allow_phrases = Path(allow_phrases).expanduser()
+        if allow_phrases.suffix.lower() == ".json":
+            allow_phrases = json.loads(allow_phrases.read_text(encoding="utf-8"))
+        else:  # assume plain text
+            allow_phrases = [
+                ln.strip() for ln in allow_phrases.read_text().splitlines() if ln.strip()
+            ]
+
+    # ---------- Helper for logging -----------------------------------------
+    def _log(msg: str):
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with error_log.open("a", encoding="utf-8") as fp:
+            fp.write(f"[{stamp}] {msg}\n")
+
+    results: Dict[Path, Path] = {}
+
+    # ---------- Process every combined.json --------------------------------
+    for combined_path in combined_root.rglob(combined_name):
+        # Mirror location under post_root
+        rel_folder  = combined_path.parent.relative_to(combined_root)
+        out_path    = post_root / rel_folder / combined_name
+
+        if out_path.exists() and not overwrite:
+            print(f"⏭  {out_path}  (exists, skipped)")
+            continue
+
+        try:
+            combined_obj = json.loads(combined_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            _log(f"Bad JSON {combined_path}: {e}")
+            continue
+
+        # ---- Filter -------------------------------------------------------
+        filtered = {}
+        for page_key, headers in combined_obj.items():
+            kept = [
+                h for h in headers
+                if _max_ratio(h, allow_phrases) >= threshold
+            ]
+            filtered[page_key] = kept
+
+        # ---- Save ---------------------------------------------------------
+        try:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(
+                json.dumps(filtered, ensure_ascii=False, indent=2),
+                encoding="utf-8"
+            )
+            results[combined_path] = out_path
+            print(f"✓  {combined_path.relative_to(combined_root)} → {out_path}")
+        except Exception as e:
+            _log(f"Write error {out_path}: {e}")
+
+    if results:
+        print("\nDone. Any issues logged to:", error_log)
+    else:
+        print("No combined.json files processed.")
+
+    return results
+
+
+# ------------------ Example ---------------------------------------------
+# allow_list = [
+#     "Patient info", "Therapist", "Administration Information",
+#     "Pain assessment", "Homebound status",  # ...
+# ]
+#
+# postprocess_combined_jsons(
+#     combined_root="Combined_Output/HELIX",
+#     allow_phrases=allow_list,
+#     threshold=70,                 # keep ≥70% fuzzy similarity
+#     post_root="Combined_Output_Post/HELIX"
+# )
