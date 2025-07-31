@@ -15,36 +15,26 @@
           "context": {
             "type": "string",
             "enum": ["question", "table", "not_defined"],
-            "description": "Location of the checkbox: a standalone question line or a table cell."
+            "description": "Location of the checkbox."
           },
           "row_label": {
             "type": ["string", "null"],
-            "description": "Row header or index if context = 'table', otherwise null."
+            "description": "Row header text if context = 'table'; otherwise null."
           },
           "column_label": {
             "type": ["string", "null"],
-            "description": "Column header or index if context = 'table', otherwise null."
+            "description": "Column header text if context = 'table'; otherwise null."
           },
           "question": {
             "type": ["string", "null"],
-            "description": "Full question text if context = 'question', otherwise null."
+            "description": "Full question line if context = 'question'; otherwise null."
           },
           "answer": {
             "type": ["string", "null"],
-            "description": "Answer label beside the checkbox if context = 'question' or 'not_defined', otherwise null."
+            "description": "Printed answer text beside the selected box; null if none."
           }
         },
-        "required": ["context", "answer"],
-        "allOf": [
-          {
-            "if": { "properties": { "context": { "const": "table" } } },
-            "then": { "required": ["row_label", "column_label"] }
-          },
-          {
-            "if": { "properties": { "context": { "const": "question" } } },
-            "then": { "required": ["question"] }
-          }
-        ]
+        "required": ["context", "answer"]
       }
     }
   },
