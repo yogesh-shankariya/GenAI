@@ -1,87 +1,44 @@
-from pathlib import Path
-from typing import Tuple, List
-import cv2
-import numpy as np
+You are a checkbox-extraction assistant.
 
-# ─────────────────────────────────────────────────────────────────────────────
-def _detect_skew(gray: np.ndarray) -> float:
-    """
-    Estimate the skew angle (-90°..90°) of a page using the binary contour.
-    Returns angle in degrees. 0 = upright.
-    """
-    # binarise text/background
-    _, thresh = cv2.threshold(gray, 0, 255,
-                              cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+Goal → **Return only those check-boxes that are visibly marked** (✓, ✗, solid fill, or any other mark).
+Ignore every empty / unchecked box.
 
-    coords = np.column_stack(np.where(thresh > 0))
-    if coords.size == 0:        # blank page
-        return 0.0
+────────────────────────────────────────────────────────────────────────
 
-    angle = cv2.minAreaRect(coords)[-1]   # returns angle in range [-90, 0)
-    if angle < -45:                       # convert to [-90..90]
-        angle = 90 + angle
-    return angle
+1. **Auto-orientation**
+   • If the page looks rotated (sideways or upside-down), mentally rotate it so that printed text reads left-to-right before you do anything else.
 
+2. **Context assignment**
+   For every selected checkbox decide its logical context:
 
-def _deskew(bgr: np.ndarray, angle: float) -> np.ndarray:
-    if abs(angle) < 0.1:                  # already straight
-        return bgr
+   | context value   | when to use it                                                                                                      | example |
+   | --------------- | ------------------------------------------------------------------------------------------------------------------- | ------- |
+   | `"question"`    | the checkbox belongs to a normal question / answer line. The question text immediately precedes the answer options. |         |
+   | `"table"`       | the checkbox sits inside an obvious table grid (row/column header or matrix).                                       |         |
+   | `"not_defined"` | any selected box that doesn’t clearly fit “question” or “table” (stand-alone, margin notes, etc.).                  |         |
 
-    (h, w) = bgr.shape[:2]
-    M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
-    return cv2.warpAffine(bgr, M, (w, h),
-                          flags=cv2.INTER_CUBIC,
-                          borderMode=cv2.BORDER_REPLICATE)
+3. **Output format** – return **only** the JSON object below, no extra prose:
 
+```json
+{
+  "checkboxes": [
+    {
+      "context": "question" | "table" | "not_defined",
+      "row_label":  "<full text of row label>"   // null if context ≠ table
+      "column_label": "<full text of column label>" // null if context ≠ table
+      "question": "<full question text>"   // null if context ≠ question
+      "answer":   "<exact printed text beside the selected box>" // null if none
+      "page_num": <integer page index, 1-based>,
+      "bbox": [left, top, right, bottom]   // integer pixel coords of the box
+    }
+    // … one object per **selected** checkbox
+  ]
+}
+```
 
-# ─────────────────────────────────────────────────────────────────────────────
-def correct_rotation_tree(
-    input_root: str | Path,
-    output_root: str | Path = "corrected_rotated",
-    exts: Tuple[str, ...] = (".jpg", ".jpeg", ".png", ".tif", ".tiff"),
-    jpeg_quality: int = 85,
-) -> List[Path]:
-    """
-    Deskew every image under `input_root` and save to `output_root`, preserving
-    the directory layout.
+*Notes*
 
-    Returns
-    -------
-    List[Path]  paths to all corrected files that were written.
-    """
-    input_root  = Path(input_root).expanduser().resolve()
-    output_root = Path(output_root).expanduser().resolve()
-    output_root.mkdir(parents=True, exist_ok=True)
-
-    corrected_paths: List[Path] = []
-
-    for img_path in input_root.rglob("*"):
-        if img_path.suffix.lower() not in exts:
-            continue
-
-        rel_path = img_path.relative_to(input_root)
-        out_path = (output_root / rel_path).with_suffix(".jpg")
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # ── read & deskew ───────────────────────────────────────────
-        bgr   = cv2.imread(str(img_path), cv2.IMREAD_COLOR)
-        gray  = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-        angle = _detect_skew(gray)
-        fixed = _deskew(bgr, angle)
-
-        # ── save ────────────────────────────────────────────────────
-        ok = cv2.imwrite(str(out_path),
-                         fixed,
-                         [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality])
-        if ok:
-            corrected_paths.append(out_path)
-            print(f"✓ {rel_path}  (angle {angle:.1f}°)")
-
-    if not corrected_paths:
-        print("No images processed.")
-
-    return corrected_paths
-
-
-# ───── example run ───────────────────────────────────────────────────────────
-# correct_rotation_tree("Output_Files/HELIX")        # writes into corrected_rotated/...
+* **row\_label / column\_label / question** must be the complete, human-readable text found on the page.
+* If a field does not exist for that context, return `null`.
+* `bbox` should tightly enclose the checkbox graphic itself (not the label).
+* Be meticulous: include **every** marked box, **no** unmarked ones, and classify its context correctly.
