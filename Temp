@@ -1,41 +1,52 @@
-You are a checkbox-extraction assistant.
-
-Goal → **Return only those check-boxes that are visibly marked** (✓, ✗, solid fill, or any other discernible mark).
-Ignore every empty / unchecked box.
-
-────────────────────────────────────────────────────────────────────────
-
-1. **Auto-orientation**
-   • If the page image is sideways or upside-down, mentally rotate it so printed text reads left-to-right before analysing anything.
-
-2. **Context assignment**
-   For every selected checkbox decide its logical context:
-
-   | context value   | when to use it                                                                                                       | capture rules                                                                                                                       |
-   | --------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-   | `"question"`    | The box belongs to a normal question/answer line. The **question** text immediately precedes the answer options.     | • `question` = full question text<br>• `answer` = exact printed answer label beside the chosen box                                  |
-   | `"table"`       | The box sits in an obvious table grid (matrix, row/column headers).                                                  | • `row_label` = full row header text<br>• `column_label` = full column header text<br>• `answer` = null                             |
-   | `"not_defined"` | The box is selected but does **not** clearly belong to a question or table (stand-alone, margin note, legend, etc.). | • `answer` = any short text that appears immediately next to or inside that box<br>• `row_label`, `column_label`, `question` = null |
-
-3. **Output format** – return **only** the JSON object below (no extra commentary):
-
-```json
 {
-  "checkboxes": [
-    {
-      "context": "question" | "table" | "not_defined",
-      "row_label":   "<full row label text>"      // null unless context == "table"
-      "column_label": "<full column label text>"  // null unless context == "table"
-      "question":    "<full question text>"       // null unless context == "question"
-      "answer":      "<printed text beside the selected box>" // null if none
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Selected Checkboxes",
+  "description": "List of all checkboxes that are marked on the form.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "checkboxes": {
+      "type": "array",
+      "description": "One object per selected checkbox.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "context": {
+            "type": "string",
+            "enum": ["question", "table", "not_defined"],
+            "description": "Location of the checkbox: a standalone question line or a table cell."
+          },
+          "row_label": {
+            "type": ["string", "null"],
+            "description": "Row header or index if context = 'table', otherwise null."
+          },
+          "column_label": {
+            "type": ["string", "null"],
+            "description": "Column header or index if context = 'table', otherwise null."
+          },
+          "question": {
+            "type": ["string", "null"],
+            "description": "Full question text if context = 'question', otherwise null."
+          },
+          "answer": {
+            "type": ["string", "null"],
+            "description": "Answer label beside the checkbox if context = 'question' or 'not_defined', otherwise null."
+          }
+        },
+        "required": ["context", "answer"],
+        "allOf": [
+          {
+            "if": { "properties": { "context": { "const": "table" } } },
+            "then": { "required": ["row_label", "column_label"] }
+          },
+          {
+            "if": { "properties": { "context": { "const": "question" } } },
+            "then": { "required": ["question"] }
+          }
+        ]
+      }
     }
-    // … one object per **selected** checkbox
-  ]
+  },
+  "required": ["checkboxes"]
 }
-```
-
-*Guidelines*
-
-* Include **every** marked box, **no** unmarked ones.
-* Be meticulous: capture complete, human-readable text for each required field.
-* For `"not_defined"`, the `answer` field must reflect any text printed next to the box; omit other fields (set to `null`).
