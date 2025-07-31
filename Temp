@@ -1,52 +1,75 @@
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Selected Checkboxes",
-  "description": "List of all check-boxes that are visibly marked on the page.",
-  "type": "object",
-  "additionalProperties": false,
+from pathlib import Path
+import json
+from typing import Dict, List
 
-  "properties": {
-    "checkboxes": {
-      "type": "array",
-      "description": "One object per selected checkbox.",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
 
-        "properties": {
-          "context": {
-            "type": "string",
-            "enum": ["question", "table", "not_defined"],
-            "description": "Logical location of the checkbox."
-          },
-          "row_label": {
-            "type": ["string", "null"],
-            "description": "Row header text if context = 'table'; otherwise null."
-          },
-          "column_label": {
-            "type": ["string", "null"],
-            "description": "Column header text if context = 'table'; otherwise null."
-          },
-          "question": {
-            "type": ["string", "null"],
-            "description": "Full question line if context = 'question'; otherwise null."
-          },
-          "answer": {
-            "type": ["string", "null"],
-            "description": "Printed answer text beside/inside the selected box; null if none."
-          }
-        },
+def count_marks_per_page(
+    combined_root: str | Path = "Combined_Output/HELIX",
+    combined_name: str = "combined.json",
+    summary_name: str = "page_counts.json",
+    overwrite: bool = True
+) -> Dict[Path, Path]:
+    """
+    For every *combined.json* under `combined_root`, count how many marked
+    values each page contains and write the result to
+        <same folder>/<summary_name>
 
-        "required": [
-          "context",
-          "row_label",
-          "column_label",
-          "question",
-          "answer"
-        ]
-      }
+    Example output inside each PDF folder
+    -------------------------------------
+    {
+      "page-1": 14,
+      "page-2": 5,
+      "total": 19
     }
-  },
 
-  "required": ["checkboxes"]
-}
+    Parameters
+    ----------
+    combined_root : str | Path
+        Top-level directory that holds combined.json files (one per PDF).
+    combined_name : str, default 'combined.json'
+        Filename to look for inside each PDF folder.
+    summary_name : str, default 'page_counts.json'
+        Name of the summary file to create in the same folder.
+    overwrite : bool, default True
+        Skip writing if the summary already exists and overwrite=False.
+
+    Returns
+    -------
+    Dict[Path, Path]
+        { combined_json_path : summary_json_path }
+    """
+    combined_root = Path(combined_root).expanduser().resolve()
+    results: Dict[Path, Path] = {}
+
+    for cmb in combined_root.rglob(combined_name):
+        summary_path = cmb.with_name(summary_name)
+        if summary_path.exists() and not overwrite:
+            print(f"⏭  {summary_path} (exists, skipped)")
+            continue
+
+        try:
+            pages = json.loads(cmb.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"✗  Failed to read {cmb}: {e}")
+            continue
+
+        counts = {pg: len(headers) for pg, headers in pages.items()}
+        counts["total"] = sum(counts.values())
+
+        try:
+            summary_path.write_text(
+                json.dumps(counts, ensure_ascii=False, indent=2),
+                encoding="utf-8"
+            )
+            results[cmb] = summary_path
+            print(f"✓  {cmb.relative_to(combined_root)} → {summary_name}")
+        except OSError as e:
+            print(f"✗  Write error {summary_path}: {e}")
+
+    if not results:
+        print("No combined.json files processed.")
+    return results
+
+
+# ---------------- Example ----------------
+# count_marks_per_page("Combined_Output/HELIX")
