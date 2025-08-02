@@ -1,75 +1,14 @@
-from pathlib import Path
-import json
-from typing import Dict, List
+Subject: Clarification on PHI/PII Access and Embedding API
 
+Hi Zack,
 
-def count_marks_per_page(
-    combined_root: str | Path = "Combined_Output/HELIX",
-    combined_name: str = "combined.json",
-    summary_name: str = "page_counts.json",
-    overwrite: bool = True
-) -> Dict[Path, Path]:
-    """
-    For every *combined.json* under `combined_root`, count how many marked
-    values each page contains and write the result to
-        <same folder>/<summary_name>
+The current API access you have provided comes with the condition that we cannot use PHI/PII data, as you've mentioned the PHI/PII approval is still pending. During our conversation on July 14th, you indicated that the PHI/PII approval would be granted soon, and advised us to redact sensitive information in the interim.
 
-    Example output inside each PDF folder
-    -------------------------------------
-    {
-      "page-1": 14,
-      "page-2": 5,
-      "total": 19
-    }
+However, our chatbot is fundamentally designed to work with patient medication details and medical chart data, both of which inherently include PHI. Redacting this information isn't feasible as it forms the core of our chatbot's functionality.
 
-    Parameters
-    ----------
-    combined_root : str | Path
-        Top-level directory that holds combined.json files (one per PDF).
-    combined_name : str, default 'combined.json'
-        Filename to look for inside each PDF folder.
-    summary_name : str, default 'page_counts.json'
-        Name of the summary file to create in the same folder.
-    overwrite : bool, default True
-        Skip writing if the summary already exists and overwrite=False.
+Could you please clarify if there is a specific reason you prefer providing access only to the Ingestion API instead of enabling us to use the Embedding API?
 
-    Returns
-    -------
-    Dict[Path, Path]
-        { combined_json_path : summary_json_path }
-    """
-    combined_root = Path(combined_root).expanduser().resolve()
-    results: Dict[Path, Path] = {}
+Thank you for your assistance.
 
-    for cmb in combined_root.rglob(combined_name):
-        summary_path = cmb.with_name(summary_name)
-        if summary_path.exists() and not overwrite:
-            print(f"⏭  {summary_path} (exists, skipped)")
-            continue
-
-        try:
-            pages = json.loads(cmb.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as e:
-            print(f"✗  Failed to read {cmb}: {e}")
-            continue
-
-        counts = {pg: len(headers) for pg, headers in pages.items()}
-        counts["total"] = sum(counts.values())
-
-        try:
-            summary_path.write_text(
-                json.dumps(counts, ensure_ascii=False, indent=2),
-                encoding="utf-8"
-            )
-            results[cmb] = summary_path
-            print(f"✓  {cmb.relative_to(combined_root)} → {summary_name}")
-        except OSError as e:
-            print(f"✗  Write error {summary_path}: {e}")
-
-    if not results:
-        print("No combined.json files processed.")
-    return results
-
-
-# ---------------- Example ----------------
-# count_marks_per_page("Combined_Output/HELIX")
+Best regards,
+\[Your Name]
