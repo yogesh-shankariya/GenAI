@@ -1,74 +1,94 @@
-import cv2, tempfile, os, numpy as np, matplotlib.pyplot as plt
-from ultralytics import YOLO
+import json
+import sys
+from typing import Any, Dict
 
-# --------------------------------------------------  weights
-DETECTOR_WT   = "checkbox_detector.pt"
-CLASSIFIER_WT = "checkbox_classifier.pt"
+import requests
+from requests import exceptions as req_exc
 
-DETECTOR   = YOLO(DETECTOR_WT)        # bbox model
-CLASSIFIER = YOLO(CLASSIFIER_WT)      # 0 block • 1 checked • 2 unchecked
 
-BOX_COLORS = {
-    "unchecked": (242,  48,  48),
-    "checked":   ( 38, 115, 101),
-    "block":     (242, 159,   5)
-}
-IDX2NAME = {0: "block", 1: "checked", 2: "unchecked"}
+def marshal_into_json(
+    self,
+    schema: str,
+    text: str,
+    initial_instructions: str = ""
+) -> Dict[str, Any]:
+    """
+    Marshal the text into the provided JSON schema.
 
-# --------------------------------------------------  helper
-def classify_crop_via_tempfile(crop_bgr: np.ndarray):
-    "Save crop→disk → hand path to classifier → clean up → return idx, conf"
-    fd, tmp_path = tempfile.mkstemp(suffix=".jpg")
-    os.close(fd)                                        # close file handle
-    cv2.imwrite(tmp_path, crop_bgr)                     # write BGR → jpg
-    out      = CLASSIFIER(tmp_path, imgsz=64, verbose=False)[0]
-    idx      = int(out.probs.top1)                      # 0 / 1 / 2
-    conf     = float(out.probs.top1conf)
-    os.remove(tmp_path)                                 # tidy
-    return idx, conf
+    Args:
+        schema: The JSON schema against which the text should be structured.
+        text:   The raw text to be transformed.
+        initial_instructions: Optional additional instructions for the LLM.
 
-# --------------------------------------------------  main visualiser
-def annotate_page(img_path: str,
-                  out_path: str = "annotated.jpg",
-                  show_inline: bool = True):
-    page_bgr = cv2.imread(img_path)
-    det      = DETECTOR(page_bgr, imgsz=1280, conf=0.2)[0]
+    Returns:
+        A JSON-serialisable dictionary structured per the supplied schema.
 
-    for (x1, y1, x2, y2) in det.boxes.xyxy.cpu().numpy():
-        x1, y1, x2, y2 = map(int, (x1, y1, x2, y2))
-        if x2 <= x1 or y2 <= y1:           # skip degenerate boxes
-            continue
+    Raises:
+        requests.exceptions.RequestException | json.JSONDecodeError
+        on network or decoding errors (after logging them).
+    """
+    prompt = f"{initial_instructions}\n\n{schema}\n\n{text}"
 
-        crop = page_bgr[y1:y2, x1:x2].copy()
-        idx, conf = classify_crop_via_tempfile(crop)
+    auth_token = self.token_manager.get_token()
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {auth_token}",
+    }
+    payload = json.dumps(
+        {
+            "prompt": prompt,
+            "output": "json",
+            "stream": False,
+        }
+    )
 
-        label  = IDX2NAME[idx]            # checked / unchecked / block
-        color  = BOX_COLORS[label]
-        text   = f"{label} {conf:.2f}"
+    api_params: Dict[str, str] = {}
+    if config.qos in ["accurate", "cheap"]:
+        api_params["qos"] = config.qos
+    if config.reasoning in ["true", "false"]:
+        api_params["reasoning"] = config.reasoning
 
-        # draw rectangle
-        cv2.rectangle(page_bgr, (x1, y1), (x2, y2), color, 2)
+    try:
+        response = requests.post(
+            url=f"{self.base_url}/v1/text/structures",
+            headers=headers,
+            data=payload,
+            params=api_params,
+            timeout=30,
+        )
+        response.raise_for_status()
 
-        # draw filled label-bg
-        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX,
-                                      0.5, 1)
-        cv2.rectangle(page_bgr,
-                      (x1, y1 - th - 6),
-                      (x1 + tw + 4, y1),
-                      color, -1)
-        cv2.putText(page_bgr, text,
-                    (x1 + 2, y1 - 4),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5, (255, 255, 255), 1)
+        # Parse JSON content safely
+        response_json: Dict[str, Any] = response.json().get("content", {})
+        if not response_json:
+            self.logger.warning("LLM response message content is empty or not found.")
+            return {}
+        return response_json
 
-    cv2.imwrite(out_path, page_bgr)
+    except req_exc.HTTPError as http_err:
+        # Handle 401 specifically (invalid / expired token)
+        if response.status_code == 401:
+            self.logger.warning(
+                "Received 401 Unauthorized – token might be invalid. "
+                "Clearing token cache and re-raising for retry."
+            )
+            self.token_manager.clear_cache()
+        self.logger.error(f"LLM query HTTP error ({response.status_code}): {http_err}")
+        raise
 
-    if show_inline:
-        plt.figure(figsize=(8, 10))
-        plt.imshow(cv2.cvtColor(page_bgr, cv2.COLOR_BGR2RGB))
-        plt.axis("off")
-        plt.title(f"Checkbox states  •  total boxes = {len(det.boxes)}")
-        plt.show()
+    except json.JSONDecodeError as json_err:
+        self.logger.error(f"Failed to parse JSON response: {json_err}")
+        raise
 
-# --------------------------------------------------  run
-annotate_page("sample.jpg", "sample_annotated.jpg")
+    except req_exc.RequestException as req_err:
+        self.logger.error(f"LLM query failed: {req_err}")
+        raise
+
+    finally:
+        # Ensure buffered logs are flushed
+        sys.stdout.flush()
+        for handler in self.logger.handlers:
+            try:
+                handler.flush()
+            except Exception:
+                pass
