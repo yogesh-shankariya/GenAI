@@ -1,29 +1,21 @@
-import cv2
-import numpy as np
-from skimage.filters import threshold_sauvola
-from skimage import img_as_ubyte
-
-def preprocess(img_path: str) -> np.ndarray:
-    img   = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
-
-    # --- deskew -----------------------------------------------------------
-    edges = cv2.Canny(img, 50, 150, apertureSize=3)
-    lines = cv2.HoughLines(edges, 1, np.pi/180, 250)
-    if lines is not None:                              # pick dominant angle
-        theta = np.median([l[0][1] for l in lines])
-        angle = (theta - np.pi/2) * 180/np.pi          # radians ➜ degrees
-        (h, w) = img.shape
-        M   = cv2.getRotationMatrix2D((w//2, h//2), angle, 1.0)
-        img = cv2.warpAffine(img, M, (w, h),
-                             flags=cv2.INTER_LINEAR, borderValue=255)
-
-    # --- adaptive threshold (Sauvola) ------------------------------------
-    win_size = 51
-    thresh   = threshold_sauvola(img, window_size=win_size, k=0.2)
-    bin_img  = img_as_ubyte(img > thresh)
-
-    # --- morphological clean-up -----------------------------------------
-    kernel   = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    clean    = cv2.morphologyEx(bin_img, cv2.MORPH_OPEN,  kernel, iterations=1)
-    clean    = cv2.morphologyEx(clean,   cv2.MORPH_CLOSE, kernel, iterations=1)
-    return clean
+name: yolo_env                      # ← your new environment name
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  # ---------- core interpreter ----------
+  - python=3.9                       # Ultralytics + recent Torch need ≥3.8
+  # ---------- Jupyter tooling ----------
+  - notebook                         # classic Jupyter Notebook server
+  - ipykernel                        # registers a kernel for this env
+  # ---------- let pip handle the rest ----------
+  - pip
+  - pip:
+      - torch==2.1.2                 # choose the CUDA-enabled wheel if GPU is available
+      - torchvision==0.16.2
+      - torchaudio==2.1.2
+      - ultralytics==8.1.23
+      - opencv-python
+      - scikit-image
+      - matplotlib
+      - tqdm
