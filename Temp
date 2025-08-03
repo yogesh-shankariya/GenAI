@@ -1,33 +1,70 @@
-# --- visualise YOLO detections -------------------------------------------
+# ------------------------------------------------------------------------
+# visualise YOLO detections + patch-level classification
+# ------------------------------------------------------------------------
 import cv2
+import numpy as np
 import matplotlib.pyplot as plt
+from ultralytics import YOLO
 
-img_path   = "sample.jpg"
-save_path  = "sample_annotated.jpg"     # change if you like
+# ------------------------------------------------------------------------
+# 0.  load the two models (do this once per session)
+DETECTION_MODEL     = YOLO("checkbox_detector.pt")     # bbox only
+CLASSIFICATION_MODEL = YOLO("checkbox_classifier.pt")   # 0:block 1:checked 2:unchecked
 
-# 1.  Read the original image (BGR because OpenCV)
-img = cv2.imread(img_path)
+BOX_COLORS = {
+    "unchecked": (242,  48,  48),   # red
+    "checked":   ( 38, 115, 101),   # green-teal
+    "block":     (242, 159,   5)    # amber
+}
+CLASS_IDX2NAME = {0: "block", 1: "checked", 2: "unchecked"}
 
-# 2.  Loop over every predicted box and draw it
-for xyxy, cls, conf in zip(
-        res[0].boxes.xyxy.cpu().numpy(),      # (x1, y1, x2, y2)
-        res[0].boxes.cls.cpu().numpy(),       # detector’s class index
-        res[0].boxes.conf.cpu().numpy()):     # detector’s confidence
+# ------------------------------------------------------------------------
+# 1.  run detection
+img_path  = "sample.jpg"
+save_path = "sample_annotated.jpg"
+
+orig = cv2.imread(img_path)
+res  = DETECTION_MODEL(orig, conf=0.2, imgsz=1280)      # list of Results
+boxes = res[0].boxes
+
+# ------------------------------------------------------------------------
+# 2.  iterate through detections, classify each crop, draw
+for xyxy in boxes.xyxy.cpu().numpy():           # ndarray (N, 4)
     x1, y1, x2, y2 = map(int, xyxy)
-    colour = (0, 255, 0)                      # green outline
-    cv2.rectangle(img, (x1, y1), (x2, y2), colour, thickness=2)
-    cv2.putText(img,
-                f"{int(cls)} {conf:.2f}",
-                (x1, y1 - 5),
+
+    # -- 2a. crop + classify --------------------------------------------
+    patch = orig[y1:y2, x1:x2]                  # BGR crop
+    cls_out   = CLASSIFICATION_MODEL(patch, imgsz=64)[0]
+    cls_idx   = int(cls_out.probs.top1)         # 0 / 1 / 2
+    cls_conf  = float(cls_out.probs.top1conf)   # probability 0-1
+
+    cls_name  = CLASS_IDX2NAME[cls_idx]         # 'checked', ...
+    colour    = BOX_COLORS[cls_name]
+
+    # -- 2b. draw rectangle & label --------------------------------------
+    cv2.rectangle(orig, (x1, y1), (x2, y2), colour, thickness=2)
+
+    label = f"{cls_name} {cls_conf:.2f}"
+    (tw, th), _ = cv2.getTextSize(
+        text=label, fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+        fontScale=0.5, thickness=1
+    )
+    # filled box behind text
+    cv2.rectangle(orig,
+                  (x1, y1 - th - 6),
+                  (x1 + tw + 4, y1),
+                  colour, thickness=-1)
+    cv2.putText(orig, label,
+                (x1 + 2, y1 - 4),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.5, colour, 1, cv2.LINE_AA)
+                0.5, (255, 255, 255), 1, cv2.LINE_AA)
 
-# 3.  Save and show inside the notebook
-cv2.imwrite(save_path, img)          # writes file to disk
+# ------------------------------------------------------------------------
+# 3.  save + show
+cv2.imwrite(save_path, orig)
 
-# convert BGR → RGB for matplotlib display
 plt.figure(figsize=(8, 10))
-plt.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+plt.imshow(cv2.cvtColor(orig, cv2.COLOR_BGR2RGB))
 plt.axis("off")
-plt.title(f"Checkbox detector – {len(res[0].boxes)} boxes")
+plt.title(f"Checkbox state   •   total boxes = {len(boxes)}")
 plt.show()
