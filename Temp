@@ -1,94 +1,16 @@
-import json
-import sys
-from typing import Any, Dict
-
-import requests
-from requests import exceptions as req_exc
-
-
-def marshal_into_json(
-    self,
-    schema: str,
-    text: str,
-    initial_instructions: str = ""
-) -> Dict[str, Any]:
-    """
-    Marshal the text into the provided JSON schema.
-
-    Args:
-        schema: The JSON schema against which the text should be structured.
-        text:   The raw text to be transformed.
-        initial_instructions: Optional additional instructions for the LLM.
-
-    Returns:
-        A JSON-serialisable dictionary structured per the supplied schema.
-
-    Raises:
-        requests.exceptions.RequestException | json.JSONDecodeError
-        on network or decoding errors (after logging them).
-    """
-    prompt = f"{initial_instructions}\n\n{schema}\n\n{text}"
-
-    auth_token = self.token_manager.get_token()
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {auth_token}",
+payload = json.dumps(
+    {
+        "prompt": prompt,
+        "output": self.inline_refs(schema),
+        "stream": False,
     }
-    payload = json.dumps(
-        {
-            "prompt": prompt,
-            "output": "json",
-            "stream": False,
-        }
-    )
+)
 
-    api_params: Dict[str, str] = {}
-    if config.qos in ["accurate", "cheap"]:
-        api_params["qos"] = config.qos
-    if config.reasoning in ["true", "false"]:
-        api_params["reasoning"] = config.reasoning
-
-    try:
-        response = requests.post(
-            url=f"{self.base_url}/v1/text/structures",
-            headers=headers,
-            data=payload,
-            params=api_params,
-            timeout=30,
-        )
-        response.raise_for_status()
-
-        # Parse JSON content safely
-        response_json: Dict[str, Any] = response.json().get("content", {})
-        if not response_json:
-            self.logger.warning("LLM response message content is empty or not found.")
-            return {}
-        return response_json
-
-    except req_exc.HTTPError as http_err:
-        # Handle 401 specifically (invalid / expired token)
-        if response.status_code == 401:
-            self.logger.warning(
-                "Received 401 Unauthorized – token might be invalid. "
-                "Clearing token cache and re-raising for retry."
-            )
-            self.token_manager.clear_cache()
-        self.logger.error(f"LLM query HTTP error ({response.status_code}): {http_err}")
-        raise
-
-    except json.JSONDecodeError as json_err:
-        self.logger.error(f"Failed to parse JSON response: {json_err}")
-        raise
-
-    except req_exc.RequestException as req_err:
-        self.logger.error(f"LLM query failed: {req_err}")
-        raise
-
-    finally:
-        # Ensure buffered logs are flushed
-        sys.stdout.flush()
-        for handler in self.logger.handlers:
-            try:
-                handler.flush()
-            except Exception:
-                pass
+# Save the payload
+import uuid, os
+uuid_str = str(uuid.uuid4())
+output_dir = "payload_logs"
+os.makedirs(output_dir, exist_ok=True)
+output_path = os.path.join(output_dir, f"{uuid_str}.json")
+with open(output_path, "w") as f:
+    f.write(payload)
