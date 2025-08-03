@@ -1,21 +1,33 @@
-name: yolo_env                      # ← your new environment name
-channels:
-  - defaults
-  - conda-forge
-dependencies:
-  # ---------- core interpreter ----------
-  - python=3.9                       # Ultralytics + recent Torch need ≥3.8
-  # ---------- Jupyter tooling ----------
-  - notebook                         # classic Jupyter Notebook server
-  - ipykernel                        # registers a kernel for this env
-  # ---------- let pip handle the rest ----------
-  - pip
-  - pip:
-      - torch==2.1.2                 # choose the CUDA-enabled wheel if GPU is available
-      - torchvision==0.16.2
-      - torchaudio==2.1.2
-      - ultralytics==8.1.23
-      - opencv-python
-      - scikit-image
-      - matplotlib
-      - tqdm
+# --- visualise YOLO detections -------------------------------------------
+import cv2
+import matplotlib.pyplot as plt
+
+img_path   = "sample.jpg"
+save_path  = "sample_annotated.jpg"     # change if you like
+
+# 1.  Read the original image (BGR because OpenCV)
+img = cv2.imread(img_path)
+
+# 2.  Loop over every predicted box and draw it
+for xyxy, cls, conf in zip(
+        res[0].boxes.xyxy.cpu().numpy(),      # (x1, y1, x2, y2)
+        res[0].boxes.cls.cpu().numpy(),       # detector’s class index
+        res[0].boxes.conf.cpu().numpy()):     # detector’s confidence
+    x1, y1, x2, y2 = map(int, xyxy)
+    colour = (0, 255, 0)                      # green outline
+    cv2.rectangle(img, (x1, y1), (x2, y2), colour, thickness=2)
+    cv2.putText(img,
+                f"{int(cls)} {conf:.2f}",
+                (x1, y1 - 5),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5, colour, 1, cv2.LINE_AA)
+
+# 3.  Save and show inside the notebook
+cv2.imwrite(save_path, img)          # writes file to disk
+
+# convert BGR → RGB for matplotlib display
+plt.figure(figsize=(8, 10))
+plt.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+plt.axis("off")
+plt.title(f"Checkbox detector – {len(res[0].boxes)} boxes")
+plt.show()
