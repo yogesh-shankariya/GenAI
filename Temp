@@ -1,58 +1,72 @@
-pydantic_schemas:
-  base_path: "src/schemas"
+import importlib.util
+import inspect
+from pathlib import Path
+from pydantic import BaseModel
 
-  member_demographics:
-    file:  "member_demographics.py"
-    class: "MemberDemographicsPayload"
 
-  dos_lab_rad_exam:
-    file:  "dos_lab_rad_exam.py"
-    class: "DateOfServicePayload"
+    # ----------------------------------------------------------------- #
+    #  Name-based loader (class always supplied in config)              #
+    # ----------------------------------------------------------------- #
+    def load_structure_schema(self, schema_name: str) -> dict:
+        """
+        Load and return the fully-inlined JSON schema for the Pydantic
+        model identified by *schema_name*.
 
-  dos_opip:
-    file:  "dos_opip.py"
-    class: "DosOpipPayload"
+        Expectations
+        ------------
+        In ``config.yml`` each entry under ``pydantic_schemas`` **must** be
+        a mapping of the form:
 
-  emr_doc_classification:
-    file:  "emr_doc_classification.py"
-    class: "EmrDocClassificationPayload"
+            pydantic_schemas:
+              base_path: "src/schemas"
+              some_key:
+                file:  "some_model.py"
+                class: "SomeModelPayload"
 
-  reason_for_visit:
-    file:  "reason_for_visit.py"
-    class: "ReasonForVisitPayload"
+        Returns
+        -------
+        dict
+            Expanded JSON schema (all ``$ref`` nodes resolved).
 
-  enct_providers:
-    file:  "enct_providers.py"
-    class: "EnctProvidersPayload"
+        Raises
+        ------
+        KeyError
+            If *schema_name* is missing or required keys are absent.
+        FileNotFoundError
+            If the specified ``file`` does not exist.
+        ValueError
+            If the requested class is not a subclass of ``pydantic.BaseModel``.
+        """
+        # -------- resolve entry & sanity-check config -----------------
+        try:
+            entry = self.config["pydantic_schemas"][schema_name]
+            base_dir = Path(self.config["pydantic_schemas"]["base_path"])
+            file_path = entry["file"]
+            class_name = entry["class"]
+        except KeyError as e:
+            raise KeyError(
+                f"Configuration for '{schema_name}' must include "
+                "'file' and 'class' keys"
+            ) from e
 
-  encounter_class:
-    file:  "encounter_class.py"
-    class: "EncounterClassPayload"
+        schema_path = base_dir / file_path
+        if not schema_path.exists():
+            raise FileNotFoundError(f"Pydantic schema file not found: {schema_path}")
 
-  validation_for_patient_address1:
-    file:  "validation_for_patient_address1.py"
-    class: "ValidationForPatientAddress1Payload"
+        # -------- dynamic import of the module ------------------------
+        spec = importlib.util.spec_from_file_location(schema_name, schema_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)                                # type: ignore
 
-  validation_for_patient_address2:
-    file:  "validation_for_patient_address2.py"
-    class: "ValidationForPatientAddress2Payload"
+        # -------- fetch & validate the requested model ---------------
+        model_cls = getattr(module, class_name, None)
+        if not (inspect.isclass(model_cls) and issubclass(model_cls, BaseModel)):
+            raise ValueError(
+                f"'{class_name}' in '{schema_path.name}' is not a Pydantic BaseModel"
+            )
 
-  validation_for_patient_address3:
-    file:  "validation_for_patient_address3.py"
-    class: "ValidationForPatientAddress3Payload"
-
-  validation_for_patient_phnum1:
-    file:  "validation_for_patient_phnum1.py"
-    class: "ValidationForPatientPhnum1Payload"
-
-  validation_for_patient_phnum2:
-    file:  "validation_for_patient_phnum2.py"
-    class: "ValidationForPatientPhnum2Payload"
-
-  validation_for_patient_phnum3:
-    file:  "validation_for_patient_phnum3.py"
-    class: "ValidationForPatientPhnum3Payload"
-
-  encounter_service_facility:
-    file:  "encounter_service_facility.py"
-    class: "EncounterServiceFacilityPayload"
+        # -------- build + inline JSON schema --------------------------
+        raw_schema = model_cls.model_json_schema(                       # type: ignore
+            ref_template="#/$defs/{model}"
+        )
+        return self.inline_refs(raw_schema)
