@@ -1,16 +1,62 @@
-payload = json.dumps(
-    {
-        "prompt": prompt,
-        "output": self.inline_refs(schema),
-        "stream": False,
-    }
-)
+pydantic_schemas:
+  base_path: "src/schemas"
 
-# Save the payload
-import uuid, os
-uuid_str = str(uuid.uuid4())
-output_dir = "payload_logs"
-os.makedirs(output_dir, exist_ok=True)
-output_path = os.path.join(output_dir, f"{uuid_str}.json")
-with open(output_path, "w") as f:
-    f.write(payload)
+  dos_lab_rad_exam:
+    file:  "dos_lab_rad_exam.py"
+    class: "DateOfServicePayload"
+
+  dos_opip:
+    file:  "dos_opip.py"
+    class: "DosOpipPayload"
+
+  emr_doc_classification:
+    file:  "emr_doc_classification.py"
+    class: "EmrDocClassificationPayload"
+
+  reason_for_visit:
+    file:  "reason_for_visit.py"
+    class: "ReasonForVisitPayload"
+
+  enct_provider_prompt_type:
+    file:  "enct_provider_prompt_type.py"
+    class: "EnctProviderPromptTypePayload"
+
+  enct_provider_prompt_role:
+    file:  "enct_provider_prompt_role.py"
+    class: "EnctProviderPromptRolePayload"
+
+  encounter_class:
+    file:  "encounter_class.py"
+    class: "EncounterClassPayload"
+
+  member_demographics:
+    file:  "member_demographics.py"
+    class: "MemberDemographicsPayload"
+
+  validation_for_patient_address1:
+    file:  "validation_for_patient_address1.py"
+    class: "ValidationForPatientAddress1Payload"
+
+  validation_for_patient_address2:
+    file:  "validation_for_patient_address2.py"
+    class: "ValidationForPatientAddress2Payload"
+
+  validation_for_patient_address3:
+    file:  "validation_for_patient_address3.py"
+    class: "ValidationForPatientAddress3Payload"
+
+  validation_for_patient_phnum1:
+    file:  "validation_for_patient_phnum1.py"
+    class: "ValidationForPatientPhnum1Payload"
+
+  validation_for_patient_phnum2:
+    file:  "validation_for_patient_phnum2.py"
+    class: "ValidationForPatientPhnum2Payload"
+
+  validation_for_patient_phnum3:
+    file:  "validation_for_patient_phnum3.py"
+    class: "ValidationForPatientPhnum3Payload"
+
+  encounter_service_facility:
+    file:  "encounter_service_facility.py"
+    class: "EncounterServiceFacilityPayload"
