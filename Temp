@@ -1,6 +1,10 @@
 pydantic_schemas:
   base_path: "src/schemas"
 
+  member_demographics:
+    file:  "member_demographics.py"
+    class: "MemberDemographicsPayload"
+
   dos_lab_rad_exam:
     file:  "dos_lab_rad_exam.py"
     class: "DateOfServicePayload"
@@ -17,21 +21,13 @@ pydantic_schemas:
     file:  "reason_for_visit.py"
     class: "ReasonForVisitPayload"
 
-  enct_provider_prompt_type:
-    file:  "enct_provider_prompt_type.py"
-    class: "EnctProviderPromptTypePayload"
-
-  enct_provider_prompt_role:
-    file:  "enct_provider_prompt_role.py"
-    class: "EnctProviderPromptRolePayload"
+  enct_providers:
+    file:  "enct_providers.py"
+    class: "EnctProvidersPayload"
 
   encounter_class:
     file:  "encounter_class.py"
     class: "EncounterClassPayload"
-
-  member_demographics:
-    file:  "member_demographics.py"
-    class: "MemberDemographicsPayload"
 
   validation_for_patient_address1:
     file:  "validation_for_patient_address1.py"
