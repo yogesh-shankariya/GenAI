@@ -1,72 +1,151 @@
-import importlib.util
-import inspect
-from pathlib import Path
-from pydantic import BaseModel
+Below are **four complete Pydantic schemas**—one for each of the JSON examples you showed.
+Copy each snippet into its own module (or the same file, if that’s your convention) and adjust import paths as needed.
+
+---
+
+```python
+# cover_page_schema.py
+from pydantic import BaseModel, Field
 
 
-    # ----------------------------------------------------------------- #
-    #  Name-based loader (class always supplied in config)              #
-    # ----------------------------------------------------------------- #
-    def load_structure_schema(self, schema_name: str) -> dict:
-        """
-        Load and return the fully-inlined JSON schema for the Pydantic
-        model identified by *schema_name*.
+class CoverPagePayload(BaseModel):
+    """
+    Indicates whether the current page is a cover page.
+    """
 
-        Expectations
-        ------------
-        In ``config.yml`` each entry under ``pydantic_schemas`` **must** be
-        a mapping of the form:
+    ind: str = Field(
+        ...,
+        description="Either `cover_page` or `not cover_page`",
+    )
 
-            pydantic_schemas:
-              base_path: "src/schemas"
-              some_key:
-                file:  "some_model.py"
-                class: "SomeModelPayload"
+    model_config = {"extra": "forbid"}
+```
 
-        Returns
-        -------
-        dict
-            Expanded JSON schema (all ``$ref`` nodes resolved).
+---
 
-        Raises
-        ------
-        KeyError
-            If *schema_name* is missing or required keys are absent.
-        FileNotFoundError
-            If the specified ``file`` does not exist.
-        ValueError
-            If the requested class is not a subclass of ``pydantic.BaseModel``.
-        """
-        # -------- resolve entry & sanity-check config -----------------
-        try:
-            entry = self.config["pydantic_schemas"][schema_name]
-            base_dir = Path(self.config["pydantic_schemas"]["base_path"])
-            file_path = entry["file"]
-            class_name = entry["class"]
-        except KeyError as e:
-            raise KeyError(
-                f"Configuration for '{schema_name}' must include "
-                "'file' and 'class' keys"
-            ) from e
+```python
+# header_segmentation_sec_heading_schema.py
+from typing import List
+from pydantic import BaseModel, Field
 
-        schema_path = base_dir / file_path
-        if not schema_path.exists():
-            raise FileNotFoundError(f"Pydantic schema file not found: {schema_path}")
 
-        # -------- dynamic import of the module ------------------------
-        spec = importlib.util.spec_from_file_location(schema_name, schema_path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)                                # type: ignore
+class SectionHeading(BaseModel):
+    section_heading: str = Field(
+        ...,
+        description="Identified section heading in a page",
+    )
+    page_number: str = Field(
+        ...,
+        description="Page number where the section heading appears",
+    )
+    reasoning_for_section_heading: str = Field(
+        ...,
+        description="Reasoning for identifying this text as a section heading",
+    )
 
-        # -------- fetch & validate the requested model ---------------
-        model_cls = getattr(module, class_name, None)
-        if not (inspect.isclass(model_cls) and issubclass(model_cls, BaseModel)):
-            raise ValueError(
-                f"'{class_name}' in '{schema_path.name}' is not a Pydantic BaseModel"
-            )
+    model_config = {"extra": "forbid"}
 
-        # -------- build + inline JSON schema --------------------------
-        raw_schema = model_cls.model_json_schema(                       # type: ignore
-            ref_template="#/$defs/{model}"
-        )
-        return self.inline_refs(raw_schema)
+
+class HeaderSegmentationSectionHeadingPayload(BaseModel):
+    """
+    Collection of section headings detected within the document.
+    """
+
+    sections: List[SectionHeading] = Field(
+        ...,
+        description="List of detected section headings",
+    )
+
+    model_config = {"extra": "forbid"}
+```
+
+---
+
+```python
+# header_segmentation_final_output_schema.py
+from typing import List
+from pydantic import BaseModel, Field
+
+
+class EncounterSegment(BaseModel):
+    segment_sequence: str = Field(
+        ...,
+        description="Sequence number of the encounter segment",
+    )
+    segment_type: str = Field(
+        "encounter",
+        description="Type of segment (fixed to 'encounter')",
+    )
+    segment_start_page: str = Field(
+        ...,
+        description="Page number where the encounter segment starts",
+    )
+    reasoning_for_encounter: str = Field(
+        ...,
+        description="Reasoning for classifying the segment as an encounter",
+    )
+
+    model_config = {"extra": "forbid"}
+
+
+class HeaderSegmentationFinalOutputPayload(BaseModel):
+    """
+    Details of all encounter segments detected in header segmentation.
+    """
+
+    encounters: List[EncounterSegment] = Field(
+        ...,
+        description="List of encounter segments",
+    )
+
+    model_config = {"extra": "forbid"}
+```
+
+---
+
+```python
+# encounter_details_schema.py
+from typing import List
+from pydantic import BaseModel, Field
+
+
+class EncounterDetail(BaseModel):
+    segment_sequence: str = Field(
+        ...,
+        description="Sequence number of the encounter detail",
+    )
+    segment_type: str = Field(
+        ...,
+        description="Type of segment",
+    )
+    segment_start_page: str = Field(
+        ...,
+        description="Page number where the encounter starts",
+    )
+
+    model_config = {"extra": "forbid"}
+
+
+class Encounter(BaseModel):
+    encounter_details: List[EncounterDetail] = Field(
+        ...,
+        description="List of detailed encounter segments",
+    )
+
+    model_config = {"extra": "forbid"}
+
+
+class EncounterDetailsPayload(BaseModel):
+    """
+    Wrapper object for encounter details.
+    """
+
+    encounter: Encounter = Field(
+        ...,
+        description="Encounter object containing detailed segments",
+    )
+
+    model_config = {"extra": "forbid"}
+```
+
+Each schema mirrors its respective JSON structure, enforces field presence with `...`, forbids unexpected fields via `model_config = {"extra": "forbid"}`, and includes concise field descriptions for clarity.
