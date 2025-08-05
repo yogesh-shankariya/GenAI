@@ -1,0 +1,16 @@
+# cover_page_schema.py
+from typing import Literal
+from pydantic import BaseModel, Field
+
+
+class CoverPagePayload(BaseModel):
+    """
+    Indicates whether the current page is a cover page.
+    """
+
+    ind: Literal["cover_page", "not cover_page"] = Field(
+        ...,
+        description="Either `cover_page` or `not cover_page`",
+    )
+
+    model_config = {"extra": "forbid"}
