@@ -1,16 +1,26 @@
-# cover_page_schema.py
+# header_segmentation_final_output_schema.py  – excerpt
 from typing import Literal
 from pydantic import BaseModel, Field
 
 
-class CoverPagePayload(BaseModel):
-    """
-    Indicates whether the current page is a cover page.
-    """
-
-    ind: Literal["cover_page", "not cover_page"] = Field(
+class EncounterSegment(BaseModel):
+    segment_sequence: str = Field(
         ...,
-        description="Either `cover_page` or `not cover_page`",
+        description="Sequence number of the encounter segment",
+    )
+    # <—  strictly limited to the single literal value "encounter"
+    segment_type: Literal["encounter"] = Field(
+        "encounter",
+        const=True,                      # cannot be changed
+        description="Fixed value: 'encounter'",
+    )
+    segment_start_page: str = Field(
+        ...,
+        description="Page number where the encounter segment starts",
+    )
+    reasoning_for_encounter: str = Field(
+        ...,
+        description="Reasoning for classifying the segment as an encounter",
     )
 
     model_config = {"extra": "forbid"}
