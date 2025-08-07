@@ -1,69 +1,66 @@
-import re
-import xml.etree.ElementTree as ET
 from pathlib import Path
+import shutil
 
 
-# ── helpers: unchanged from previous step ───────────────────────────────────
-def load_markdown(md_path: Path) -> str:
-    text = md_path.read_text(encoding="utf-8")
-    return re.sub(r"<ocr_service_page_start>\d*", "", text, flags=re.I)
+def organize_clinical_files(folder_path: str) -> None:
+    """
+    Rearranges the contents of *folder_path* into a structured hierarchy:
+
+    📂 md/
+        ├─ 📂 codex_output/     … all *.md* files whose names contain *codex_output*
+        └─ 📂 smart_ocr/        … all remaining *.md* files
+    📂 xml/                     … all *.xml* files
+    📂 pdf/                     … all *.pdf* files
+
+    Parameters
+    ----------
+    folder_path : str | Path
+        Path to the directory that currently holds the mixed set of files.
+
+    Notes
+    -----
+    • Existing destination folders are reused if they already exist.  
+    • If a file with the same name is already present in the destination,
+      it will be overwritten.
+    """
+
+    base_dir = Path(folder_path).expanduser().resolve()
+
+    # --- create the destination tree ------------------------------------------------
+    md_codex_dir  = base_dir / "md"  / "codex_output"
+    md_ocr_dir    = base_dir / "md"  / "smart_ocr"
+    xml_dir       = base_dir / "xml"
+    pdf_dir       = base_dir / "pdf"
+
+    for d in (md_codex_dir, md_ocr_dir, xml_dir, pdf_dir):
+        d.mkdir(parents=True, exist_ok=True)
+
+    # --- move files into their buckets ----------------------------------------------
+    for file_path in base_dir.iterdir():
+        if file_path.is_dir():
+            continue  # skip folders that may already exist
+
+        suffix = file_path.suffix.lower()
+        name_lower = file_path.name.lower()
+
+        try:
+            if suffix == ".md":
+                target_dir = md_codex_dir if "codex_output" in name_lower else md_ocr_dir
+            elif suffix == ".xml":
+                target_dir = xml_dir
+            elif suffix == ".pdf":
+                target_dir = pdf_dir
+            else:
+                continue  # ignore any other file types
+
+            shutil.move(str(file_path), target_dir / file_path.name)
+
+        except Exception as exc:
+            print(f"⚠️  Could not move {file_path.name}: {exc}")
 
 
-def collect_sections(md_text: str) -> dict[str, list[str]]:
-    pattern = re.compile(r"^#\s+[^\n]+\n(?:.*?)(?=^#\s+|\Z)",
-                         re.MULTILINE | re.DOTALL)
-    sections: dict[str, list[str]] = {}
-    for block in pattern.findall(md_text):
-        header_line, _, body = block.partition("\n")
-        header = header_line.lstrip("#").strip()
-        sections.setdefault(header, []).append(body)      # body kept verbatim
-    return sections
-
-
-def merge_duplicates(sec_map: dict[str, list[str]]) -> dict[str, str]:
-    return {h: "\n\n".join(bodies) for h, bodies in sec_map.items()}
-
-
-def build_xml(sections: dict[str, str]) -> ET.Element:
-    root = ET.Element("encounter_sections")
-    for header, body in sections.items():
-        sec_elem = ET.SubElement(root, "encounter_section")
-        ET.SubElement(sec_elem, "section_header").text = header
-        ET.SubElement(sec_elem, "section_date").text = ""   # left blank
-        ET.SubElement(sec_elem, "section_text").text = body
-    return root
-
-
-def md_to_xml(md_file: Path, xml_file: Path) -> None:
-    raw_md   = load_markdown(md_file)
-    grouped  = collect_sections(raw_md)
-    merged   = merge_duplicates(grouped)
-    xml_root = build_xml(merged)
-    ET.ElementTree(xml_root).write(xml_file,
-                                   encoding="utf-8",
-                                   xml_declaration=True)
-
-
-# ── batch runner ───────────────────────────────────────────────────────────
-def convert_all_md(input_dir: str | Path = "input",
-                   output_dir: str | Path = "output") -> None:
-    input_dir  = Path(input_dir)
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    md_files = list(input_dir.glob("*.md"))
-    if not md_files:
-        print("No .md files found in:", input_dir.resolve())
-        return
-
-    for md_path in md_files:
-        xml_path = output_dir / f"{md_path.stem}.xml"
-        md_to_xml(md_path, xml_path)
-        print(f"✓  {md_path.name}  →  {xml_path.relative_to(output_dir)}")
-
-    print(f"\nCompleted. XML files saved to {output_dir.resolve()}")
-
-
-# ── run as script ───────────────────────────────────────────────────────────
+# -------------------------------------------------------------------------------
+# Example usage
+# -------------------------------------------------------------------------------
 if __name__ == "__main__":
-    convert_all_md()         # defaults: input/ → output/
+    organize_clinical_files(r"C:\path\to\your\mixed_folder")
