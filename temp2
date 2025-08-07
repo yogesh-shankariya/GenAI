@@ -1,26 +1,76 @@
-# header_segmentation_final_output_schema.py  – excerpt
-from typing import Literal
-from pydantic import BaseModel, Field
+import re
+import xml.etree.ElementTree as ET
+from pathlib import Path
 
 
-class EncounterSegment(BaseModel):
-    segment_sequence: str = Field(
-        ...,
-        description="Sequence number of the encounter segment",
-    )
-    # <—  strictly limited to the single literal value "encounter"
-    segment_type: Literal["encounter"] = Field(
-        "encounter",
-        const=True,                      # cannot be changed
-        description="Fixed value: 'encounter'",
-    )
-    segment_start_page: str = Field(
-        ...,
-        description="Page number where the encounter segment starts",
-    )
-    reasoning_for_encounter: str = Field(
-        ...,
-        description="Reasoning for classifying the segment as an encounter",
+# ─── helpers ────────────────────────────────────────────────────────────────
+def load_markdown(md_path: Path) -> str:
+    """Read the markdown file, scrubbing only the OCR page tokens."""
+    text = md_path.read_text(encoding="utf-8")
+    return re.sub(r"<ocr_service_page_start>\d*", "", text, flags=re.I)
+
+
+def collect_sections(md_text: str) -> dict[str, list[str]]:
+    """
+    Grab each single-hash header and everything until the next single-hash
+    header (or EOF).  Return {header: [list_of_raw_blocks]}.
+    """
+    pattern = re.compile(
+        r"^#\s+[^\n]+\n(?:.*?)(?=^#\s+|\Z)",
+        re.MULTILINE | re.DOTALL,
     )
 
-    model_config = {"extra": "forbid"}
+    sections: dict[str, list[str]] = {}
+    for block in pattern.findall(md_text):
+        header_line, _, body = block.partition("\n")      # keep body intact
+        header = header_line.lstrip("#").strip()
+
+        # preserve the body exactly as-is (no .strip / .rstrip)
+        sections.setdefault(header, []).append(body)
+
+    return sections
+
+
+def merge_duplicates(sec_map: dict[str, list[str]]) -> dict[str, str]:
+    """Concatenate duplicate headers, keeping source order."""
+    return {h: "\n\n".join(bodies) for h, bodies in sec_map.items()}
+
+
+def build_xml(sections: dict[str, str]) -> ET.Element:
+    root = ET.Element("encounter_sections")
+
+    for header, body in sections.items():
+        sec_elem = ET.SubElement(root, "encounter_section")
+
+        head_elem = ET.SubElement(sec_elem, "section_header")
+        head_elem.text = header
+
+        date_elem = ET.SubElement(sec_elem, "section_date")
+        date_elem.text = ""                     # left blank by design
+
+        text_elem = ET.SubElement(sec_elem, "section_text")
+        text_elem.text = body                   # raw, untouched markdown
+
+    return root
+
+
+# ─── driver ─────────────────────────────────────────────────────────────────
+def md_to_xml(md_file: str | Path, xml_file: str | Path) -> None:
+    md_file, xml_file = Path(md_file), Path(xml_file)
+
+    raw_md   = load_markdown(md_file)
+    grouped  = collect_sections(raw_md)
+    merged   = merge_duplicates(grouped)
+    xml_root = build_xml(merged)
+
+    ET.ElementTree(xml_root).write(
+        xml_file,
+        encoding="utf-8",
+        xml_declaration=True
+    )
+
+
+# ─── run as script ──────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    md_to_xml("input.md", "output.xml")
+    print("✓  XML file created ➜ output.xml")
