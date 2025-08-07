@@ -1,68 +1,110 @@
 import re
 import xml.etree.ElementTree as ET
+from datetime import datetime
 from pathlib import Path
 
+# ── optional: use dateutil for robust parsing ──────────────────────────────
+try:
+    from dateutil.parser import parse as dt_parse      # type: ignore
+except ImportError:                                    # tiny shim
+    def dt_parse(s, dayfirst=False):
+        """Very small subset of dateutil.parse."""
+        for fmt in ("%m/%d/%Y", "%d/%m/%Y", "%Y-%m-%d",
+                    "%b %d, %Y", "%B %d, %Y"):
+            try:
+                return datetime.strptime(s, fmt)
+            except ValueError:
+                continue
+        raise ValueError(f"unrecognised date: {s!r}")
 
-# ── helpers ────────────────────────────────────────────────────────────────
+
+# ── date-extraction helpers ────────────────────────────────────────────────
+DATE_PATTERNS = [
+    r"\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b",                 # 2025-08-07  / 2025/08/07
+    r"\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b",               # 08/07/2025 / 8-7-25
+    r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*"  # Aug 7, 2025
+    r"\s+\d{1,2},\s*\d{4}\b",
+]
+
+DATE_REGEX = re.compile("|".join(DATE_PATTERNS), re.I)
+
+
+def extract_section_date(text: str) -> str:
+    """
+    Return the earliest date (ISO-formatted) found in *text*,
+    or '' if no date is present.
+    """
+    matches = DATE_REGEX.findall(text)
+    if not matches:
+        return ""
+
+    # parse & pick earliest
+    try:
+        dates = [dt_parse(m, dayfirst=False) for m in matches]
+        earliest = min(dates)
+        return earliest.strftime("%Y-%m-%d")
+    except Exception:
+        # something odd – just use the first raw match verbatim
+        return matches[0]
+
+
+# ── markdown utilities (unchanged layout-preservation) ─────────────────────
 def load_markdown(md_path: Path) -> str:
-    text = md_path.read_text(encoding="utf-8")
-    return re.sub(r"<ocr_service_page_start>\d*", "", text, flags=re.I)
+    txt = md_path.read_text(encoding="utf-8")
+    return re.sub(r"<ocr_service_page_start>\d*", "", txt, flags=re.I)
 
 
 def collect_sections(md_text: str) -> dict[str, list[str]]:
-    pattern = re.compile(r"^#\s+[^\n]+\n(?:.*?)(?=^#\s+|\Z)",
-                         re.MULTILINE | re.DOTALL)
-    sections: dict[str, list[str]] = {}
-    for block in pattern.findall(md_text):
+    pat = re.compile(r"^#\s+[^\n]+\n(?:.*?)(?=^#\s+|\Z)", re.M | re.S)
+    out: dict[str, list[str]] = {}
+    for block in pat.findall(md_text):
         header_line, _, body = block.partition("\n")
         header = header_line.lstrip("#").strip()
-        sections.setdefault(header, []).append(body)          # body intact
-    return sections
+        out.setdefault(header, []).append(body)       # keep body untouched
+    return out
 
 
 def merge_duplicates(sec_map: dict[str, list[str]]) -> dict[str, str]:
     return {h: "\n\n".join(bodies) for h, bodies in sec_map.items()}
 
 
+# ── XML builder ────────────────────────────────────────────────────────────
 def build_xml(sections: dict[str, str], base_name: str) -> ET.Element:
     root = ET.Element("encounter_sections")
 
-    # encounter_section blocks
     for header, body in sections.items():
-        sec_elem = ET.SubElement(root, "encounter_section")
-        ET.SubElement(sec_elem, "section_header").text = header
-        ET.SubElement(sec_elem, "section_date").text = ""      # blank
-        ET.SubElement(sec_elem, "section_text").text = body
+        sec = ET.SubElement(root, "encounter_section")
 
-    # file_name (no extension)
-    ET.SubElement(root, "file_name").text = base_name
+        ET.SubElement(sec, "section_header").text = header
+        ET.SubElement(sec, "section_date").text = extract_section_date(body)
+        ET.SubElement(sec, "section_text").text = body
+
+    ET.SubElement(root, "file_name").text = base_name   # no extension
     return root
 
 
 def md_to_xml(md_file: Path, xml_file: Path) -> None:
-    raw_md   = load_markdown(md_file)
-    grouped  = collect_sections(raw_md)
-    merged   = merge_duplicates(grouped)
-    xml_root = build_xml(merged, md_file.stem)                 # ← stem only
-    ET.ElementTree(xml_root).write(xml_file,
-                                   encoding="utf-8",
-                                   xml_declaration=True)
+    raw     = load_markdown(md_file)
+    merged  = merge_duplicates(collect_sections(raw))
+    xmlroot = build_xml(merged, md_file.stem)
+    ET.ElementTree(xmlroot).write(xml_file, encoding="utf-8", xml_declaration=True)
 
 
-# ── batch runner ───────────────────────────────────────────────────────────
-def convert_all_md(input_dir: str | Path = "input",
-                   output_dir: str | Path = "output_with_file_name") -> None:
-    input_dir, output_dir = Path(input_dir), Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+# ── batch conversion runner ────────────────────────────────────────────────
+def convert_all_md(
+        input_dir: str | Path = "input",
+        output_dir: str | Path = "output_with_file_name") -> None:
+    inp, out = Path(input_dir), Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
 
-    for md_path in input_dir.glob("*.md"):
-        xml_path = output_dir / f"{md_path.stem}.xml"
-        md_to_xml(md_path, xml_path)
-        print(f"✓  {md_path.name}  →  {xml_path.relative_to(output_dir)}")
+    for md in inp.glob("*.md"):
+        xml_path = out / f"{md.stem}.xml"
+        md_to_xml(md, xml_path)
+        print(f"✓  {md.name} → {xml_path.relative_to(out)}")
 
-    print(f"\nDone. XML files saved in {output_dir.resolve()}")
+    print(f"\nFinished. XML files are in {out.resolve()}")
 
 
-# ── run ────────────────────────────────────────────────────────────────────
+# ── run as script ──────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    convert_all_md()        # defaults: input/  →  output_with_file_name/
+    convert_all_md()   # input/ → output_with_file_name/
