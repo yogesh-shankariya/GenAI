@@ -1,32 +1,30 @@
-from pathlib import Path
-import re
+SYSTEM
+You extract structured data from OCR text written in Markdown.
+Top-level sections use "# " and subsections use "## ".
 
-# --- set your roots ---
-image_root  = Path("/path/to/Output_Files_08_08_2025")
-prompt_root = Path("/path/to/Prompt_Inputs")
+TASK
+From the OCR text, extract ONLY the subsections (the blocks that start with "## ").
+Include a subsection ONLY if its heading is in the ACCEPTABLE_SUBSECTIONS list.
 
-IMG_RX = re.compile(r"^page[-_]{1,2}([0-9]+)\.(?:jpe?g|png|webp|tif|tiff|bmp)$", re.IGNORECASE)
-PRINT_CONTENT = False   # set True to also print a short snippet of the prompt text
+DEFINITIONS & RULES
+- Subsection heading = a line that starts with exactly "## " followed by the heading text.
+- Subsection content = all lines after that heading until the next line that starts with "## " or "# ", or end of text.
+- Ignore all "# " section headings entirely—even if their titles appear in the acceptable list.
+- Match headings case-insensitively after trimming whitespace and trailing punctuation/colons.
+- Keep the subsection content verbatim (preserve text, order, and inner formatting).
+- If the same acceptable subsection appears multiple times, keep each occurrence in order (do not merge).
+- If no acceptable subsections are present, return an empty result per the schema.
+- Output MUST be valid JSON that EXACTLY conforms to the provided JSON schema. Do not add keys or commentary.
 
-for uuid_dir in sorted(d for d in image_root.iterdir() if d.is_dir()):
-    print(f"\n# UUID: {uuid_dir.name}")
-    for doc_dir in sorted(d for d in uuid_dir.iterdir() if d.is_dir()):
-        rel = doc_dir.relative_to(image_root)   # <UUID>/<doc>
-        print(f"  > Doc: {rel}")
-        images = sorted(p for p in doc_dir.iterdir() if p.is_file() and IMG_RX.match(p.name))
-        if not images:
-            print("    (no images)")
-            continue
+RETURN FORMAT
+Return JSON ONLY, no markdown fences, and strictly match the supplied schema.
 
-        for img in images:
-            n = int(IMG_RX.match(img.name).group(1))
-            prompt = prompt_root / rel / f"prompt__{n}.txt"  # STRICT double underscore
-            if prompt.exists():
-                if PRINT_CONTENT:
-                    txt = prompt.read_text(encoding="utf-8", errors="ignore")
-                    snippet = txt[:120].replace("\n", " ")
-                    print(f"    page {n:>3}: {img.name}  |  {prompt.name}  |  {snippet}...")
-                else:
-                    print(f"    page {n:>3}: {img}  ||  {prompt}")
-            else:
-                print(f"    page {n:>3}: {img}  !!  MISSING PROMPT -> {prompt}")
+ACCEPTABLE_SUBSECTIONS
+<<<ACCEPTABLE_SUBSECTIONS>>>
+{acceptable_list}
+<<<END_ACCEPTABLE_SUBSECTIONS>>>
+
+OCR_MARKDOWN
+<<<OCR_TEXT>>>
+{ocr_markdown}
+<<<END_OCR_TEXT>>>
