@@ -1,48 +1,49 @@
-SYSTEM
-You extract structured data from OCR text written in Markdown.
-Top-level sections use "# " and subsections use "## ".
+import json
+from pathlib import Path
 
-TASK
-From the OCR text, extract ONLY the subsections (the blocks that start with "## ").
-Include a subsection ONLY if its heading is in the ACCEPTABLE_SUBSECTIONS list.
+async def extract_subsections_tree(input_root: str, output_root: str, schema: dict) -> None:
+    """
+    Walk input_root recursively. For every page file (page_* or *.txt),
+    call `structure(schema=schema, input=<file text>)` and write the JSON
+    to the mirrored path under output_root with the same name but .json.
+    """
+    in_root = Path(input_root).resolve()
+    out_root = Path(output_root).resolve()
+    out_root.mkdir(parents=True, exist_ok=True)
 
-DEFINITIONS & RULES
-- Subsection heading = a line that starts with exactly "## " followed by the heading text.
-- Subsection content = all lines after that heading until the next line that starts with "## " or "# ", or end of text.
-- Ignore all "# " section headings entirely—even if their titles appear in the acceptable list.
-- Match headings case-insensitively after trimming whitespace and trailing punctuation/colons.
-- Keep the subsection content verbatim (preserve text, order, and inner formatting).
-- If the same acceptable subsection appears multiple times, keep each occurrence in order (do not merge).
-- If no acceptable subsections are present, return an empty result per the schema.
-- Output MUST be valid JSON that EXACTLY conforms to the provided JSON schema. Do not add keys or commentary.
+    # Collect candidate files (page_* or *.txt), depth-first, sorted for stability
+    candidates = []
+    for p in sorted(in_root.rglob("*")):
+        if p.is_file() and (p.name.startswith("page_") or p.suffix.lower() == ".txt"):
+            candidates.append(p)
 
-RETURN FORMAT
-Return JSON ONLY, no markdown fences, and strictly match the supplied schema.
+    for src in candidates:
+        rel = src.relative_to(in_root)                 # keep subfolder structure
+        out_path = (out_root / rel).with_suffix(".json")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
 
-ACCEPTABLE_SUBSECTIONS
-<<<ACCEPTABLE_SUBSECTIONS>>>
-{acceptable_list}
-<<<END_ACCEPTABLE_SUBSECTIONS>>>
+        # Read OCR text
+        with open(src, "r", encoding="utf-8", errors="ignore") as f:
+            input_text = f.read()
 
-OCR_MARKDOWN
-<<<OCR_TEXT>>>
-{ocr_markdown}
-<<<END_OCR_TEXT>>>
+        # Call your Structure API wrapper (sequential await)
+        try:
+            resp = await structure(schema=schema, input=input_text)
+        except Exception as e:
+            print(f"[SKIP] {src} -> error: {e}")
+            continue
 
+        # Save JSON alongside mirrored path
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(resp, f, ensure_ascii=False, indent=2)
 
-{
-  "title": "subsectionHeadersPayload",
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "subsection_headers": {
-      "title": "Subsection Headers",
-      "description": "Ordered list of distinct subsection headers found on the page.",
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    }
-  },
-  "required": ["subsection_headers"]
-}
+        print(f"[OK] {src} -> {out_path}")
+
+# ---- usage (in your notebook cell) ----
+# with open("subsections_schema.json", "r", encoding="utf-8") as f:
+#     json_schema = json.load(f)
+# await extract_subsections_tree(
+#     input_root="/path/to/your/input_folder",
+#     output_root="/path/to/output_final",
+#     schema=json_schema
+# )
