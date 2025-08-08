@@ -1,98 +1,103 @@
-import asyncio, json, mimetypes, re, traceback
-from datetime import datetime
 from pathlib import Path
+import json, mimetypes, re, traceback, asyncio
+from datetime import datetime
 from typing import Dict
 
+# Accept page-1.jpg / page_1.jpg / page__1.jpg
 IMG_RX = re.compile(r"^page[-_]{1,2}([0-9]+)\.(?:jpe?g|png|webp|tif|tiff|bmp)$", re.IGNORECASE)
 
 def _mime(p: Path) -> str:
     return mimetypes.guess_type(p.name)[0] or "application/octet-stream"
 
-async def _alog_error(log_path: Path, item: Path, msg: str, exc: Exception | None = None, lock: asyncio.Lock | None = None):
+async def _alog_error(log_path: Path, item: Path, msg: str, exc: Exception | None = None):
+    log_path.parent.mkdir(parents=True, exist_ok=True)
     line = f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {item}\n{msg}\n"
     if exc is not None:
         line += f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}\n"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    async with (lock or asyncio.Lock()):
-        await asyncio.to_thread(log_path.open("a", encoding="utf-8").write, line)
+    await asyncio.to_thread(log_path.open("a", encoding="utf-8").write, line)
 
-def _fit_prompt(prompt_text: str, max_chars: int) -> str:
-    """If too long, trim only the OCR appendix between the BEGIN/END markers to fit."""
-    if len(prompt_text) <= max_chars:
-        return prompt_text
-    start = prompt_text.find("BEGIN_OCR_TEXT")
-    end   = prompt_text.find("END_OCR_TEXT")
-    if start == -1 or end == -1 or end <= start:
-        # No markers; hard truncate
-        return prompt_text[:max_chars]
-    head = prompt_text[:start]
-    tail = prompt_text[end:]
-    budget = max_chars - len(head) - len(tail)
-    if budget <= 0:
-        return (head + tail)[:max_chars]
-    # keep the beginning of OCR (often most useful)
-    ocr_block = prompt_text[start:end]
-    return head + ocr_block[:budget] + tail
-
-async def _process_one(
-    *, img_path: Path, image_root: Path, prompt_root: Path, output_root: Path,
-    schema: Dict, sem: asyncio.Semaphore, errlog: Path, elog_lock: asyncio.Lock,
-    max_prompt_chars: int = 12000
-) -> str:
-    m = IMG_RX.match(img_path.name)
-    if not m:
-        return "skip"
-    page_num = int(m.group(1))
-
-    rel_dir   = img_path.parent.relative_to(image_root)
-    prompt_fp = prompt_root / rel_dir / f"prompt__{page_num}.txt"   # strict double underscore
-    out_json  = (output_root / rel_dir / img_path.name).with_suffix(".json")
-
-    async with sem:
-        if not prompt_fp.exists():
-            await _alog_error(errlog, img_path, f"Missing prompt file: {prompt_fp}", lock=elog_lock)
-            return "missing_prompt"
-        try:
-            prompt_text = await asyncio.to_thread(prompt_fp.read_text, encoding="utf-8", errors="ignore")
-            prompt_text = _fit_prompt(prompt_text, max_chars=max_prompt_chars)
-
-            with open(img_path, "rb") as fh:
-                files = {"image": (img_path.name, fh, _mime(img_path))}   # <-- dict, not list
-                # call YOUR function exactly as defined (no 'image=' kwarg)
-                resp_dict = await vision_structures(schema=schema, prompt=prompt_text, files=files)
-
-            out_json.parent.mkdir(parents=True, exist_ok=True)
-            await asyncio.to_thread(out_json.write_text, json.dumps(resp_dict, ensure_ascii=False, indent=2), "utf-8")
-            return "ok"
-        except Exception as e:
-            await _alog_error(errlog, img_path, "Inference or write failed.", e, elog_lock)
-            return "error"
-
-async def run_vision_structures_parallel(
-    *, image_root, prompt_root, output_root, schema_path,
-    error_log="failed_pages.txt", max_concurrency=20, max_prompt_chars=12000
+async def vision_extract_one_by_one(
+    *,
+    image_root: str | Path,
+    prompt_root: str | Path,
+    output_root: str | Path,
+    schema_path: str | Path,
+    error_log: str | Path = "failed_pages.txt",
 ) -> None:
+    """
+    Sequentially process:
+      image_root/<UUID>/<doc>/page-<n>.<ext>
+      prompt_root/<UUID>/<doc>/prompt__<n>.txt
+      -> output_root/<UUID>/<doc>/page-<n>.json
+    """
     image_root  = Path(image_root).expanduser().resolve()
     prompt_root = Path(prompt_root).expanduser().resolve()
     output_root = Path(output_root).expanduser().resolve()
     errlog      = Path(error_log).expanduser().resolve()
     schema: Dict = json.loads(Path(schema_path).read_text(encoding="utf-8"))
 
-    img_exts = ("*.jpg","*.jpeg","*.png","*.webp","*.tif","*.tiff","*.bmp")
+    # collect images in sorted order
     imgs = []
-    for pat in img_exts:
+    for pat in ("*.jpg","*.jpeg","*.png","*.webp","*.tif","*.tiff","*.bmp"):
         imgs.extend(image_root.rglob(pat))
     imgs = sorted(p for p in imgs if IMG_RX.match(p.name))
     if not imgs:
         raise FileNotFoundError(f"No page-*.jpg/png/etc found under {image_root}")
 
-    sem = asyncio.Semaphore(max_concurrency)
-    elog_lock = asyncio.Lock()
-    results = await asyncio.gather(*[
-        _process_one(
-            img_path=img, image_root=image_root, prompt_root=prompt_root, output_root=output_root,
-            schema=schema, sem=sem, errlog=errlog, elog_lock=elog_lock, max_prompt_chars=max_prompt_chars
-        ) for img in imgs
-    ])
-    print(f"Finished. OK={results.count('ok')}, missing_prompts={results.count('missing_prompt')}, errors={results.count('error')}.")
-    print(f"Output → {output_root}\nErrors → {errlog}")
+    ok = miss = err = 0
+    for img in imgs:
+        m = IMG_RX.match(img.name)
+        page_num = int(m.group(1))
+        rel_dir  = img.parent.relative_to(image_root)
+
+        prompt_fp = prompt_root / rel_dir / f"prompt__{page_num}.txt"    # <-- DOUBLE UNDERSCORE
+        out_json  = (output_root / rel_dir / img.name).with_suffix(".json")
+        out_json.parent.mkdir(parents=True, exist_ok=True)
+
+        if not prompt_fp.exists():
+            await _alog_error(errlog, img, f"Missing prompt file: {prompt_fp}")
+            miss += 1
+            continue
+
+        try:
+            prompt_text = await asyncio.to_thread(prompt_fp.read_text, encoding="utf-8", errors="ignore")
+            # Build files payload exactly how your vision_structures expects
+            with open(img, "rb") as fh:
+                files = {"image": (img.name, fh, _mime(img))}
+                # Call YOUR existing function (already async)
+                resp_dict = await vision_structures(schema=schema, prompt=prompt_text, files=files)
+
+            await asyncio.to_thread(out_json.write_text, json.dumps(resp_dict, ensure_ascii=False, indent=2), "utf-8")
+            ok += 1
+
+        except Exception as e:
+            await _alog_error(errlog, img, "Inference or write failed.", e)
+            err += 1
+
+    print(f"Done. OK={ok}, missing_prompts={miss}, errors={err}. Output → {output_root}  Log → {errlog}")
+
+def run_vision_extract_one_by_one(
+    *,
+    image_root: str | Path,
+    prompt_root: str | Path,
+    output_root: str | Path,
+    schema_path: str | Path,
+    error_log: str | Path = "failed_pages.txt",
+) -> None:
+    """
+    Synchronous wrapper. In regular Python, use this. In Jupyter (already running an event loop),
+    prefer calling the async version with `await vision_extract_one_by_one(...)`.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(vision_extract_one_by_one(
+            image_root=image_root,
+            prompt_root=prompt_root,
+            output_root=output_root,
+            schema_path=schema_path,
+            error_log=error_log,
+        ))
+    else:
+        # We're inside a running event loop (e.g., Jupyter). Just tell the user what to do.
+        raise RuntimeError("An event loop is running. In notebooks, call: await vision_extract_one_by_one(...)")
