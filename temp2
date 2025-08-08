@@ -1,5 +1,112 @@
-make_page_prompts(
-    page_txt_root="/path/to/smart_ocr_output",   # where page__*.txt live
-    prompt_output_root="/path/to/prompt_input",  # new root to create
-    base_prompt_file="/path/to/prompt_ot.txt"    # optional; else uses DEFAULT_PROMPT
-)
+from pathlib import Path
+import re
+from typing import Dict, List, Tuple
+
+def verify_prompt_image_parity(
+    prompt_root: str | Path,
+    image_root: str | Path,
+    # Filenames are strict double-underscore, per your convention:
+    prompt_rx: str = r"^prompt__([0-9]+)\.txt$",
+    image_rx: str  = r"^page__([0-9]+)\.(?:jpe?g|png|webp|tif|tiff|bmp)$",
+) -> Dict[str, dict]:
+    """
+    Walks the mirrored trees:
+        <prompt_root>/<file-id>/<doc-stem>/prompt__N.txt
+        <image_root>/<file-id>/<doc-stem>/page__N.<img-ext>
+
+    Returns a dict keyed by "<file-id>/<doc-stem>" with:
+        {
+          "prompt_count": int,
+          "image_count": int,
+          "counts_match": bool,
+          "prompt_pages": sorted list[int],
+          "image_pages":  sorted list[int],
+          "pages_match":  bool,            # set equality of page numbers
+          "missing_side": "images"|"prompts"|None
+        }
+
+    Also prints a concise summary. No assumptions about extra files.
+    """
+    prompt_root = Path(prompt_root)
+    image_root  = Path(image_root)
+    if not prompt_root.exists():
+        raise FileNotFoundError(f"Prompt root not found: {prompt_root}")
+    if not image_root.exists():
+        raise FileNotFoundError(f"Image root not found:  {image_root}")
+
+    rx_prompt = re.compile(prompt_rx, re.IGNORECASE)
+    rx_image  = re.compile(image_rx,  re.IGNORECASE)
+
+    report: Dict[str, dict] = {}
+
+    # Expect two-level hierarchy under prompt_root: <file-id>/<doc-stem>
+    for file_id_dir in sorted(p for p in prompt_root.iterdir() if p.is_dir()):
+        for doc_dir in sorted(p for p in file_id_dir.iterdir() if p.is_dir()):
+            rel_key = f"{file_id_dir.name}/{doc_dir.name}"
+            img_dir = image_root / file_id_dir.name / doc_dir.name
+
+            # Collect prompt page numbers
+            prompt_pages = []
+            for f in doc_dir.iterdir():
+                m = rx_prompt.match(f.name)
+                if m:
+                    prompt_pages.append(int(m.group(1)))
+            prompt_pages.sort()
+
+            # Collect image page numbers (if the image folder exists)
+            image_pages = []
+            if img_dir.exists():
+                for f in img_dir.iterdir():
+                    m = rx_image.match(f.name)
+                    if m:
+                        image_pages.append(int(m.group(1)))
+                image_pages.sort()
+
+            prompt_count = len(prompt_pages)
+            image_count  = len(image_pages)
+            counts_match = (prompt_count == image_count)
+            pages_match  = (prompt_pages == image_pages) if counts_match else (set(prompt_pages) == set(image_pages))
+
+            missing_side = None
+            if not img_dir.exists():
+                missing_side = "images"
+            elif prompt_count == 0 and image_count > 0:
+                missing_side = "prompts"
+
+            report[rel_key] = {
+                "prompt_count": prompt_count,
+                "image_count": image_count,
+                "counts_match": counts_match,
+                "prompt_pages": prompt_pages,
+                "image_pages": image_pages,
+                "pages_match": pages_match,
+                "missing_side": missing_side,
+            }
+
+    # ---- Pretty print summary ----
+    ok, warn = 0, 0
+    print("\n=== Prompt ↔ Image Parity Check ===")
+    for key, info in report.items():
+        if info["missing_side"] == "images":
+            print(f"[MISSING] {key}: image folder not found")
+            warn += 1
+        elif info["missing_side"] == "prompts":
+            print(f"[MISSING] {key}: prompts missing (0 prompts, {info['image_count']} images)")
+            warn += 1
+        elif info["counts_match"] and info["pages_match"]:
+            print(f"[OK]     {key}: {info['prompt_count']} prompts ↔ {info['image_count']} images")
+            ok += 1
+        else:
+            print(f"[MISMATCH] {key}: prompts={info['prompt_count']} images={info['image_count']} | "
+                  f"pages_equal={info['pages_match']}")
+            # Optional: show the diffs
+            extra_p = sorted(set(info["prompt_pages"]) - set(info["image_pages"]))
+            extra_i = sorted(set(info["image_pages"])  - set(info["prompt_pages"]))
+            if extra_p:
+                print(f"          extra prompts for pages: {extra_p}")
+            if extra_i:
+                print(f"          extra images  for pages: {extra_i}")
+            warn += 1
+
+    print(f"\nSummary: {ok} OK, {warn} issue(s).")
+    return report
