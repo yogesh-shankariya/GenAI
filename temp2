@@ -111,3 +111,9 @@ def verify_prompt_image_parity(
                 print(f"          I: {name}: {v['count']} ({v['pages'][:5]}{'...' if len(v['pages'])>5 else ''})")
 
     return report
+
+
+prompt_root = "/path/to/prompt_input"          # where prompt__*.txt live
+image_root  = "/path/to/Output_Files_08_08_2025"  # where page-*.jpg live
+
+report = verify_prompt_image_parity(prompt_root, image_root)
