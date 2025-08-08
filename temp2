@@ -1,16 +1,14 @@
-from __future__ import annotations
 import asyncio, json, mimetypes, re, traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Dict
 
-# --- patterns (images accept -, _ or __) ---
 IMG_RX = re.compile(r"^page[-_]{1,2}([0-9]+)\.(?:jpe?g|png|webp|tif|tiff|bmp)$", re.IGNORECASE)
 
 def _mime(p: Path) -> str:
     return mimetypes.guess_type(p.name)[0] or "application/octet-stream"
 
-async def _alog_error(log_path: Path, item: Path, msg: str, exc: Exception | None = None, lock: asyncio.Lock | None = None) -> None:
+async def _alog_error(log_path: Path, item: Path, msg: str, exc: Exception | None = None, lock: asyncio.Lock | None = None):
     line = f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {item}\n{msg}\n"
     if exc is not None:
         line += f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}\n"
@@ -19,23 +17,16 @@ async def _alog_error(log_path: Path, item: Path, msg: str, exc: Exception | Non
         await asyncio.to_thread(log_path.open("a", encoding="utf-8").write, line)
 
 async def _process_one(
-    *,
-    img_path: Path,
-    image_root: Path,
-    prompt_root: Path,
-    output_root: Path,
-    schema: Dict,
-    sem: asyncio.Semaphore,
-    errlog: Path,
-    elog_lock: asyncio.Lock,
+    *, img_path: Path, image_root: Path, prompt_root: Path, output_root: Path,
+    schema: Dict, sem: asyncio.Semaphore, errlog: Path, elog_lock: asyncio.Lock
 ) -> str:
     m = IMG_RX.match(img_path.name)
     if not m:
         return "skip"
     page_num = int(m.group(1))
 
-    rel_dir   = img_path.parent.relative_to(image_root)                  # <UUID>/<doc>
-    prompt_fp = prompt_root / rel_dir / f"prompt__{page_num}.txt"       # <-- DOUBLE UNDERSCORE
+    rel_dir   = img_path.parent.relative_to(image_root)
+    prompt_fp = prompt_root / rel_dir / f"prompt__{page_num}.txt"   # <-- double underscore
     out_json  = (output_root / rel_dir / img_path.name).with_suffix(".json")
 
     async with sem:
@@ -44,11 +35,11 @@ async def _process_one(
             return "missing_prompt"
         try:
             prompt_text = await asyncio.to_thread(prompt_fp.read_text, encoding="utf-8", errors="ignore")
-
-            # Call your existing function EXACTLY as written
+            # build files payload
             with open(img_path, "rb") as fh:
                 files = [("image", (img_path.name, fh, _mime(img_path)))]
-                resp_dict = await vision_structures(schema=schema, prompt=prompt_text, image=str(img_path), files=files)
+                # ✅ call your function EXACTLY as defined: no 'image=' kwarg
+                resp_dict = await vision_structures(schema=schema, prompt=prompt_text, files=files)
 
             out_json.parent.mkdir(parents=True, exist_ok=True)
             await asyncio.to_thread(out_json.write_text, json.dumps(resp_dict, ensure_ascii=False, indent=2), "utf-8")
@@ -58,26 +49,14 @@ async def _process_one(
             return "error"
 
 async def run_vision_structures_parallel(
-    *,
-    image_root: str | Path,
-    prompt_root: str | Path,
-    output_root: str | Path,
-    schema_path: str | Path,
-    error_log: str | Path = "failed_pages.txt",
-    max_concurrency: int = 20,
+    *, image_root, prompt_root, output_root, schema_path, error_log="failed_pages.txt", max_concurrency=20
 ) -> None:
-    """
-    image_root/<UUID>/<doc>/page-<n>.<ext>
-    prompt_root/<UUID>/<doc>/prompt__<n>.txt   # strict double underscore
-    -> output_root/<UUID>/<doc>/page-<n>.json
-    """
     image_root  = Path(image_root).expanduser().resolve()
     prompt_root = Path(prompt_root).expanduser().resolve()
     output_root = Path(output_root).expanduser().resolve()
     errlog      = Path(error_log).expanduser().resolve()
     schema: Dict = json.loads(Path(schema_path).read_text(encoding="utf-8"))
 
-    # collect images
     img_exts = ("*.jpg","*.jpeg","*.png","*.webp","*.tif","*.tiff","*.bmp")
     imgs = []
     for pat in img_exts:
@@ -88,24 +67,11 @@ async def run_vision_structures_parallel(
 
     sem = asyncio.Semaphore(max_concurrency)
     elog_lock = asyncio.Lock()
-
-    tasks = [
+    results = await asyncio.gather(*[
         _process_one(
-            img_path=img,
-            image_root=image_root,
-            prompt_root=prompt_root,
-            output_root=output_root,
-            schema=schema,
-            sem=sem,
-            errlog=errlog,
-            elog_lock=elog_lock,
-        )
-        for img in imgs
-    ]
-
-    results = await asyncio.gather(*tasks)
-    ok   = results.count("ok")
-    miss = results.count("missing_prompt")
-    err  = results.count("error")
-    print(f"Finished. OK={ok}, missing_prompts={miss}, errors={err}.")
-    print(f"Output  → {output_root}\nErrors  → {errlog}")
+            img_path=img, image_root=image_root, prompt_root=prompt_root, output_root=output_root,
+            schema=schema, sem=sem, errlog=errlog, elog_lock=elog_lock
+        ) for img in imgs
+    ])
+    print(f"Finished. OK={results.count('ok')}, missing_prompts={results.count('missing_prompt')}, errors={results.count('error')}.")
+    print(f"Output → {output_root}\nErrors → {errlog}")
