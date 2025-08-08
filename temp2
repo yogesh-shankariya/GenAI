@@ -28,3 +28,21 @@ OCR_MARKDOWN
 <<<OCR_TEXT>>>
 {ocr_markdown}
 <<<END_OCR_TEXT>>>
+
+
+{
+  "title": "subsectionHeadersPayload",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "subsection_headers": {
+      "title": "Subsection Headers",
+      "description": "Ordered list of distinct subsection headers found on the page.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": ["subsection_headers"]
+}
