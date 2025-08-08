@@ -1,9 +1,8 @@
-from pathlib import Path
-import json, mimetypes, re, traceback, asyncio
+import asyncio, json, mimetypes, re, traceback
 from datetime import datetime
+from pathlib import Path
 from typing import Dict
 
-# Accept page-1.jpg / page_1.jpg / page__1.jpg
 IMG_RX = re.compile(r"^page[-_]{1,2}([0-9]+)\.(?:jpe?g|png|webp|tif|tiff|bmp)$", re.IGNORECASE)
 
 def _mime(p: Path) -> str:
@@ -24,33 +23,26 @@ async def vision_extract_one_by_one(
     schema_path: str | Path,
     error_log: str | Path = "failed_pages.txt",
 ) -> None:
-    """
-    Sequentially process:
-      image_root/<UUID>/<doc>/page-<n>.<ext>
-      prompt_root/<UUID>/<doc>/prompt__<n>.txt
-      -> output_root/<UUID>/<doc>/page-<n>.json
-    """
+    """Sequentially: image → prompt__N.txt → vision_structures → page-N.json (mirrored hierarchy)."""
     image_root  = Path(image_root).expanduser().resolve()
     prompt_root = Path(prompt_root).expanduser().resolve()
     output_root = Path(output_root).expanduser().resolve()
     errlog      = Path(error_log).expanduser().resolve()
     schema: Dict = json.loads(Path(schema_path).read_text(encoding="utf-8"))
 
-    # collect images in sorted order
     imgs = []
     for pat in ("*.jpg","*.jpeg","*.png","*.webp","*.tif","*.tiff","*.bmp"):
         imgs.extend(image_root.rglob(pat))
     imgs = sorted(p for p in imgs if IMG_RX.match(p.name))
     if not imgs:
-        raise FileNotFoundError(f"No page-*.jpg/png/etc found under {image_root}")
+        raise FileNotFoundError(f"No page-*.jpg/png/etc under {image_root}")
 
     ok = miss = err = 0
     for img in imgs:
-        m = IMG_RX.match(img.name)
-        page_num = int(m.group(1))
-        rel_dir  = img.parent.relative_to(image_root)
+        n = int(IMG_RX.match(img.name).group(1))
+        rel_dir = img.parent.relative_to(image_root)
 
-        prompt_fp = prompt_root / rel_dir / f"prompt__{page_num}.txt"    # <-- DOUBLE UNDERSCORE
+        prompt_fp = prompt_root / rel_dir / f"prompt__{n}.txt"   # <-- double underscore
         out_json  = (output_root / rel_dir / img.name).with_suffix(".json")
         out_json.parent.mkdir(parents=True, exist_ok=True)
 
@@ -61,53 +53,15 @@ async def vision_extract_one_by_one(
 
         try:
             prompt_text = await asyncio.to_thread(prompt_fp.read_text, encoding="utf-8", errors="ignore")
-            # Build files payload exactly how your vision_structures expects
             with open(img, "rb") as fh:
                 files = {"image": (img.name, fh, _mime(img))}
-                # Call YOUR existing function (already async)
-                resp_dict = await vision_structures(schema=schema, prompt=prompt_text, files=files)
+                # ✅ call your ORIGINAL function unchanged
+                resp = await vision_structures(schema=schema, prompt=prompt_text, files=files)
 
-            await asyncio.to_thread(out_json.write_text, json.dumps(resp_dict, ensure_ascii=False, indent=2), "utf-8")
+            await asyncio.to_thread(out_json.write_text, json.dumps(resp, ensure_ascii=False, indent=2), "utf-8")
             ok += 1
-
         except Exception as e:
             await _alog_error(errlog, img, "Inference or write failed.", e)
             err += 1
 
     print(f"Done. OK={ok}, missing_prompts={miss}, errors={err}. Output → {output_root}  Log → {errlog}")
-
-def run_vision_extract_one_by_one(
-    *,
-    image_root: str | Path,
-    prompt_root: str | Path,
-    output_root: str | Path,
-    schema_path: str | Path,
-    error_log: str | Path = "failed_pages.txt",
-) -> None:
-    """
-    Synchronous wrapper. In regular Python, use this. In Jupyter (already running an event loop),
-    prefer calling the async version with `await vision_extract_one_by_one(...)`.
-    """
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        asyncio.run(vision_extract_one_by_one(
-            image_root=image_root,
-            prompt_root=prompt_root,
-            output_root=output_root,
-            schema_path=schema_path,
-            error_log=error_log,
-        ))
-    else:
-        # We're inside a running event loop (e.g., Jupyter). Just tell the user what to do.
-        raise RuntimeError("An event loop is running. In notebooks, call: await vision_extract_one_by_one(...)")
-
-
-await vision_extract_one_by_one(
-    image_root="/.../Output_Files_08_08_2025",
-    prompt_root="/.../Prompt_Inputs",
-    output_root="/.../output_final_json",
-    schema_path="/.../schema.json",
-    error_log="/.../failed_pages.txt",
-)
-
