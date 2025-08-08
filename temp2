@@ -4,9 +4,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict
 
-# uses your existing async def vision_structures(schema, prompt, image, files=[])
-
-IMG_RX = re.compile(r"^page-([0-9]+)\.(?:jpe?g|png|webp|tif|tiff|bmp)$", re.IGNORECASE)
+# --- patterns (images accept -, _ or __) ---
+IMG_RX = re.compile(r"^page[-_]{1,2}([0-9]+)\.(?:jpe?g|png|webp|tif|tiff|bmp)$", re.IGNORECASE)
 
 def _mime(p: Path) -> str:
     return mimetypes.guess_type(p.name)[0] or "application/octet-stream"
@@ -30,14 +29,13 @@ async def _process_one(
     errlog: Path,
     elog_lock: asyncio.Lock,
 ) -> str:
-    """Call your existing vision_structures for a single page; write JSON mirrored to output_root."""
     m = IMG_RX.match(img_path.name)
     if not m:
         return "skip"
     page_num = int(m.group(1))
 
-    rel_dir   = img_path.parent.relative_to(image_root)               # <UUID>/<doc>
-    prompt_fp = prompt_root / rel_dir / f"prompt-{page_num}.txt"
+    rel_dir   = img_path.parent.relative_to(image_root)                  # <UUID>/<doc>
+    prompt_fp = prompt_root / rel_dir / f"prompt__{page_num}.txt"       # <-- DOUBLE UNDERSCORE
     out_json  = (output_root / rel_dir / img_path.name).with_suffix(".json")
 
     async with sem:
@@ -47,7 +45,7 @@ async def _process_one(
         try:
             prompt_text = await asyncio.to_thread(prompt_fp.read_text, encoding="utf-8", errors="ignore")
 
-            # Build files payload and call YOUR vision_structures exactly as written
+            # Call your existing function EXACTLY as written
             with open(img_path, "rb") as fh:
                 files = [("image", (img_path.name, fh, _mime(img_path)))]
                 resp_dict = await vision_structures(schema=schema, prompt=prompt_text, image=str(img_path), files=files)
@@ -69,10 +67,9 @@ async def run_vision_structures_parallel(
     max_concurrency: int = 20,
 ) -> None:
     """
-    ASYNC driver that:
-      image_root/<UUID>/<doc>/page-<n>.<ext>
-      prompt_root/<UUID>/<doc>/prompt-<n>.txt
-      -> output_root/<UUID>/<doc>/page-<n>.json
+    image_root/<UUID>/<doc>/page-<n>.<ext>
+    prompt_root/<UUID>/<doc>/prompt__<n>.txt   # strict double underscore
+    -> output_root/<UUID>/<doc>/page-<n>.json
     """
     image_root  = Path(image_root).expanduser().resolve()
     prompt_root = Path(prompt_root).expanduser().resolve()
@@ -80,7 +77,7 @@ async def run_vision_structures_parallel(
     errlog      = Path(error_log).expanduser().resolve()
     schema: Dict = json.loads(Path(schema_path).read_text(encoding="utf-8"))
 
-    # Gather images (strict page-<n> names)
+    # collect images
     img_exts = ("*.jpg","*.jpeg","*.png","*.webp","*.tif","*.tiff","*.bmp")
     imgs = []
     for pat in img_exts:
@@ -112,13 +109,3 @@ async def run_vision_structures_parallel(
     err  = results.count("error")
     print(f"Finished. OK={ok}, missing_prompts={miss}, errors={err}.")
     print(f"Output  → {output_root}\nErrors  → {errlog}")
-
-
-await run_vision_structures_parallel(
-    image_root="/.../Output_Files_08_08_2025",
-    prompt_root="/.../Prompt_Inputs",
-    output_root="/.../output_final_json",
-    schema_path="/.../schema.json",
-    error_log="/.../failed_pages.txt",
-    max_concurrency=20,
-)
