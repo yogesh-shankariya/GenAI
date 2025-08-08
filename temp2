@@ -1,67 +1,32 @@
-import asyncio, json, mimetypes, re, traceback
-from datetime import datetime
 from pathlib import Path
-from typing import Dict
+import re
+
+# --- set your roots ---
+image_root  = Path("/path/to/Output_Files_08_08_2025")
+prompt_root = Path("/path/to/Prompt_Inputs")
 
 IMG_RX = re.compile(r"^page[-_]{1,2}([0-9]+)\.(?:jpe?g|png|webp|tif|tiff|bmp)$", re.IGNORECASE)
+PRINT_CONTENT = False   # set True to also print a short snippet of the prompt text
 
-def _mime(p: Path) -> str:
-    return mimetypes.guess_type(p.name)[0] or "application/octet-stream"
-
-async def _alog_error(log_path: Path, item: Path, msg: str, exc: Exception | None = None):
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    line = f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {item}\n{msg}\n"
-    if exc is not None:
-        line += f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}\n"
-    await asyncio.to_thread(log_path.open("a", encoding="utf-8").write, line)
-
-async def vision_extract_one_by_one(
-    *,
-    image_root: str | Path,
-    prompt_root: str | Path,
-    output_root: str | Path,
-    schema_path: str | Path,
-    error_log: str | Path = "failed_pages.txt",
-) -> None:
-    """Sequentially: image → prompt__N.txt → vision_structures → page-N.json (mirrored hierarchy)."""
-    image_root  = Path(image_root).expanduser().resolve()
-    prompt_root = Path(prompt_root).expanduser().resolve()
-    output_root = Path(output_root).expanduser().resolve()
-    errlog      = Path(error_log).expanduser().resolve()
-    schema: Dict = json.loads(Path(schema_path).read_text(encoding="utf-8"))
-
-    imgs = []
-    for pat in ("*.jpg","*.jpeg","*.png","*.webp","*.tif","*.tiff","*.bmp"):
-        imgs.extend(image_root.rglob(pat))
-    imgs = sorted(p for p in imgs if IMG_RX.match(p.name))
-    if not imgs:
-        raise FileNotFoundError(f"No page-*.jpg/png/etc under {image_root}")
-
-    ok = miss = err = 0
-    for img in imgs:
-        n = int(IMG_RX.match(img.name).group(1))
-        rel_dir = img.parent.relative_to(image_root)
-
-        prompt_fp = prompt_root / rel_dir / f"prompt__{n}.txt"   # <-- double underscore
-        out_json  = (output_root / rel_dir / img.name).with_suffix(".json")
-        out_json.parent.mkdir(parents=True, exist_ok=True)
-
-        if not prompt_fp.exists():
-            await _alog_error(errlog, img, f"Missing prompt file: {prompt_fp}")
-            miss += 1
+for uuid_dir in sorted(d for d in image_root.iterdir() if d.is_dir()):
+    print(f"\n# UUID: {uuid_dir.name}")
+    for doc_dir in sorted(d for d in uuid_dir.iterdir() if d.is_dir()):
+        rel = doc_dir.relative_to(image_root)   # <UUID>/<doc>
+        print(f"  > Doc: {rel}")
+        images = sorted(p for p in doc_dir.iterdir() if p.is_file() and IMG_RX.match(p.name))
+        if not images:
+            print("    (no images)")
             continue
 
-        try:
-            prompt_text = await asyncio.to_thread(prompt_fp.read_text, encoding="utf-8", errors="ignore")
-            with open(img, "rb") as fh:
-                files = {"image": (img.name, fh, _mime(img))}
-                # ✅ call your ORIGINAL function unchanged
-                resp = await vision_structures(schema=schema, prompt=prompt_text, files=files)
-
-            await asyncio.to_thread(out_json.write_text, json.dumps(resp, ensure_ascii=False, indent=2), "utf-8")
-            ok += 1
-        except Exception as e:
-            await _alog_error(errlog, img, "Inference or write failed.", e)
-            err += 1
-
-    print(f"Done. OK={ok}, missing_prompts={miss}, errors={err}. Output → {output_root}  Log → {errlog}")
+        for img in images:
+            n = int(IMG_RX.match(img.name).group(1))
+            prompt = prompt_root / rel / f"prompt__{n}.txt"  # STRICT double underscore
+            if prompt.exists():
+                if PRINT_CONTENT:
+                    txt = prompt.read_text(encoding="utf-8", errors="ignore")
+                    snippet = txt[:120].replace("\n", " ")
+                    print(f"    page {n:>3}: {img.name}  |  {prompt.name}  |  {snippet}...")
+                else:
+                    print(f"    page {n:>3}: {img}  ||  {prompt}")
+            else:
+                print(f"    page {n:>3}: {img}  !!  MISSING PROMPT -> {prompt}")
