@@ -1,110 +1,43 @@
-import re
-import xml.etree.ElementTree as ET
-from datetime import datetime
 from pathlib import Path
+import re
 
-# ── optional: use dateutil for robust parsing ──────────────────────────────
-try:
-    from dateutil.parser import parse as dt_parse      # type: ignore
-except ImportError:                                    # tiny shim
-    def dt_parse(s, dayfirst=False):
-        """Very small subset of dateutil.parse."""
-        for fmt in ("%m/%d/%Y", "%d/%m/%Y", "%Y-%m-%d",
-                    "%b %d, %Y", "%B %d, %Y"):
-            try:
-                return datetime.strptime(s, fmt)
-            except ValueError:
+def convert_md_to_pagewise_txt(
+    input_root: str | Path,
+    output_root: str | Path,
+    marker_regex: str = r'(?i)<\s*ocr[_\s:-]*service[_\s:-]*page[_\s:-]*start\s*>\s*(\d+)'
+) -> None:
+    """
+    Split each .md into page-wise .txt using markers like:
+      <ocr_service_page_start>1
+      <ocr_service_page_start>2
+    Content between 1→2 is page 1, 2→3 is page 2, etc.
+    Output: output_root/<case>/<md_stem>/page__<n>.txt
+    """
+    input_root = Path(input_root)
+    output_root = Path(output_root)
+    rx = re.compile(marker_regex)
+
+    if not input_root.exists():
+        raise FileNotFoundError(f"Input path not found: {input_root}")
+
+    for case_dir in sorted(p for p in input_root.iterdir() if p.is_dir()):
+        for md_path in sorted(case_dir.glob("*.md")):
+            text = md_path.read_text(encoding="utf-8", errors="ignore")
+            matches = list(rx.finditer(text))
+
+            out_dir = output_root / case_dir.name / md_path.stem
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+            if not matches:
+                # No markers: dump as single page
+                (out_dir / "page__1.txt").write_text(text, encoding="utf-8")
                 continue
-        raise ValueError(f"unrecognised date: {s!r}")
 
+            for i, m in enumerate(matches):
+                page_num = int(m.group(1))
+                start = m.end()
+                end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+                chunk = text[start:end].strip()
+                (out_dir / f"page__{page_num}.txt").write_text(chunk, encoding="utf-8")
 
-# ── date-extraction helpers ────────────────────────────────────────────────
-DATE_PATTERNS = [
-    r"\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b",                 # 2025-08-07  / 2025/08/07
-    r"\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b",               # 08/07/2025 / 8-7-25
-    r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*"  # Aug 7, 2025
-    r"\s+\d{1,2},\s*\d{4}\b",
-]
-
-DATE_REGEX = re.compile("|".join(DATE_PATTERNS), re.I)
-
-
-def extract_section_date(text: str) -> str:
-    """
-    Return the earliest date (ISO-formatted) found in *text*,
-    or '' if no date is present.
-    """
-    matches = DATE_REGEX.findall(text)
-    if not matches:
-        return ""
-
-    # parse & pick earliest
-    try:
-        dates = [dt_parse(m, dayfirst=False) for m in matches]
-        earliest = min(dates)
-        return earliest.strftime("%Y-%m-%d")
-    except Exception:
-        # something odd – just use the first raw match verbatim
-        return matches[0]
-
-
-# ── markdown utilities (unchanged layout-preservation) ─────────────────────
-def load_markdown(md_path: Path) -> str:
-    txt = md_path.read_text(encoding="utf-8")
-    return re.sub(r"<ocr_service_page_start>\d*", "", txt, flags=re.I)
-
-
-def collect_sections(md_text: str) -> dict[str, list[str]]:
-    pat = re.compile(r"^#\s+[^\n]+\n(?:.*?)(?=^#\s+|\Z)", re.M | re.S)
-    out: dict[str, list[str]] = {}
-    for block in pat.findall(md_text):
-        header_line, _, body = block.partition("\n")
-        header = header_line.lstrip("#").strip()
-        out.setdefault(header, []).append(body)       # keep body untouched
-    return out
-
-
-def merge_duplicates(sec_map: dict[str, list[str]]) -> dict[str, str]:
-    return {h: "\n\n".join(bodies) for h, bodies in sec_map.items()}
-
-
-# ── XML builder ────────────────────────────────────────────────────────────
-def build_xml(sections: dict[str, str], base_name: str) -> ET.Element:
-    root = ET.Element("encounter_sections")
-
-    for header, body in sections.items():
-        sec = ET.SubElement(root, "encounter_section")
-
-        ET.SubElement(sec, "section_header").text = header
-        ET.SubElement(sec, "section_date").text = extract_section_date(body)
-        ET.SubElement(sec, "section_text").text = body
-
-    ET.SubElement(root, "file_name").text = base_name   # no extension
-    return root
-
-
-def md_to_xml(md_file: Path, xml_file: Path) -> None:
-    raw     = load_markdown(md_file)
-    merged  = merge_duplicates(collect_sections(raw))
-    xmlroot = build_xml(merged, md_file.stem)
-    ET.ElementTree(xmlroot).write(xml_file, encoding="utf-8", xml_declaration=True)
-
-
-# ── batch conversion runner ────────────────────────────────────────────────
-def convert_all_md(
-        input_dir: str | Path = "input",
-        output_dir: str | Path = "output_with_file_name") -> None:
-    inp, out = Path(input_dir), Path(output_dir)
-    out.mkdir(parents=True, exist_ok=True)
-
-    for md in inp.glob("*.md"):
-        xml_path = out / f"{md.stem}.xml"
-        md_to_xml(md, xml_path)
-        print(f"✓  {md.name} → {xml_path.relative_to(out)}")
-
-    print(f"\nFinished. XML files are in {out.resolve()}")
-
-
-# ── run as script ──────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    convert_all_md()   # input/ → output_with_file_name/
+    print(f"Done. Output written under: {output_root}")
