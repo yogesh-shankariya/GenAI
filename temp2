@@ -110,3 +110,12 @@ def verify_prompt_image_parity(
 
     print(f"\nSummary: {ok} OK, {warn} issue(s).")
     return report
+
+
+
+
+# Example paths — point these at your trees:
+prompt_root = "/.../prompt_input"       # where prompt__N.txt live (mirrored folders)
+image_root  = "/.../output_images"      # where page__N.jpg/png live (mirrored folders)
+
+report = verify_prompt_image_parity(prompt_root, image_root)
