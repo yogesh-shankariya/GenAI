@@ -1,31 +1,22 @@
 from pathlib import Path
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 def verify_prompt_image_parity(
     prompt_root: str | Path,
     image_root: str | Path,
-    # Filenames are strict double-underscore, per your convention:
     prompt_rx: str = r"^prompt__([0-9]+)\.txt$",
-    image_rx: str  = r"^page__([0-9]+)\.(?:jpe?g|png|webp|tif|tiff|bmp)$",
+    image_rx: str  = r"^page[-_]{1,2}([0-9]+)\.(?:jpe?g|png|webp|tif|tiff|bmp)$",
 ) -> Dict[str, dict]:
     """
-    Walks the mirrored trees:
-        <prompt_root>/<file-id>/<doc-stem>/prompt__N.txt
-        <image_root>/<file-id>/<doc-stem>/page__N.<img-ext>
+    Compares counts & page numbers between prompts and images per UUID folder.
 
-    Returns a dict keyed by "<file-id>/<doc-stem>" with:
-        {
-          "prompt_count": int,
-          "image_count": int,
-          "counts_match": bool,
-          "prompt_pages": sorted list[int],
-          "image_pages":  sorted list[int],
-          "pages_match":  bool,            # set equality of page numbers
-          "missing_side": "images"|"prompts"|None
-        }
+    Expects trees like:
+      prompt_root/<uuid>/<any-doc-name>/prompt__N.txt
+      image_root/<uuid>/<any-doc-name>/page- N .jpg (or page__N / page_N)
 
-    Also prints a concise summary. No assumptions about extra files.
+    If a UUID contains multiple doc subfolders on either side, it will compare totals and
+    also list per-subfolder counts so mismatches are obvious.
     """
     prompt_root = Path(prompt_root)
     image_root  = Path(image_root)
@@ -34,88 +25,89 @@ def verify_prompt_image_parity(
     if not image_root.exists():
         raise FileNotFoundError(f"Image root not found:  {image_root}")
 
-    rx_prompt = re.compile(prompt_rx, re.IGNORECASE)
-    rx_image  = re.compile(image_rx,  re.IGNORECASE)
+    rx_p = re.compile(prompt_rx, re.IGNORECASE)
+    rx_i = re.compile(image_rx,  re.IGNORECASE)
+
+    # Helper: get page numbers inside a doc dir
+    def collect_pages(dir_path: Path, rx) -> List[int]:
+        pages = []
+        for f in dir_path.iterdir():
+            if f.is_file():
+                m = rx.match(f.name)
+                if m:
+                    pages.append(int(m.group(1)))
+        pages.sort()
+        return pages
+
+    uuids = sorted({p.name for p in prompt_root.iterdir() if p.is_dir()} |
+                   {p.name for p in image_root.iterdir()  if p.is_dir()})
 
     report: Dict[str, dict] = {}
-
-    # Expect two-level hierarchy under prompt_root: <file-id>/<doc-stem>
-    for file_id_dir in sorted(p for p in prompt_root.iterdir() if p.is_dir()):
-        for doc_dir in sorted(p for p in file_id_dir.iterdir() if p.is_dir()):
-            rel_key = f"{file_id_dir.name}/{doc_dir.name}"
-            img_dir = image_root / file_id_dir.name / doc_dir.name
-
-            # Collect prompt page numbers
-            prompt_pages = []
-            for f in doc_dir.iterdir():
-                m = rx_prompt.match(f.name)
-                if m:
-                    prompt_pages.append(int(m.group(1)))
-            prompt_pages.sort()
-
-            # Collect image page numbers (if the image folder exists)
-            image_pages = []
-            if img_dir.exists():
-                for f in img_dir.iterdir():
-                    m = rx_image.match(f.name)
-                    if m:
-                        image_pages.append(int(m.group(1)))
-                image_pages.sort()
-
-            prompt_count = len(prompt_pages)
-            image_count  = len(image_pages)
-            counts_match = (prompt_count == image_count)
-            pages_match  = (prompt_pages == image_pages) if counts_match else (set(prompt_pages) == set(image_pages))
-
-            missing_side = None
-            if not img_dir.exists():
-                missing_side = "images"
-            elif prompt_count == 0 and image_count > 0:
-                missing_side = "prompts"
-
-            report[rel_key] = {
-                "prompt_count": prompt_count,
-                "image_count": image_count,
-                "counts_match": counts_match,
-                "prompt_pages": prompt_pages,
-                "image_pages": image_pages,
-                "pages_match": pages_match,
-                "missing_side": missing_side,
-            }
-
-    # ---- Pretty print summary ----
-    ok, warn = 0, 0
     print("\n=== Prompt ↔ Image Parity Check ===")
-    for key, info in report.items():
-        if info["missing_side"] == "images":
-            print(f"[MISSING] {key}: image folder not found")
-            warn += 1
-        elif info["missing_side"] == "prompts":
-            print(f"[MISSING] {key}: prompts missing (0 prompts, {info['image_count']} images)")
-            warn += 1
-        elif info["counts_match"] and info["pages_match"]:
-            print(f"[OK]     {key}: {info['prompt_count']} prompts ↔ {info['image_count']} images")
-            ok += 1
+
+    for uid in uuids:
+        p_uuid = prompt_root / uid
+        i_uuid = image_root  / uid
+
+        p_docs = [d for d in p_uuid.iterdir() if d.is_dir()] if p_uuid.exists() else []
+        i_docs = [d for d in i_uuid.iterdir() if d.is_dir()] if i_uuid.exists() else []
+
+        # Per-subfolder tallies
+        p_info = {}
+        i_info = {}
+
+        for d in p_docs:
+            pages = collect_pages(d, rx_p)
+            p_info[d.name] = {"count": len(pages), "pages": pages}
+
+        for d in i_docs:
+            pages = collect_pages(d, rx_i)
+            i_info[d.name] = {"count": len(pages), "pages": pages}
+
+        # Totals per UUID
+        p_total = sum(v["count"] for v in p_info.values())
+        i_total = sum(v["count"] for v in i_info.values())
+        counts_match = (p_total == i_total)
+
+        # If there is exactly one subfolder on each side, also do a direct page comparison
+        pages_match = None
+        pair_key = None
+        if len(p_info) == 1 and len(i_info) == 1:
+            p_name = next(iter(p_info))
+            i_name = next(iter(i_info))
+            pair_key = f"{p_name} ↔ {i_name}"
+            pages_match = (p_info[p_name]["pages"] == i_info[i_name]["pages"])
+
+        key = uid
+        report[key] = {
+            "prompt_total": p_total,
+            "image_total":  i_total,
+            "counts_match": counts_match,
+            "pair_pages_match": pages_match,
+            "pair": pair_key,
+            "prompt_docs": p_info,
+            "image_docs":  i_info,
+        }
+
+        # -------- print summary --------
+        if not p_docs and i_docs:
+            print(f"[MISSING] {uid}: no prompt folder(s); images present ({i_total})")
+        elif p_docs and not i_docs:
+            print(f"[MISSING] {uid}: no image folder(s); prompts present ({p_total})")
         else:
-            print(f"[MISMATCH] {key}: prompts={info['prompt_count']} images={info['image_count']} | "
-                  f"pages_equal={info['pages_match']}")
-            # Optional: show the diffs
-            extra_p = sorted(set(info["prompt_pages"]) - set(info["image_pages"]))
-            extra_i = sorted(set(info["image_pages"])  - set(info["prompt_pages"]))
-            if extra_p:
-                print(f"          extra prompts for pages: {extra_p}")
-            if extra_i:
-                print(f"          extra images  for pages: {extra_i}")
-            warn += 1
+            if counts_match:
+                if pages_match is True:
+                    print(f"[OK]      {uid}: {p_total} prompts ↔ {i_total} images (pages match in {pair_key})")
+                else:
+                    print(f"[OK*]     {uid}: {p_total} prompts ↔ {i_total} images "
+                          f"(multiple subfolders or page sets differ; see details)")
+            else:
+                print(f"[MISMATCH] {uid}: prompts={p_total} images={i_total} — see details below.")
 
-    print(f"\nSummary: {ok} OK, {warn} issue(s).")
+            # Show per-subfolder counts (helps when names differ)
+            for name, v in p_info.items():
+                print(f"          P: {name}: {v['count']} ({v['pages'][:5]}{'...' if len(v['pages'])>5 else ''})")
+            for name, v in i_info.items():
+                print(f"          I: {name}: {v['count']} ({v['pages'][:5]}{'...' if len(v['pages'])>5 else ''})")
+
     return report
-
-
-
-
-# Example paths — point these at your trees:
-prompt_root = "/.../prompt_input"       # where prompt__N.txt live (mirrored folders)
-image_root  = "/.../output_images"      # where page__N.jpg/png live (mirrored folders)
-
-report = verify_prompt_image_parity(prompt_root, image_root)
