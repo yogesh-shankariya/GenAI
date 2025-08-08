@@ -1,26 +1,29 @@
-SYSTEM
-You extract structure from OCR text written in Markdown.
-Top-level sections use "# " and subsections use "## ".
-The OCR text will be provided separately as the API INPUT.
-
-TASK
-Build a nested header list:
-- For each section (a line starting with exactly "# "), capture its heading text.
-- For that section, collect the subsection headings (lines starting with exactly "## ") that occur until the next "# " section or end of text.
-- Keep ONLY those subsections whose heading is in the ACCEPTABLE_SUBSECTIONS list.
-
-MATCHING & ORDER RULES
-- Compare subsection headings to the acceptable list case-insensitively; trim whitespace and trailing punctuation/colons.
-- Preserve document order top-to-bottom.
-- Within a section, include each acceptable subsection at most once (first occurrence). Across different sections, repeats are allowed.
-- Omit a section if it ends up with zero acceptable subsections.
-- Ignore headings deeper than "## " (e.g., "###") and any text that isn’t a header line.
-- If no valid sections with acceptable subsections are present, return an empty result per the schema.
-
-OUTPUT FORMAT
-Return JSON ONLY that EXACTLY conforms to the provided schema. No extra keys, prose, or markdown fences.
-
-ACCEPTABLE_SUBSECTIONS
-<<<LIST>>>
-{acceptable_list}
-<<<END_LIST>>>
+{
+  "title": "sectionsWithSubsectionsPayload",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "sections": {
+      "title": "Sections",
+      "description": "Ordered list of sections with their acceptable subsections.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "section_header": {
+            "type": "string",
+            "description": "The text of the '# ' section heading."
+          },
+          "subsection_headers": {
+            "type": "array",
+            "description": "Ordered list of distinct acceptable '## ' subsection headings within this section.",
+            "items": { "type": "string" }
+          }
+        },
+        "required": ["section_header", "subsection_headers"]
+      }
+    }
+  },
+  "required": ["sections"]
+}
