@@ -16,9 +16,28 @@ async def _alog_error(log_path: Path, item: Path, msg: str, exc: Exception | Non
     async with (lock or asyncio.Lock()):
         await asyncio.to_thread(log_path.open("a", encoding="utf-8").write, line)
 
+def _fit_prompt(prompt_text: str, max_chars: int) -> str:
+    """If too long, trim only the OCR appendix between the BEGIN/END markers to fit."""
+    if len(prompt_text) <= max_chars:
+        return prompt_text
+    start = prompt_text.find("BEGIN_OCR_TEXT")
+    end   = prompt_text.find("END_OCR_TEXT")
+    if start == -1 or end == -1 or end <= start:
+        # No markers; hard truncate
+        return prompt_text[:max_chars]
+    head = prompt_text[:start]
+    tail = prompt_text[end:]
+    budget = max_chars - len(head) - len(tail)
+    if budget <= 0:
+        return (head + tail)[:max_chars]
+    # keep the beginning of OCR (often most useful)
+    ocr_block = prompt_text[start:end]
+    return head + ocr_block[:budget] + tail
+
 async def _process_one(
     *, img_path: Path, image_root: Path, prompt_root: Path, output_root: Path,
-    schema: Dict, sem: asyncio.Semaphore, errlog: Path, elog_lock: asyncio.Lock
+    schema: Dict, sem: asyncio.Semaphore, errlog: Path, elog_lock: asyncio.Lock,
+    max_prompt_chars: int = 12000
 ) -> str:
     m = IMG_RX.match(img_path.name)
     if not m:
@@ -26,7 +45,7 @@ async def _process_one(
     page_num = int(m.group(1))
 
     rel_dir   = img_path.parent.relative_to(image_root)
-    prompt_fp = prompt_root / rel_dir / f"prompt__{page_num}.txt"   # <-- double underscore
+    prompt_fp = prompt_root / rel_dir / f"prompt__{page_num}.txt"   # strict double underscore
     out_json  = (output_root / rel_dir / img_path.name).with_suffix(".json")
 
     async with sem:
@@ -35,10 +54,11 @@ async def _process_one(
             return "missing_prompt"
         try:
             prompt_text = await asyncio.to_thread(prompt_fp.read_text, encoding="utf-8", errors="ignore")
-            # build files payload
+            prompt_text = _fit_prompt(prompt_text, max_chars=max_prompt_chars)
+
             with open(img_path, "rb") as fh:
-                files = [("image", (img_path.name, fh, _mime(img_path)))]
-                # ✅ call your function EXACTLY as defined: no 'image=' kwarg
+                files = {"image": (img_path.name, fh, _mime(img_path))}   # <-- dict, not list
+                # call YOUR function exactly as defined (no 'image=' kwarg)
                 resp_dict = await vision_structures(schema=schema, prompt=prompt_text, files=files)
 
             out_json.parent.mkdir(parents=True, exist_ok=True)
@@ -49,7 +69,8 @@ async def _process_one(
             return "error"
 
 async def run_vision_structures_parallel(
-    *, image_root, prompt_root, output_root, schema_path, error_log="failed_pages.txt", max_concurrency=20
+    *, image_root, prompt_root, output_root, schema_path,
+    error_log="failed_pages.txt", max_concurrency=20, max_prompt_chars=12000
 ) -> None:
     image_root  = Path(image_root).expanduser().resolve()
     prompt_root = Path(prompt_root).expanduser().resolve()
@@ -70,7 +91,7 @@ async def run_vision_structures_parallel(
     results = await asyncio.gather(*[
         _process_one(
             img_path=img, image_root=image_root, prompt_root=prompt_root, output_root=output_root,
-            schema=schema, sem=sem, errlog=errlog, elog_lock=elog_lock
+            schema=schema, sem=sem, errlog=errlog, elog_lock=elog_lock, max_prompt_chars=max_prompt_chars
         ) for img in imgs
     ])
     print(f"Finished. OK={results.count('ok')}, missing_prompts={results.count('missing_prompt')}, errors={results.count('error')}.")
