@@ -1,34 +1,77 @@
-You are a document structure extraction assistant.
+import re
+import shutil
+from pathlib import Path
+from typing import Dict, List, Tuple, Optional, Any
 
-## Task
-From a single scanned medical-document page, detect every section header and any subsection headers that belong under each section. A “section” is a heading that groups multiple fields (not a single field label). A “subsection” is a smaller heading under a section that groups a subset of those fields.
+def merge_md_by_uuid(
+    input_dir: str,
+    output_dir: Optional[str] = None,
+    combined_name: str = "combined.md",
+    copy_originals: bool = True
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Group .md files by the leading 5-part hyphen ID (UUID-like) and merge them.
+    Folder name = that UUID exactly (e.g., 'c3f9d60b-39ec-4db6-905e-4f2b6a6b4287').
 
-## Output
-Return ONLY the JSON object below—no extra keys, explanations, or text.
+    Files inside each UUID group are merged in ascending 'encounter N' order.
+    """
+    in_root = Path(input_dir)
+    if not in_root.is_dir():
+        raise NotADirectoryError(f"Input path is not a directory: {input_dir}")
 
-{
-  "sections": [
-    {
-      "section": "<normalized section name>",
-      "subsections": ["<sub-1>", "<sub-2>", "..."]
-    }
-  ]
-}
+    out_root = Path(output_dir) if output_dir else in_root / "merged_md"
+    out_root.mkdir(parents=True, exist_ok=True)
 
-## Extraction rules
-1) If the image is rotated, mentally rotate so text reads upright.
-2) Read in natural order (top→bottom, left→right).
-3) Prefer high-accuracy OCR. Preserve original wording but normalize capitalization and stray punctuation in headings.
-4) A heading is a standalone line or visually separated phrase that does NOT end with a value (e.g., not “DOB: 01/02/2000”).
-5) Treat lines like “History and Physical” or “Allergies/Medications” as a single section; do not split unless there are clearly separate headings later.
-6) A subsection must appear after its parent section and before the next section. Do not promote a subsection to a section.
-7) Deduplicate identical headings; keep the earliest occurrence.
-8) If a section has no subsections, return an empty list for that section’s “subsections”.
-9) If no valid section headers are found, return {"sections": []}.
-10) You may use fuzzy matching against the allowed lists below; pick the closest match when reasonably clear.
+    # Start-of-name UUID with exactly 5 hyphen-separated chunks
+    uuid5_re = re.compile(r'^(?P<uuid>[0-9A-Za-z]+(?:-[0-9A-Za-z]+){4})')
+    encounter_re = re.compile(r'encounter[ _-]*([0-9]+)', re.IGNORECASE)
 
-## Allowed headings (optional, use if provided)
-- Sections: {ACCEPTABLE_SECTIONS}   # list of canonical section names
-- Subsections: {ACCEPTABLE_SUBSECTIONS}   # optional list; use when helpful
+    groups: Dict[str, List[Tuple[Optional[int], Path]]] = {}
 
-Return JSON only.
+    for md in in_root.rglob("*.md"):
+        m = uuid5_re.match(md.name)
+        if not m:
+            # Skip files that don't start with a 5-part hyphen ID
+            continue
+        uuid = m.group("uuid")
+
+        e = encounter_re.search(md.name)
+        enc_num = int(e.group(1)) if e else None
+
+        groups.setdefault(uuid, []).append((enc_num, md))
+
+    summary: Dict[str, Dict[str, Any]] = {}
+
+    for uuid, items in groups.items():
+        # Known encounters first (1..N), then unknowns; tie-break by filename
+        items.sort(key=lambda t: ((float("inf") if t[0] is None else t[0]), t[1].name))
+
+        target_dir = out_root / uuid
+        target_dir.mkdir(parents=True, exist_ok=True)
+        combined_path = target_dir / combined_name
+
+        with combined_path.open("w", encoding="utf-8", errors="ignore") as out_f:
+            for enc_num, src in items:
+                if copy_originals:
+                    try:
+                        shutil.copy2(src, target_dir / src.name)
+                    except Exception:
+                        pass  # non-fatal copy issue
+
+                header = (
+                    f"\n\n## Encounter {enc_num}\n\n"
+                    if enc_num is not None else
+                    f"\n\n## {src.stem}\n\n"
+                )
+                try:
+                    content = src.read_text(encoding="utf-8", errors="ignore")
+                except Exception:
+                    content = ""
+                out_f.write(header + content.rstrip() + "\n")
+
+        summary[uuid] = {
+            "merged_into": str(combined_path),
+            "files": [str(p) for _, p in items]
+        }
+
+    return summary
