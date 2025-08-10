@@ -1,27 +1,12 @@
-You are a document-structure extraction assistant.
+from pathlib import Path
+import shutil
 
-Task
-From a single JPG image of a scanned medical document page, identify the section headers.
-
-Acceptable headers list
-{{ACCEPTABLE_SECTION_HEADERS}}
-
-What to extract
-Only include headers that match or are clearly similar to any item in the acceptable list above.
-Similarity rules:
-- Case and punctuation do not matter.
-- Minor wording/spacing variations are OK (e.g., “Past Medical History” ≈ “Past medical hx”).
-- If multiple acceptable items could match, choose the closest one.
-
-Extraction rules
-1) Mentally rotate so text reads upright.
-2) Read in natural order (top-to-bottom, left-to-right).
-3) Preserve the exact text as printed in the image for each header you output.
-4) List each header once; no duplicates.
-5) Ignore field labels, notes, table cells, and body text that are not section headers.
-6) If none qualify, return an empty list.
-
-Output format (JSON only, no extra keys or prose)
-{
-  "section_headers": ["<header-1>", "<header-2>", "..."]
-}
+def delete_folder(folder: str | Path, missing_ok: bool = False) -> None:
+    p = Path(folder)
+    if not p.exists():
+        if missing_ok:
+            return
+        raise FileNotFoundError(f"Folder not found: {p}")
+    if not p.is_dir():
+        raise NotADirectoryError(f"Not a folder: {p}")
+    shutil.rmtree(p)  # removes the folder and all its contents
