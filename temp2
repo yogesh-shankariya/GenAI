@@ -1,19 +1,21 @@
 import re
-import shutil
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
 
 def merge_md_by_uuid(
     input_dir: str,
     output_dir: Optional[str] = None,
-    combined_name: str = "combined.md",
-    copy_originals: bool = True
+    combined_name: str = "Combine.md",
+    delete_originals: bool = True,
 ) -> Dict[str, Dict[str, Any]]:
     """
-    Group .md files by the leading 5-part hyphen ID (UUID-like) and merge them.
-    Folder name = that UUID exactly (e.g., 'c3f9d60b-39ec-4db6-905e-4f2b6a6b4287').
+    Group .md files by the leading 5-part hyphen ID (UUID-like).
+    For each UUID:
+      - create output_dir/<UUID>/
+      - merge files in Encounter order into Combine.md
+      - delete the individual encounter files (if delete_originals=True)
 
-    Files inside each UUID group are merged in ascending 'encounter N' order.
+    Returns a summary dict per UUID with merged path and deleted files.
     """
     in_root = Path(input_dir)
     if not in_root.is_dir():
@@ -22,46 +24,38 @@ def merge_md_by_uuid(
     out_root = Path(output_dir) if output_dir else in_root / "merged_md"
     out_root.mkdir(parents=True, exist_ok=True)
 
-    # Start-of-name UUID with exactly 5 hyphen-separated chunks
     uuid5_re = re.compile(r'^(?P<uuid>[0-9A-Za-z]+(?:-[0-9A-Za-z]+){4})')
     encounter_re = re.compile(r'encounter[ _-]*([0-9]+)', re.IGNORECASE)
 
     groups: Dict[str, List[Tuple[Optional[int], Path]]] = {}
 
-    for md in in_root.rglob("*.md"):
-        m = uuid5_re.match(md.name)
-        if not m:
-            # Skip files that don't start with a 5-part hyphen ID
-            continue
-        uuid = m.group("uuid")
-
-        e = encounter_re.search(md.name)
-        enc_num = int(e.group(1)) if e else None
-
-        groups.setdefault(uuid, []).append((enc_num, md))
+    # collect .md files (case-insensitive)
+    for p in in_root.rglob("*"):
+        if p.is_file() and p.suffix.lower() == ".md":
+            m = uuid5_re.match(p.name)
+            if not m:
+                continue  # skip files not starting with a 5-part hyphen ID
+            uuid = m.group("uuid")
+            e = encounter_re.search(p.name)
+            enc_num = int(e.group(1)) if e else None
+            groups.setdefault(uuid, []).append((enc_num, p))
 
     summary: Dict[str, Dict[str, Any]] = {}
 
     for uuid, items in groups.items():
-        # Known encounters first (1..N), then unknowns; tie-break by filename
+        # sort by encounter number (unknowns at the end), then filename
         items.sort(key=lambda t: ((float("inf") if t[0] is None else t[0]), t[1].name))
 
         target_dir = out_root / uuid
         target_dir.mkdir(parents=True, exist_ok=True)
         combined_path = target_dir / combined_name
 
+        # merge
         with combined_path.open("w", encoding="utf-8", errors="ignore") as out_f:
             for enc_num, src in items:
-                if copy_originals:
-                    try:
-                        shutil.copy2(src, target_dir / src.name)
-                    except Exception:
-                        pass  # non-fatal copy issue
-
                 header = (
-                    f"\n\n## Encounter {enc_num}\n\n"
-                    if enc_num is not None else
-                    f"\n\n## {src.stem}\n\n"
+                    f"\n\n## Encounter {enc_num}\n\n" if enc_num is not None
+                    else f"\n\n## {src.stem}\n\n"
                 )
                 try:
                     content = src.read_text(encoding="utf-8", errors="ignore")
@@ -69,9 +63,20 @@ def merge_md_by_uuid(
                     content = ""
                 out_f.write(header + content.rstrip() + "\n")
 
+        # delete originals (so only Combine.md remains)
+        deleted: List[str] = []
+        if delete_originals:
+            for _, src in items:
+                try:
+                    src.unlink(missing_ok=True)
+                    deleted.append(str(src))
+                except Exception:
+                    pass  # continue even if one file can't be removed
+
         summary[uuid] = {
             "merged_into": str(combined_path),
-            "files": [str(p) for _, p in items]
+            "deleted_files": deleted,
+            "file_count": len(items),
         }
 
     return summary
