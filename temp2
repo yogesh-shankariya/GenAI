@@ -1,82 +1,27 @@
-import re
-from pathlib import Path
-from typing import Dict, List, Tuple, Optional, Any
+You are a document-structure extraction assistant.
 
-def merge_md_by_uuid(
-    input_dir: str,
-    output_dir: Optional[str] = None,
-    combined_name: str = "Combine.md",
-    delete_originals: bool = True,
-) -> Dict[str, Dict[str, Any]]:
-    """
-    Group .md files by the leading 5-part hyphen ID (UUID-like).
-    For each UUID:
-      - create output_dir/<UUID>/
-      - merge files in Encounter order into Combine.md
-      - delete the individual encounter files (if delete_originals=True)
+Task
+From a single JPG image of a scanned medical document page, identify the section headers.
 
-    Returns a summary dict per UUID with merged path and deleted files.
-    """
-    in_root = Path(input_dir)
-    if not in_root.is_dir():
-        raise NotADirectoryError(f"Input path is not a directory: {input_dir}")
+Acceptable headers list
+{{ACCEPTABLE_SECTION_HEADERS}}
 
-    out_root = Path(output_dir) if output_dir else in_root / "merged_md"
-    out_root.mkdir(parents=True, exist_ok=True)
+What to extract
+Only include headers that match or are clearly similar to any item in the acceptable list above.
+Similarity rules:
+- Case and punctuation do not matter.
+- Minor wording/spacing variations are OK (e.g., “Past Medical History” ≈ “Past medical hx”).
+- If multiple acceptable items could match, choose the closest one.
 
-    uuid5_re = re.compile(r'^(?P<uuid>[0-9A-Za-z]+(?:-[0-9A-Za-z]+){4})')
-    encounter_re = re.compile(r'encounter[ _-]*([0-9]+)', re.IGNORECASE)
+Extraction rules
+1) Mentally rotate so text reads upright.
+2) Read in natural order (top-to-bottom, left-to-right).
+3) Preserve the exact text as printed in the image for each header you output.
+4) List each header once; no duplicates.
+5) Ignore field labels, notes, table cells, and body text that are not section headers.
+6) If none qualify, return an empty list.
 
-    groups: Dict[str, List[Tuple[Optional[int], Path]]] = {}
-
-    # collect .md files (case-insensitive)
-    for p in in_root.rglob("*"):
-        if p.is_file() and p.suffix.lower() == ".md":
-            m = uuid5_re.match(p.name)
-            if not m:
-                continue  # skip files not starting with a 5-part hyphen ID
-            uuid = m.group("uuid")
-            e = encounter_re.search(p.name)
-            enc_num = int(e.group(1)) if e else None
-            groups.setdefault(uuid, []).append((enc_num, p))
-
-    summary: Dict[str, Dict[str, Any]] = {}
-
-    for uuid, items in groups.items():
-        # sort by encounter number (unknowns at the end), then filename
-        items.sort(key=lambda t: ((float("inf") if t[0] is None else t[0]), t[1].name))
-
-        target_dir = out_root / uuid
-        target_dir.mkdir(parents=True, exist_ok=True)
-        combined_path = target_dir / combined_name
-
-        # merge
-        with combined_path.open("w", encoding="utf-8", errors="ignore") as out_f:
-            for enc_num, src in items:
-                header = (
-                    f"\n\n## Encounter {enc_num}\n\n" if enc_num is not None
-                    else f"\n\n## {src.stem}\n\n"
-                )
-                try:
-                    content = src.read_text(encoding="utf-8", errors="ignore")
-                except Exception:
-                    content = ""
-                out_f.write(header + content.rstrip() + "\n")
-
-        # delete originals (so only Combine.md remains)
-        deleted: List[str] = []
-        if delete_originals:
-            for _, src in items:
-                try:
-                    src.unlink(missing_ok=True)
-                    deleted.append(str(src))
-                except Exception:
-                    pass  # continue even if one file can't be removed
-
-        summary[uuid] = {
-            "merged_into": str(combined_path),
-            "deleted_files": deleted,
-            "file_count": len(items),
-        }
-
-    return summary
+Output format (JSON only, no extra keys or prose)
+{
+  "section_headers": ["<header-1>", "<header-2>", "..."]
+}
