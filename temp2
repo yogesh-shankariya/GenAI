@@ -1,168 +1,37 @@
-import asyncio
-import json
-import mimetypes
-import traceback
-from pathlib import Path
-from typing import List, Dict, OrderedDict
-from horizon_api import vision_structure
-import re
-import datetime
-import shutil
-import time
+"""
+You are a document-structure extraction assistant.
 
-# ------------------------------------------------------------------ #
-# Paths (unchanged)
-# ------------------------------------------------------------------ #
-input_image_folder   = "Output_Files/HELIX_Member_cases 5-8/pdf_to_images"
-output_json_folder   = "Output_Files/HELIX_Member_cases 5-8/image_to_json_with_subsection"
-combined_json_folder = "Output_Files/HELIX_Member_cases 5-8/combined_json_with_subsection"
+Task
+From a batch of three JPG images of consecutive scanned medical document pages, extract:
+1) Section headers, and
+2) For each section, the subsection headers that belong to it.
 
-promt_path           = "prompt_with_acceptable_list_and_subsection.txt"
-schema_path          = "schema_with_subsection.json"
+Acceptable headers list
+############################################################
+{ACCEPTABLE_SECTION_HEADERS}
+############################################################
 
-image_to_json_logs   = "Output_Files/HELIX_Member_cases 5-8/errors/image_to_json_with_subsection/failed_pages.txt"
-combined_json_logs   = "Output_Files/HELIX_Member_cases 5-8/errors/combined_json_with_subsection/failed_pages.txt"
+Inclusion rules
+- Strictly read all “Acceptable headers list” and compare.
+- Only include headers that match or are clearly similar to an item in the corresponding acceptable list.
+- Case, punctuation, hyphenation, and minor wording/spacing differences are OK (e.g., “Past Medical History” ≈ “Past medical hx”).
+- Preserve the exact text as printed in the image for every header you output (do NOT normalize/canonicalize).
+- A subsection belongs to the nearest preceding section and lies within that section’s span (from its header until the next section header).
+- Typical signals for headers: start-of-line positioning, larger/bold font, all-caps/Title Case, trailing colon, or visual separation. Use these cues, but only keep items that also pass the acceptable-list filter.
+- Ignore field labels, page headers/footers, table column names, body text, and data values that are not headers.
+- List each header once per occurrence; do NOT merge or deduplicate across pages. If the same section header appears on multiple pages, include each occurrence separately.
+- Process the three pages in order (first page 1, then page 2, then page 3). Keep the overall output in this order: page 1 content first, then page 2, then page 3, each in document reading order (top→bottom, left→right).
+- Do NOT include page numbers, coordinates, or any metadata beyond the headers themselves.
+- If a section is valid but has no valid subsections beneath it, return an empty list for that section’s subsections.
+- If nothing valid is found across all three pages, return an empty sections array.
 
-acceptable_list_path = "acceptable_section_headers.txt"
-
-# ------------------------------------------------------------------ #
-
-def _mime(p: Path) -> str:
-    return mimetypes.guess_type(p.name)[0] or "application/octet-stream"
-
-async def _log_error(error_log: Path, img: Path, exc: Exception) -> None:
-    error_log.parent.mkdir(parents=True, exist_ok=True)
-    async with asyncio.Lock():
-        with error_log.open("a", encoding="utf-8") as fp:
-            fp.write(
-                f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] {img}\n"
-                f"{type(exc).__name__}: {exc}\n"
-                f"{traceback.format_exc()}\n{'-'*60}\n"
-            )
-
-# ------------------------------------------------------------------ #
-# CHANGED: _process_page now processes a TRIPLET of images together.
-#          Everything else (error handling, writing JSON) is unchanged.
-# ------------------------------------------------------------------ #
-async def _process_page(               # keep the name to minimize changes
-    imgs: List[Path],                  # CHANGED: was `img: Path`
-    json_path: Path,
-    prompt: str,
-    schema: dict,
-    sem: asyncio.Semaphore,
-    error_log: Path,
-) -> None:
-
-    if json_path.exists():             # skip if already done
-        return
-
-    try:
-        async with sem:
-            # Open three files and build a single multipart "images" list
-            fhs = []
-            files = []
-            try:
-                for p in imgs:
-                    fh = p.open("rb")
-                    fhs.append(fh)
-                    files.append(("images", (p.name, fh, _mime(p))))
-
-                response = await vision_structure(schema, prompt, files)
-            finally:
-                for fh in fhs:
-                    try:
-                        fh.close()
-                    except Exception:
-                        pass
-
-            json_path.parent.mkdir(parents=True, exist_ok=True)
-            json_path.write_text(
-                json.dumps(response, ensure_ascii=False, indent=2),
-                encoding="utf-8"
-            )
-
-            # Optional progress print (kept simple)
-            print(f"✓ {json_path}")
-
-    except Exception as e:
-        # Log against the first image in the batch
-        await _log_error(error_log, imgs[0], e)
-        print(f"✗ {imgs[0]} (logged)")
-
-# ------------------------------------------------------------------ #
-# Helper to create sliding windows of size 3 with 1-page overlap
-# (i.e., step = 2) → 1-2-3, 3-4-5, 5-6-7, ...
-# ------------------------------------------------------------------ #
-def _triplets_with_overlap(paths: List[Path], overlap: int = 1) -> List[List[Path]]:
-    k = 3
-    step = k - overlap
-    out = []
-    for i in range(0, len(paths) - k + 1, step):
-        out.append(paths[i:i+k])
-    return out
-
-# ------------------------------------------------------------------ #
-# Main orchestrator. Only minimal edits:
-#  - build triplets
-#  - name output as pages_<first>-<last>.json in the mirrored tree
-# ------------------------------------------------------------------ #
-async def vision_extract_parallel(
-    input_root: str = input_image_folder,
-    output_root: str = output_json_folder,
-    prompt_path: str = promt_path,
-    schema_path: str = schema_path,
-    error_log: str = image_to_json_logs,
-    max_concurrency: int = 5,
-) -> None:
-    """
-    Convert every group of three *.jpg under `input_root` to one JSON under
-    `output_root` (mirrored folders). Windows are 3 pages with 1-page overlap:
-    1-2-3, 3-4-5, 5-6-7, ...
-    """
-    input_root  = Path(input_root).expanduser().resolve()
-    output_root = Path(output_root).expanduser().resolve()
-    error_log   = Path(error_log).expanduser().resolve()
-
-    output_root.mkdir(parents=True, exist_ok=True)
-
-    with open(acceptable_list_path, "r", encoding="utf-8") as file:
-        acceptable_section_headers = file.read()
-
-    prompt = Path(prompt_path).read_text(encoding="utf-8").format(
-        ACCEPTABLE_SECTION_HEADERS=acceptable_section_headers
-    )
-    schema = json.loads(Path(schema_path).read_text(encoding="utf-8"))
-
-    # Gather images exactly as before
-    img_paths: List[Path] = sorted(input_root.rglob("*.jpg"))
-    if not img_paths:
-        raise FileNotFoundError(f"No JPG images found under {input_root}")
-
-    # Build triplets with 1-page overlap
-    batches = _triplets_with_overlap(img_paths, overlap=1)
-
-    sem   = asyncio.Semaphore(max_concurrency)
-    tasks = []
-
-    for batch in batches:
-        # Mirror the folder of the first image
-        rel_dir = batch[0].relative_to(input_root).parent
-
-        # Build a compact range-based filename using stems of first/last
-        start_stem = batch[0].stem
-        end_stem   = batch[-1].stem
-
-        # You asked for names like "page 1,2,3.json" / "page 3 to 5.json".
-        # Using a consistent, safe variant:
-        out_name = f"pages_{start_stem}-to-{end_stem}.json"
-
-        json_path = (output_root / rel_dir / out_name)
-
-        tasks.append(
-            asyncio.create_task(
-                _process_page(batch, json_path, prompt, schema, sem, error_log)
-            )
-        )
-
-    await asyncio.gather(*tasks)
-    print("\nFinished. Any failures were logged to:", error_log)
+Output format (JSON only; no extra keys or prose). EXACTLY this shape:
+{{
+  "sections": [
+    {{
+      "section_header": "<exact section text as printed>",
+      "subsection_headers": ["<exact subsection 1>", "<exact subsection 2>", "..."]
+    }}
+  ]
+}}
+"""
