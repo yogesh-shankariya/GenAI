@@ -1,164 +1,30 @@
-import asyncio
-import json
-import mimetypes
-import traceback
-from pathlib import Path
-from typing import List, Dict, OrderedDict
-from horizon_api import vision_structure
+import os
 import re
-import datetime
-import shutil
-import time
-from itertools import groupby  # NEW: for per-folder batching
 
-# ------------------------------------------------------------------ #
-# Paths (unchanged)
-# ------------------------------------------------------------------ #
-input_image_folder   = "Output_Files/HELIX_Member_cases 5-8/pdf_to_images"
-output_json_folder   = "Output_Files/HELIX_Member_cases 5-8/image_to_json_with_subsection"
-combined_json_folder = "Output_Files/HELIX_Member_cases 5-8/combined_json_with_subsection"
+def combine_txt_files(folder_path):
+    # Pattern to extract the page number from filename
+    pattern = re.compile(r"page_(\d+)_output\.txt")
 
-promt_path           = "prompt_with_acceptable_list_and_subsection.txt"
-schema_path          = "schema_with_subsection.json"
+    # Get all .txt files in the folder
+    files = [f for f in os.listdir(folder_path) if f.endswith("_output.txt")]
 
-image_to_json_logs   = "Output_Files/HELIX_Member_cases 5-8/errors/image_to_json_with_subsection/failed_pages.txt"
-combined_json_logs   = "Output_Files/HELIX_Member_cases 5-8/errors/combined_json_with_subsection/failed_pages.txt"
+    # Sort by page number (numeric sort, not lexicographic)
+    files_sorted = sorted(files, key=lambda x: int(pattern.search(x).group(1)))
 
-acceptable_list_path = "acceptable_section_headers.txt"
+    combined_content = ""
 
-# ------------------------------------------------------------------ #
+    # Read each file in sorted order and append content
+    for file_name in files_sorted:
+        file_path = os.path.join(folder_path, file_name)
+        with open(file_path, "r", encoding="utf-8") as f:
+            combined_content += f.read() + "\n"
 
-_num_re = re.compile(r"(\d+)")
+    # Save combined file
+    output_file = os.path.join(folder_path, "combined_output.txt")
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write(combined_content)
 
-def _mime(p: Path) -> str:
-    return mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+    print(f"Combined file created: {output_file}")
 
-def _page_num(p: Path) -> int:
-    """Extract the last integer from filename for natural ordering."""
-    m = _num_re.findall(p.stem)
-    return int(m[-1]) if m else -1
-
-async def _log_error(error_log: Path, img: Path, exc: Exception) -> None:
-    error_log.parent.mkdir(parents=True, exist_ok=True)
-    async with asyncio.Lock():
-        with error_log.open("a", encoding="utf-8") as fp:
-            fp.write(
-                f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] {img}\n"
-                f"{type(exc).__name__}: {exc}\n"
-                f"{traceback.format_exc()}\n{'-'*60}\n"
-            )
-
-# ------------------------------------------------------------------ #
-# Process a BATCH of images together (3 normally; remainder allowed)
-# ------------------------------------------------------------------ #
-async def _process_page(
-    imgs: List[Path],
-    json_path: Path,
-    prompt: str,
-    schema: dict,
-    sem: asyncio.Semaphore,
-    error_log: Path,
-) -> None:
-
-    if json_path.exists():
-        return
-
-    try:
-        async with sem:
-            fhs, files = [], []
-            try:
-                for p in imgs:
-                    fh = p.open("rb")
-                    fhs.append(fh)
-                    files.append(("images", (p.name, fh, _mime(p))))
-                response = await vision_structure(schema, prompt, files)
-            finally:
-                for fh in fhs:
-                    try: fh.close()
-                    except Exception: pass
-
-            json_path.parent.mkdir(parents=True, exist_ok=True)
-            json_path.write_text(json.dumps(response, ensure_ascii=False, indent=2), encoding="utf-8")
-            print(f"✓ {json_path}")
-
-    except Exception as e:
-        await _log_error(error_log, imgs[0], e)
-        print(f"✗ {imgs[0]} (logged)")
-
-# ------------------------------------------------------------------ #
-# Sliding windows of size 3 with 1-page overlap; append remainder
-# e.g., 1-3, 3-5; for 6 pages → 1-3, 3-5, 5-6
-# ------------------------------------------------------------------ #
-def _triplets_with_overlap(paths: List[Path], overlap: int = 1) -> List[List[Path]]:
-    k = 3
-    step = max(1, k - overlap)  # = 2
-    out = []
-    n = len(paths)
-    i = 0
-    while i + k <= n:
-        out.append(paths[i:i+k])
-        i += step
-    if i < n:  # remainder (1 or 2)
-        out.append(paths[i:n])
-    return out
-
-# ------------------------------------------------------------------ #
-# Main
-# ------------------------------------------------------------------ #
-async def vision_extract_parallel(
-    input_root: str = input_image_folder,
-    output_root: str = output_json_folder,
-    prompt_path: str = promt_path,
-    schema_path: str = schema_path,
-    error_log: str = image_to_json_logs,
-    max_concurrency: int = 5,
-) -> None:
-    """
-    Create JSON per sequential batch of 3 pages (1-page overlap).
-    Remainder (1–2 pages) forms the final batch.
-    Names: pages_<startNum>-<endNum>.json
-    """
-    input_root  = Path(input_root).expanduser().resolve()
-    output_root = Path(output_root).expanduser().resolve()
-    error_log   = Path(error_log).expanduser().resolve()
-
-    output_root.mkdir(parents=True, exist_ok=True)
-
-    with open(acceptable_list_path, "r", encoding="utf-8") as file:
-        acceptable_section_headers = file.read()
-
-    prompt = Path(prompt_path).read_text(encoding="utf-8").format(
-        ACCEPTABLE_SECTION_HEADERS=acceptable_section_headers
-    )
-    schema = json.loads(Path(schema_path).read_text(encoding="utf-8"))
-
-    # Natural sort, and do batching PER FOLDER to avoid crossing documents
-    all_imgs: List[Path] = sorted(
-        input_root.rglob("*.jpg"),
-        key=lambda p: (p.parent.as_posix(), _page_num(p), p.name)
-    )
-    if not all_imgs:
-        raise FileNotFoundError(f"No JPG images found under {input_root}")
-
-    sem   = asyncio.Semaphore(max_concurrency)
-    tasks = []
-
-    for parent, group in groupby(all_imgs, key=lambda p: p.parent):
-        pages = list(group)  # already sorted by page number
-        batches = _triplets_with_overlap(pages, overlap=1)
-
-        rel_dir = parent.relative_to(input_root)
-        for batch in batches:
-            start_num = _page_num(batch[0])
-            end_num   = _page_num(batch[-1])
-            out_name  = f"pages_{start_num}-{end_num}.json"
-            json_path = (output_root / rel_dir / out_name)
-
-            tasks.append(
-                asyncio.create_task(
-                    _process_page(batch, json_path, prompt, schema, sem, error_log)
-                )
-            )
-
-    await asyncio.gather(*tasks)
-    print("\nFinished. Any failures were logged to:", error_log)
+# Example usage:
+# combine_txt_files("/path/to/outputs")
