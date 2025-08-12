@@ -1,30 +1,93 @@
+from pathlib import Path
 import os
-import re
+import fitz  # PyMuPDF
 
-def combine_txt_files(folder_path):
-    # Pattern to extract the page number from filename
-    pattern = re.compile(r"page_(\d+)_output\.txt")
+# --- keep your existing converter + pipeline_options objects ---
 
-    # Get all .txt files in the folder
-    files = [f for f in os.listdir(folder_path) if f.endswith("_output.txt")]
+def _convert_single_pdf_to_combined_file(pdf_path: Path,
+                                         out_file: Path,
+                                         converter,
+                                         pipeline_options,
+                                         page_limit: int | None = None) -> None:
+    """
+    Minimal change: same per-page logic, but append all pages into one file.
+    """
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    # start fresh for this PDF
+    if out_file.exists():
+        out_file.unlink()
 
-    # Sort by page number (numeric sort, not lexicographic)
-    files_sorted = sorted(files, key=lambda x: int(pattern.search(x).group(1)))
+    # count pages
+    with fitz.open(pdf_path) as doc:
+        total_pages = len(doc)
 
-    combined_content = ""
+    pages_to_process = total_pages if page_limit is None else min(page_limit, total_pages)
 
-    # Read each file in sorted order and append content
-    for file_name in files_sorted:
-        file_path = os.path.join(folder_path, file_name)
-        with open(file_path, "r", encoding="utf-8") as f:
-            combined_content += f.read() + "\n"
+    for page_num in range(1, pages_to_process + 1):
+        # === your existing core logic, unchanged ===
+        result = converter.convert(
+            str(pdf_path),
+            page_range=(page_num, page_num),
+            pipeline_options=pipeline_options
+        )
+        # Docling exports: try both names to match your environment
+        try:
+            md = result.document.export_to_markdown()
+        except AttributeError:
+            md = result.document.export_markdown()
 
-    # Save combined file
-    output_file = os.path.join(folder_path, "combined_output.txt")
-    with open(output_file, "w", encoding="utf-8") as f:
-        f.write(combined_content)
+        # append this page's OCR to the combined file
+        with open(out_file, "a", encoding="utf-8") as f:
+            f.write(f"\n\n<!-- ocr-service-page-start:{page_num} -->\n")
+            f.write(md)
 
-    print(f"Combined file created: {output_file}")
 
-# Example usage:
-# combine_txt_files("/path/to/outputs")
+def ocr_folder_tree_to_combined_files(input_root: str | Path,
+                                      output_root: str | Path,
+                                      converter,
+                                      pipeline_options,
+                                      ext: str = ".md",
+                                      page_limit: int | None = None) -> None:
+    """
+    Walk input_root, mirror the hierarchy in output_root,
+    and write ONE combined file per PDF with all page OCR appended.
+    """
+    input_root = Path(input_root).resolve()
+    output_root = Path(output_root).resolve()
+
+    for root, _dirs, files in os.walk(input_root):
+        root_path = Path(root)
+        for name in files:
+            if not name.lower().endswith(".pdf"):
+                continue
+
+            pdf_path = root_path / name
+            rel_dir = root_path.relative_to(input_root)
+            out_dir = output_root / rel_dir
+            out_file = out_dir / (pdf_path.stem + ext)  # change ext to ".txt" if you prefer
+
+            _convert_single_pdf_to_combined_file(
+                pdf_path=pdf_path,
+                out_file=out_file,
+                converter=converter,
+                pipeline_options=pipeline_options,
+                page_limit=page_limit
+            )
+            print(f"✓ {pdf_path} → {out_file}")
+
+
+# assumes you already created:
+# converter = DocumentConverter(...)
+# pipeline_options = VlmPipelineOptions(...)
+
+input_root  = "/path/to/your/unzipped_pdfs_root"
+output_root = "/path/to/output_root"
+
+ocr_folder_tree_to_combined_files(
+    input_root=input_root,
+    output_root=output_root,
+    converter=converter,
+    pipeline_options=pipeline_options,
+    ext=".md"     # or ".txt" if you prefer
+    # page_limit=10  # optional: cap pages per PDF
+)
