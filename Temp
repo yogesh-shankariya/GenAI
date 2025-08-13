@@ -1,57 +1,61 @@
-import asyncio
-import json
 from pathlib import Path
-from typing import Union, List
+from collections import defaultdict
+from typing import Union
 
-# Uses: schema, prompt['prompt'], and marshal_into_json(...) already defined in your env.
-
-async def generate_json_outputs(input_path: Union[str, Path],
-                                output_path: Union[str, Path],
-                                concurrency: int = 20) -> List[str]:
+def compare_json_hierarchies(input1: Union[str, Path],
+                             input2: Union[str, Path],
+                             verbose: bool = True) -> bool:
     """
-    Walk `input_path`, for every *.txt:
-      final_prompt = prompt['prompt'].format(page_text=text)
-      response = await marshal_into_json(schema, prompt=final_prompt)
-    Write JSON to mirrored location under `output_path`.
-    Runs with up to `concurrency` parallel requests (default 20).
+    Cross-check that input1 and input2 contain the SAME set of JSON files
+    in the SAME hierarchy (matched by relative path).
+
+    Prints per-folder results and returns:
+        True  -> trees match exactly
+        False -> any mismatch (missing/extra files or different counts)
     """
-    in_root = Path(input_path).resolve()
-    out_root = Path(output_path).resolve()
-    out_root.mkdir(parents=True, exist_ok=True)
+    root1 = Path(input1).resolve()
+    root2 = Path(input2).resolve()
 
-    txt_files = sorted(p for p in in_root.rglob("*.txt") if p.is_file())
-    sem = asyncio.Semaphore(concurrency)
-    written: List[str] = []
+    # Collect relative paths of every .json file
+    files1 = {p.relative_to(root1) for p in root1.rglob("*.json") if p.is_file()}
+    files2 = {p.relative_to(root2) for p in root2.rglob("*.json") if p.is_file()}
 
-    async def process_one(txt_file: Path) -> str:
-        async with sem:
-            rel = txt_file.relative_to(in_root)
-            out_file = (out_root / rel).with_suffix(".json")
-            out_file.parent.mkdir(parents=True, exist_ok=True)
+    # Helper: index by parent folder → set of filenames
+    def index_by_dir(rel_paths: set[Path]):
+        idx = defaultdict(set)
+        for rel in rel_paths:
+            idx[rel.parent].add(rel.name)
+        return idx
 
-            text = txt_file.read_text(encoding="utf-8")
-            final_prompt = prompt['prompt'].format(page_text=text)
+    idx1 = index_by_dir(files1)
+    idx2 = index_by_dir(files2)
 
-            try:
-                resp = await marshal_into_json(schema, prompt=final_prompt)
-            except Exception as e:
-                resp = {"error": str(e), "source": str(txt_file)}
+    ok = True
+    all_dirs = sorted(set(idx1.keys()) | set(idx2.keys()), key=lambda p: p.as_posix())
 
-            out_file.write_text(
-                json.dumps(resp, ensure_ascii=False, indent=2),
-                encoding="utf-8"
-            )
-            return str(out_file)
+    for d in all_dirs:
+        names1 = idx1.get(d, set())
+        names2 = idx2.get(d, set())
 
-    tasks = [asyncio.create_task(process_one(p)) for p in txt_files]
-    for task in asyncio.as_completed(tasks):
-        out_path = await task
-        written.append(out_path)
-        print(f"Wrote: {out_path}")
+        if names1 == names2:
+            if verbose:
+                print(f"[OK] {d.as_posix() or '.'}: {len(names1)} file(s)")
+        else:
+            ok = False
+            if verbose:
+                print(f"[MISMATCH] {d.as_posix() or '.'}")
+                missing = sorted(names1 - names2)
+                extra   = sorted(names2 - names1)
+                if missing:
+                    print(f"  Missing in input2: {missing}")
+                if extra:
+                    print(f"  Extra in input2:   {extra}")
+                print(f"  Count input1={len(names1)} | input2={len(names2)}")
 
-    return written
+    if verbose:
+        print("\nSummary:")
+        print(f"  input1 total: {len(files1)} JSON")
+        print(f"  input2 total: {len(files2)} JSON")
+        print(f"  MATCH: {ok}")
 
-
-# In a notebook/cell that already defines `schema`, `prompt`, and `marshal_into_json`:
-# await generate_json_outputs("Input_Files", "json_output")      # 20-way parallel
-# await generate_json_outputs("Input_Files", "json_output", 10)  # change concurrency if needed
+    return ok
