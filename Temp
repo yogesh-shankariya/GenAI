@@ -1,9 +1,57 @@
-- from typing import List, Literal, Union, Annotated
-+ from typing import List, Literal, Union
+import asyncio
+import json
+from pathlib import Path
+from typing import Union, List
 
-...  # your BoolStep and FinalDecisionStep stay exactly as you wrote them
+# Uses: schema, prompt['prompt'], and marshal_into_json(...) already defined in your env.
 
-- # Discriminated union on "name"
-- Step = Annotated[Union[BoolStep, FinalDecisionStep], Field(discriminator="name")]
-+ # Plain union (no discriminator) to satisfy strict JSON Schema validators
-+ Step = Union[BoolStep, FinalDecisionStep]
+async def generate_json_outputs(input_path: Union[str, Path],
+                                output_path: Union[str, Path],
+                                concurrency: int = 20) -> List[str]:
+    """
+    Walk `input_path`, for every *.txt:
+      final_prompt = prompt['prompt'].format(page_text=text)
+      response = await marshal_into_json(schema, prompt=final_prompt)
+    Write JSON to mirrored location under `output_path`.
+    Runs with up to `concurrency` parallel requests (default 20).
+    """
+    in_root = Path(input_path).resolve()
+    out_root = Path(output_path).resolve()
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    txt_files = sorted(p for p in in_root.rglob("*.txt") if p.is_file())
+    sem = asyncio.Semaphore(concurrency)
+    written: List[str] = []
+
+    async def process_one(txt_file: Path) -> str:
+        async with sem:
+            rel = txt_file.relative_to(in_root)
+            out_file = (out_root / rel).with_suffix(".json")
+            out_file.parent.mkdir(parents=True, exist_ok=True)
+
+            text = txt_file.read_text(encoding="utf-8")
+            final_prompt = prompt['prompt'].format(page_text=text)
+
+            try:
+                resp = await marshal_into_json(schema, prompt=final_prompt)
+            except Exception as e:
+                resp = {"error": str(e), "source": str(txt_file)}
+
+            out_file.write_text(
+                json.dumps(resp, ensure_ascii=False, indent=2),
+                encoding="utf-8"
+            )
+            return str(out_file)
+
+    tasks = [asyncio.create_task(process_one(p)) for p in txt_files]
+    for task in asyncio.as_completed(tasks):
+        out_path = await task
+        written.append(out_path)
+        print(f"Wrote: {out_path}")
+
+    return written
+
+
+# In a notebook/cell that already defines `schema`, `prompt`, and `marshal_into_json`:
+# await generate_json_outputs("Input_Files", "json_output")      # 20-way parallel
+# await generate_json_outputs("Input_Files", "json_output", 10)  # change concurrency if needed
