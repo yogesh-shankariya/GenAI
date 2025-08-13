@@ -3,28 +3,31 @@ from pydantic import BaseModel, Field
 
 
 class BooleanStep(BaseModel):
-    name: str = Field(..., description="Step name")
-    value: bool = Field(..., description="Decision value for this step: true or false")
-    evidence: List[str] = Field(..., description="Evidence snippets from actual page text")
-    reason: str = Field(..., description="Reasoning behind the decision")
+    name: str
+    value: bool
+    evidence: List[str]
+    reason: str
+
 
 class FinalDecisionStep(BaseModel):
-    name: str = Field(..., description="Final decision step name")
-    value: Literal["APPROVE", "DENY"] = Field(..., description="Final decision value")
-    evidence: List[str] = Field(..., description="Evidence snippets from actual page text")
-    reason: str = Field(..., description="Reasoning behind the final decision")
+    name: str
+    value: Literal["APPROVE", "DENY"]
+    evidence: List[str]
+    reason: str
 
-class SkilledNursingAssessment(BaseModel):
-    need_for_skilled_nursing_care: BooleanStep
-    meets_medicare_intermit_defn: BooleanStep
-    observation_and_assessment_need: BooleanStep
-    teaching_and_training_need: BooleanStep
-    medication_admin_need: BooleanStep
-    catheter_care_need: BooleanStep
-    wound_care_need: BooleanStep
-    ostomy_care_need: BooleanStep
-    final_decision: FinalDecisionStep
+
+class SkilledNursingStepsOutput(BaseModel):
+    need_for_skilled_nursing_care: BooleanStep = Field(..., alias="Need for Skilled Nursing Care (General Requirement)")
+    meets_medicare_defn: BooleanStep = Field(..., alias='Meets Medicare “Intermittent/Part-time” Definition')
+    observation_and_assessment: BooleanStep = Field(..., alias="Observation & Assessment Need")
+    teaching_and_training: BooleanStep = Field(..., alias="Teaching & Training Need")
+    medication_admin: BooleanStep = Field(..., alias="Medication Administration Need")
+    catheter_care: BooleanStep = Field(..., alias="Catheter Care Need")
+    wound_care: BooleanStep = Field(..., alias="Wound Care Need")
+    ostomy_care: BooleanStep = Field(..., alias="Ostomy Care Need")
+    final_decision: FinalDecisionStep = Field(..., alias="Final Decision")
 
     model_config = {
-        "extra": "forbid"
+        "extra": "forbid",
+        "populate_by_name": True
     }
