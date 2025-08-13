@@ -2,58 +2,54 @@ import json
 from pathlib import Path
 from typing import Union, List, Dict, Any
 
-def build_master_combined(
+def build_master_combined_simple(
     master_folder: Union[str, Path],
     output_dir: Union[str, Path] = "combine-output-master",
     output_filename: str = "combined_master.json",
     case_key: str = "folder",
-    count_key: str = "true_page_count",
-    pages_key: str = "true_pages",
     steps_key: str = "steps",
-    final_step_name: str = "Final Decision",
-    approve_token: str = "APPROVE"
+    strip_page_field: bool = True
 ) -> str:
     """
-    Reads every `combined.json` under `master_folder` and writes one master file to:
+    For every subfolder under `master_folder` that contains `combined.json`,
+    produce a master file at:
         combine-output-master/<MASTER_FOLDER_NAME>/combined_master.json
+
+    Output format (no aggregation):
+      [
+        {
+          "folder": "<subfolder name>",
+          "steps": <content of that subfolder's combined.json (with 'page' removed if strip_page_field)>
+        },
+        ...
+      ]
     """
     root = Path(master_folder).resolve()
     out_root = Path(output_dir).resolve() / root.name
     out_root.mkdir(parents=True, exist_ok=True)
     out_path = out_root / output_filename
 
-    final_key = final_step_name.strip().lower()
-    approve_u = approve_token.upper()
+    entries: List[Dict[str, Any]] = []
 
-    combined_files = sorted(root.rglob("combined.json"))
-    master_payload: List[Dict[str, Any]] = []
-
-    for cfile in combined_files:
+    for cfile in sorted(root.rglob("combined.json")):
         try:
             steps = json.loads(cfile.read_text(encoding="utf-8"))
         except Exception:
             continue
 
-        positive_pages = set()
-        for step in steps if isinstance(steps, list) else []:
-            name = (step.get("name") or "").strip().lower()
-            is_final = name == final_key
-            results = step.get("results", [])
-            for item in results:
-                val = item.get("value")
-                page = item.get("page")
-                if not is_final and val is True and isinstance(page, int):
-                    positive_pages.add(page)
-                if is_final and isinstance(val, str) and val.strip().upper() == approve_u and isinstance(page, int):
-                    positive_pages.add(page)
+        if strip_page_field and isinstance(steps, list):
+            for step in steps:
+                results = step.get("results", [])
+                if isinstance(results, list):
+                    for item in results:
+                        if isinstance(item, dict):
+                            item.pop("page", None)  # remove page number
 
-        master_payload.append({
+        entries.append({
             case_key: cfile.parent.name,
-            count_key: len(positive_pages),
-            pages_key: sorted(positive_pages),
             steps_key: steps
         })
 
-    out_path.write_text(json.dumps(master_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    out_path.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Wrote: {out_path}")
     return str(out_path)
