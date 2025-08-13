@@ -7,7 +7,6 @@ from typing import Union, List, Dict
 PAGE_RE = re.compile(r"page-(\d+)\.json$", re.IGNORECASE)
 
 def _pages_in(dir_path: Path) -> List[Path]:
-    """Return sorted page-*.json files in a folder (by page number)."""
     pages = []
     for p in dir_path.glob("page-*.json"):
         m = PAGE_RE.search(p.name)
@@ -17,7 +16,6 @@ def _pages_in(dir_path: Path) -> List[Path]:
     return [p for _, p in pages]
 
 def _gather_case_folders(json_root: Path) -> List[Path]:
-    """Find all folders that contain at least one page-*.json."""
     folders = set()
     for p in json_root.rglob("page-*.json"):
         folders.add(p.parent)
@@ -27,85 +25,88 @@ def combine_page_jsons(
     json_root: Union[str, Path],
     output_root: Union[str, Path, None] = None,
     combined_filename: str = "combined.json",
-    false_reason_msg: str = "no supporting text on all the page"
+    false_reason_msg: str = "no supporting text on all the page",
+    final_step_name: str = "Final Decision",
+    approve_token: str = "APPROVE"
 ) -> List[str]:
     """
-    For every folder under `json_root` that contains page-*.json:
-      - merge results by 'name'
-      - keep only entries with value == True, recording page number, value, evidence, reason
-      - if a step has no True anywhere, emit a single {value:false, reason:false_reason_msg}
-    Write one combined JSON per folder, mirroring hierarchy under `output_root` (or in-place if None).
+    Build one combined.json per folder containing page-*.json.
 
-    Returns list of written file paths.
+    Rules:
+      - Normal steps: include only items with value == True.
+      - Final Decision step (name matches `final_step_name`, case-insensitive):
+          include only items whose value == approve_token ("APPROVE" by default).
+          If none found, emit default {value: False, reason: false_reason_msg}.
     """
     json_root = Path(json_root).resolve()
     out_root = Path(output_root).resolve() if output_root else None
 
     written: List[str] = []
     case_folders = _gather_case_folders(json_root)
+    final_key = final_step_name.strip().lower()
+    approve_token_u = approve_token.upper()
 
     for case_dir in case_folders:
-        # Determine output path (mirror hierarchy if output_root is provided)
-        if out_root:
-            rel = case_dir.relative_to(json_root)
-            out_dir = (out_root / rel)
-        else:
-            out_dir = case_dir
+        out_dir = (out_root / case_dir.relative_to(json_root)) if out_root else case_dir
         out_dir.mkdir(parents=True, exist_ok=True)
         out_file = out_dir / combined_filename
 
-        # Accumulate hits by step-name
         hits_by_name: Dict[str, List[OrderedDict]] = defaultdict(list)
         step_order: List[str] = []
 
-        pages = _pages_in(case_dir)
-        for page_path in pages:
-            page_text = page_path.read_text(encoding="utf-8") or "{}"
+        for page_path in _pages_in(case_dir):
             try:
-                data = json.loads(page_text)
-            except json.JSONDecodeError:
+                data = json.loads(page_path.read_text(encoding="utf-8"))
+            except Exception:
                 data = {}
 
             results = data.get("results", [])
-            # record order the first time we see a step name
+            # record first-seen step order
             for item in results:
                 nm = item.get("name")
-                if nm is None:
-                    continue
-                if nm not in step_order:
+                if nm and nm not in step_order:
                     step_order.append(nm)
 
-            # collect True entries
             m = PAGE_RE.search(page_path.name)
             page_no = int(m.group(1)) if m else None
-            for item in results:
-                if item.get("value") is True:
-                    nm = item.get("name")
-                    if nm is None:
-                        continue
-                    entry = OrderedDict()
-                    entry["page"] = page_no
-                    entry["value"] = True
-                    entry["evidence"] = item.get("evidence", [])
-                    entry["reason"] = item.get("reason", "")
-                    hits_by_name[nm].append(entry)
 
-        # Build combined output preserving step order
+            for item in results:
+                nm = item.get("name")
+                if not nm:
+                    continue
+                is_final = nm.strip().lower() == final_key
+                val = item.get("value")
+
+                if is_final:
+                    if isinstance(val, str) and val.strip().upper() == approve_token_u:
+                        entry = OrderedDict()
+                        entry["page"] = page_no
+                        entry["value"] = approve_token_u
+                        entry["evidence"] = item.get("evidence", [])
+                        entry["reason"] = item.get("reason", "")
+                        hits_by_name[nm].append(entry)
+                else:
+                    if val is True:
+                        entry = OrderedDict()
+                        entry["page"] = page_no
+                        entry["value"] = True
+                        entry["evidence"] = item.get("evidence", [])
+                        entry["reason"] = item.get("reason", "")
+                        hits_by_name[nm].append(entry)
+
         combined = []
         for nm in step_order:
             obj = OrderedDict()
             obj["name"] = nm
-            if hits_by_name.get(nm):  # at least one True somewhere
+            if hits_by_name.get(nm):
                 obj["results"] = hits_by_name[nm]
             else:
                 obj["results"] = [OrderedDict([("value", False), ("reason", false_reason_msg)])]
             combined.append(obj)
 
-        # Persist
         out_file.write_text(json.dumps(combined, ensure_ascii=False, indent=2), encoding="utf-8")
         written.append(str(out_file))
         print(f"Wrote: {out_file}")
 
-    # Summary
     print(f"\nFolders processed: {len(case_folders)}")
     return written
