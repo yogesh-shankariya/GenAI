@@ -1,23 +1,32 @@
-from typing import List, Literal, Union
-from pydantic import BaseModel, Field
+from typing import List, Literal
+from pydantic import BaseModel, Field, model_validator
 
-# --- First 8 steps ---
-class StepDecision(BaseModel):
+
+class StepResult(BaseModel):
     name: str = Field(..., description="Exact step name.")
-    value: bool = Field(..., description="true/false for this step on this page.")
+    value: bool = Field(..., description="TRUE/FALSE for this step on this page.")
+    decision: Literal["APRU", "DENI"] = Field(
+        ...,
+        description="Use 'APRU' when the step is satisfied; 'DENI' when not."
+    )
     evidence: List[str] = Field(..., description="Verbatim snippet(s) from the page.")
     reason: str = Field(..., description="Short justification tied to the evidence.")
+
     model_config = {"extra": "forbid"}
 
-# --- Final step (combined outcome) ---
-class FinalDecision(BaseModel):
-    name: Literal["Final Decision"] = "Final Decision"
-    decision: Literal["APPRO", "DANY"] = Field(..., description="Combined outcome.")
-    evidence: List[str] = Field(..., description="Snippet(s) supporting the final decision.")
-    reason: str = Field(..., description="Why APPRO or DANY based on steps 1–8.")
-    model_config = {"extra": "forbid"}
 
-# --- Whole response ---
 class SkilledNursingPageOutput(BaseModel):
-    results: List[Union[StepDecision, FinalDecision]]
+    results: List[StepResult] = Field(
+        ...,
+        min_length=9,
+        max_length=9,
+        description="Exactly 9 items; the 9th must be 'Final Decision'."
+    )
+
     model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def _enforce_last_is_final(self):
+        if self.results[-1].name != "Final Decision":
+            raise ValueError("Item 9 must be 'Final Decision'.")
+        return self
