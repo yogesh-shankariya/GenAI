@@ -2,60 +2,63 @@ from pathlib import Path
 from collections import defaultdict
 from typing import Union
 
-def compare_json_hierarchies(input1: Union[str, Path],
-                             input2: Union[str, Path],
-                             verbose: bool = True) -> bool:
+def _index_stems_by_dir(root: Path, pattern: str):
     """
-    Cross-check that input1 and input2 contain the SAME set of JSON files
-    in the SAME hierarchy (matched by relative path).
-
-    Prints per-folder results and returns:
-        True  -> trees match exactly
-        False -> any mismatch (missing/extra files or different counts)
+    Return: dict[relative_dir -> set of file stems]
+    Example stem: 'page-1' for 'page-1.json' or 'page-1.txt'
     """
-    root1 = Path(input1).resolve()
-    root2 = Path(input2).resolve()
+    idx = defaultdict(set)
+    for p in root.rglob(pattern):
+        if p.is_file():
+            rel = p.relative_to(root)
+            idx[rel.parent].add(p.stem)   # stem = filename without extension
+    return idx
 
-    # Collect relative paths of every .json file
-    files1 = {p.relative_to(root1) for p in root1.rglob("*.json") if p.is_file()}
-    files2 = {p.relative_to(root2) for p in root2.rglob("*.json") if p.is_file()}
+def compare_json_vs_txt(json_root: Union[str, Path],
+                        txt_root: Union[str, Path],
+                        verbose: bool = True) -> bool:
+    """
+    Cross-check that every folder under `json_root` and `txt_root`
+    contains the same page stems (e.g., page-1, page-2, ...) regardless of extension.
 
-    # Helper: index by parent folder → set of filenames
-    def index_by_dir(rel_paths: set[Path]):
-        idx = defaultdict(set)
-        for rel in rel_paths:
-            idx[rel.parent].add(rel.name)
-        return idx
+    Returns True if all folders match exactly, else False.
+    Prints per-folder details.
+    """
+    jroot = Path(json_root).resolve()
+    troot = Path(txt_root).resolve()
 
-    idx1 = index_by_dir(files1)
-    idx2 = index_by_dir(files2)
+    j_idx = _index_stems_by_dir(jroot, "*.json")
+    t_idx = _index_stems_by_dir(troot, "*.txt")
 
     ok = True
-    all_dirs = sorted(set(idx1.keys()) | set(idx2.keys()), key=lambda p: p.as_posix())
+    all_dirs = sorted(set(j_idx.keys()) | set(t_idx.keys()), key=lambda p: p.as_posix())
 
     for d in all_dirs:
-        names1 = idx1.get(d, set())
-        names2 = idx2.get(d, set())
+        j_stems = j_idx.get(d, set())
+        t_stems = t_idx.get(d, set())
 
-        if names1 == names2:
+        if j_stems == t_stems:
             if verbose:
-                print(f"[OK] {d.as_posix() or '.'}: {len(names1)} file(s)")
-        else:
-            ok = False
-            if verbose:
-                print(f"[MISMATCH] {d.as_posix() or '.'}")
-                missing = sorted(names1 - names2)
-                extra   = sorted(names2 - names1)
-                if missing:
-                    print(f"  Missing in input2: {missing}")
-                if extra:
-                    print(f"  Extra in input2:   {extra}")
-                print(f"  Count input1={len(names1)} | input2={len(names2)}")
+                print(f"[OK] {d.as_posix() or '.'}: {len(j_stems)} files match")
+            continue
+
+        ok = False
+        if verbose:
+            print(f"[MISMATCH] {d.as_posix() or '.'}")
+            missing_txt  = sorted(j_stems - t_stems)  # expected in .txt but not found
+            extra_txt    = sorted(t_stems - j_stems)  # present in .txt but not in .json
+            if missing_txt:
+                print(f"  Missing in TXT: {missing_txt}")
+            if extra_txt:
+                print(f"  Extra in TXT:   {extra_txt}")
+            print(f"  Counts → json:{len(j_stems)} txt:{len(t_stems)}")
 
     if verbose:
+        total_json = sum(len(v) for v in j_idx.values())
+        total_txt  = sum(len(v) for v in t_idx.values())
         print("\nSummary:")
-        print(f"  input1 total: {len(files1)} JSON")
-        print(f"  input2 total: {len(files2)} JSON")
+        print(f"  Total json pages: {total_json}")
+        print(f"  Total txt  pages: {total_txt}")
         print(f"  MATCH: {ok}")
 
     return ok
