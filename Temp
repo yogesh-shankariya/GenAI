@@ -8,12 +8,20 @@ class BooleanStep(BaseModel):
     evidence: List[str]
     reason: str
 
+    model_config = {
+        "extra": "forbid"
+    }
+
 
 class FinalDecisionStep(BaseModel):
     name: str
     value: Literal["APPROVE", "DENY"]
     evidence: List[str]
     reason: str
+
+    model_config = {
+        "extra": "forbid"
+    }
 
 
 class SkilledNursingStepsOutput(BaseModel):
