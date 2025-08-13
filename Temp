@@ -1,61 +1,23 @@
 from typing import List, Literal, Union
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
-# --- Step names ---------------------------------------------------------
-STEP_NAMES_8 = [
-    "Need for Skilled Nursing Care (General Requirement)",
-    "Meets Medicare 'Intermittent/Part-time' Definition",
-    "Observation & Assessment Need (§40.1.2.1)",
-    "Teaching & Training Need (§40.1.2.3)",
-    "Medication Administration Need (§40.1.2.4A)",
-    "Catheter Care Need (§40.1.2.7)",
-    "Wound Care Need (§40.1.2.8)",
-    "Ostomy Care Need (§40.1.2.9)",
-]
-FINAL_NAME = "Final Decision"
-
-StepName8 = Literal[
-    "Need for Skilled Nursing Care (General Requirement)",
-    "Meets Medicare 'Intermittent/Part-time' Definition",
-    "Observation & Assessment Need (§40.1.2.1)",
-    "Teaching & Training Need (§40.1.2.3)",
-    "Medication Administration Need (§40.1.2.4A)",
-    "Catheter Care Need (§40.1.2.7)",
-    "Wound Care Need (§40.1.2.8)",
-    "Ostomy Care Need (§40.1.2.9)",
-]
-
-# --- First 8 steps: boolean required -----------------------------------
+# --- First 8 steps ---
 class StepDecision(BaseModel):
-    name: StepName8 = Field(..., description="Exact step name.")
-    value: bool = Field(..., description="true/false decision for this step on this page.")
-    evidence: List[str] = Field(default_factory=list, description="Verbatim supporting snippet(s).")
-    reason: str = Field(..., description="Short justification tied to evidence.")
+    name: str = Field(..., description="Exact step name.")
+    value: bool = Field(..., description="true/false for this step on this page.")
+    evidence: List[str] = Field(..., description="Verbatim snippet(s) from the page.")
+    reason: str = Field(..., description="Short justification tied to the evidence.")
     model_config = {"extra": "forbid"}
 
-# --- Step 9: final decision APPRO/DANY ---------------------------------
+# --- Final step (combined outcome) ---
 class FinalDecision(BaseModel):
-    name: Literal["Final Decision"] = Field(FINAL_NAME)
+    name: Literal["Final Decision"] = "Final Decision"
     decision: Literal["APPRO", "DANY"] = Field(..., description="Combined outcome.")
-    evidence: List[str] = Field(default_factory=list, description="Optional supporting snippet(s).")
+    evidence: List[str] = Field(..., description="Snippet(s) supporting the final decision.")
     reason: str = Field(..., description="Why APPRO or DANY based on steps 1–8.")
     model_config = {"extra": "forbid"}
 
-# --- Full output --------------------------------------------------------
+# --- Whole response ---
 class SkilledNursingPageOutput(BaseModel):
-    results: List[Union[StepDecision, FinalDecision]] = Field(..., min_length=9, max_length=9)
+    results: List[Union[StepDecision, FinalDecision]]
     model_config = {"extra": "forbid"}
-
-    @field_validator("results")
-    @classmethod
-    def enforce_order_and_types(cls, v: List[Union[StepDecision, FinalDecision]]):
-        expected = STEP_NAMES_8 + [FINAL_NAME]
-        names = [item.name for item in v]
-        if names != expected:
-            raise ValueError("results must list the 8 step names followed by 'Final Decision' in order.")
-        # first 8 must be boolean steps, last must be final decision
-        if not all(hasattr(item, "value") for item in v[:-1]):
-            raise ValueError("First 8 items must contain a boolean 'value'.")
-        if not hasattr(v[-1], "decision"):
-            raise ValueError("Item 9 must contain 'decision' with either 'APPRO' or 'DANY'.")
-        return v
