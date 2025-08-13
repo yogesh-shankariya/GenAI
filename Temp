@@ -1,151 +1,61 @@
-Below are **four complete Pydantic schemas**—one for each of the JSON examples you showed.
-Copy each snippet into its own module (or the same file, if that’s your convention) and adjust import paths as needed.
+from typing import List, Literal, Union
+from pydantic import BaseModel, Field, field_validator
 
----
+# --- Step names ---------------------------------------------------------
+STEP_NAMES_8 = [
+    "Need for Skilled Nursing Care (General Requirement)",
+    "Meets Medicare 'Intermittent/Part-time' Definition",
+    "Observation & Assessment Need (§40.1.2.1)",
+    "Teaching & Training Need (§40.1.2.3)",
+    "Medication Administration Need (§40.1.2.4A)",
+    "Catheter Care Need (§40.1.2.7)",
+    "Wound Care Need (§40.1.2.8)",
+    "Ostomy Care Need (§40.1.2.9)",
+]
+FINAL_NAME = "Final Decision"
 
-```python
-# cover_page_schema.py
-from pydantic import BaseModel, Field
+StepName8 = Literal[
+    "Need for Skilled Nursing Care (General Requirement)",
+    "Meets Medicare 'Intermittent/Part-time' Definition",
+    "Observation & Assessment Need (§40.1.2.1)",
+    "Teaching & Training Need (§40.1.2.3)",
+    "Medication Administration Need (§40.1.2.4A)",
+    "Catheter Care Need (§40.1.2.7)",
+    "Wound Care Need (§40.1.2.8)",
+    "Ostomy Care Need (§40.1.2.9)",
+]
 
-
-class CoverPagePayload(BaseModel):
-    """
-    Indicates whether the current page is a cover page.
-    """
-
-    ind: str = Field(
-        ...,
-        description="Either `cover_page` or `not cover_page`",
-    )
-
-    model_config = {"extra": "forbid"}
-```
-
----
-
-```python
-# header_segmentation_sec_heading_schema.py
-from typing import List
-from pydantic import BaseModel, Field
-
-
-class SectionHeading(BaseModel):
-    section_heading: str = Field(
-        ...,
-        description="Identified section heading in a page",
-    )
-    page_number: str = Field(
-        ...,
-        description="Page number where the section heading appears",
-    )
-    reasoning_for_section_heading: str = Field(
-        ...,
-        description="Reasoning for identifying this text as a section heading",
-    )
-
+# --- First 8 steps: boolean required -----------------------------------
+class StepDecision(BaseModel):
+    name: StepName8 = Field(..., description="Exact step name.")
+    value: bool = Field(..., description="true/false decision for this step on this page.")
+    evidence: List[str] = Field(default_factory=list, description="Verbatim supporting snippet(s).")
+    reason: str = Field(..., description="Short justification tied to evidence.")
     model_config = {"extra": "forbid"}
 
-
-class HeaderSegmentationSectionHeadingPayload(BaseModel):
-    """
-    Collection of section headings detected within the document.
-    """
-
-    sections: List[SectionHeading] = Field(
-        ...,
-        description="List of detected section headings",
-    )
-
-    model_config = {"extra": "forbid"}
-```
-
----
-
-```python
-# header_segmentation_final_output_schema.py
-from typing import List
-from pydantic import BaseModel, Field
-
-
-class EncounterSegment(BaseModel):
-    segment_sequence: str = Field(
-        ...,
-        description="Sequence number of the encounter segment",
-    )
-    segment_type: str = Field(
-        "encounter",
-        description="Type of segment (fixed to 'encounter')",
-    )
-    segment_start_page: str = Field(
-        ...,
-        description="Page number where the encounter segment starts",
-    )
-    reasoning_for_encounter: str = Field(
-        ...,
-        description="Reasoning for classifying the segment as an encounter",
-    )
-
+# --- Step 9: final decision APPRO/DANY ---------------------------------
+class FinalDecision(BaseModel):
+    name: Literal["Final Decision"] = Field(FINAL_NAME)
+    decision: Literal["APPRO", "DANY"] = Field(..., description="Combined outcome.")
+    evidence: List[str] = Field(default_factory=list, description="Optional supporting snippet(s).")
+    reason: str = Field(..., description="Why APPRO or DANY based on steps 1–8.")
     model_config = {"extra": "forbid"}
 
-
-class HeaderSegmentationFinalOutputPayload(BaseModel):
-    """
-    Details of all encounter segments detected in header segmentation.
-    """
-
-    encounters: List[EncounterSegment] = Field(
-        ...,
-        description="List of encounter segments",
-    )
-
-    model_config = {"extra": "forbid"}
-```
-
----
-
-```python
-# encounter_details_schema.py
-from typing import List
-from pydantic import BaseModel, Field
-
-
-class EncounterDetail(BaseModel):
-    segment_sequence: str = Field(
-        ...,
-        description="Sequence number of the encounter detail",
-    )
-    segment_type: str = Field(
-        ...,
-        description="Type of segment",
-    )
-    segment_start_page: str = Field(
-        ...,
-        description="Page number where the encounter starts",
-    )
-
+# --- Full output --------------------------------------------------------
+class SkilledNursingPageOutput(BaseModel):
+    results: List[Union[StepDecision, FinalDecision]] = Field(..., min_length=9, max_length=9)
     model_config = {"extra": "forbid"}
 
-
-class Encounter(BaseModel):
-    encounter_details: List[EncounterDetail] = Field(
-        ...,
-        description="List of detailed encounter segments",
-    )
-
-    model_config = {"extra": "forbid"}
-
-
-class EncounterDetailsPayload(BaseModel):
-    """
-    Wrapper object for encounter details.
-    """
-
-    encounter: Encounter = Field(
-        ...,
-        description="Encounter object containing detailed segments",
-    )
-
-    model_config = {"extra": "forbid"}
-```
-
-Each schema mirrors its respective JSON structure, enforces field presence with `...`, forbids unexpected fields via `model_config = {"extra": "forbid"}`, and includes concise field descriptions for clarity.
+    @field_validator("results")
+    @classmethod
+    def enforce_order_and_types(cls, v: List[Union[StepDecision, FinalDecision]]):
+        expected = STEP_NAMES_8 + [FINAL_NAME]
+        names = [item.name for item in v]
+        if names != expected:
+            raise ValueError("results must list the 8 step names followed by 'Final Decision' in order.")
+        # first 8 must be boolean steps, last must be final decision
+        if not all(hasattr(item, "value") for item in v[:-1]):
+            raise ValueError("First 8 items must contain a boolean 'value'.")
+        if not hasattr(v[-1], "decision"):
+            raise ValueError("Item 9 must contain 'decision' with either 'APPRO' or 'DANY'.")
+        return v
