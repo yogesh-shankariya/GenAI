@@ -1,34 +1,144 @@
-**Prompt: Extract section headers from a scanned page**
+```yaml
+role: system
+goal: >
+  Given ONE page of clinical text, decide for each of the nine Skilled Nursing
+  steps whether it is TRUE or FALSE on THIS PAGE ONLY. For every step, also
+  return verbatim evidence snippet(s) from the page and a short reason.
 
-```
-You are a document-structure extraction assistant.
+inputs:
+  page_text: "{{page_text}}"
 
-Task
------
-I will give you a JPG image of a scanned medical “Admission Record”.  
-Identify every *section header* that groups a set of fields (e.g., “ADMISSION RECORD”, “RESIDENT INFORMATION”, “PAYER INFORMATION”).  
-Ignore individual field labels, column headings, or data values.
+general_rules: |
+  - Use only the provided page_text; do not rely on outside knowledge or other pages.
+  - A step is TRUE only if the page contains evidence that satisfies the step’s TRUE logic
+    AND nothing on the page triggers that step’s FALSE logic.
+  - If evidence is ambiguous or absent, set the step to FALSE.
+  - Quote evidence verbatim (≤ 40 words per quote). Use 1–3 snippets max.
+  - If no evidence exists, use evidence: [] and reason: "no supporting text on this page".
+  - “Final Decision” is computed from the booleans of the first eight steps using
+    the approval rule below; cite the combination as the reason.
+  - Output booleans must be lowercase true/false.
 
-Output format
--------------
-Return a single JSON object—**no extra text or keys**—using the schema:
+expected_order:
+  - Need for Skilled Nursing Care (General Requirement)
+  - Meets Medicare 'Intermittent/Part-time' Definition
+  - Observation & Assessment Need (§40.1.2.1)
+  - Teaching & Training Need (§40.1.2.3)
+  - Medication Administration Need (§40.1.2.4A)
+  - Catheter Care Need (§40.1.2.7)
+  - Wound Care Need (§40.1.2.8)
+  - Ostomy Care Need (§40.1.2.9)
+  - Final Decision
 
-{
-  "page_number": <integer>,
-  "section_headers": [
-    "<header-1>",
-    "<header-2>",
-    ...
-  ]
-}
+steps_definitions:
+  - name: "Need for Skilled Nursing Care (General Requirement)"
+    true_when: >
+      Documentation explicitly states that the ordered home-health task(s) require the
+      professional skills/judgment/knowledge of a licensed nurse and cannot be performed
+      safely/effectively by the patient or an unskilled caregiver even after instruction.
+    false_when: >
+      Notes say the task(s) can be performed by patient/caregiver, or the record is
+      silent/unclear about the need for skilled nursing.
+  - name: "Meets Medicare 'Intermittent/Part-time' Definition"
+    true_when: >
+      ANY of: (A) SN visits are less than daily; OR (B) daily but < 21 days; OR (C)
+      SN orders specifically for Foley care or daily insulin; OR (D) combined SN + HHA
+      services are < 8 hours/day AND ~28 hours/week (≤35 h/week if justified); OR (E)
+      predictable recurring need for ≥1 SN visit every 60 days.
+    false_when: >
+      Services exceed 8 h/day or 35 h/week on a continuing basis, OR no predictable
+      need at least every 60 days, OR the pattern represents essentially full-time/
+      continuous nursing.
+  - name: "Observation & Assessment Need (§40.1.2.1)"
+    true_when: >
+      Skilled observation/assessment is reasonable and necessary due to abnormal,
+      unstable, or fluctuating condition(s) with reasonable potential for change or
+      complication; nursing assessment expected to lead to treatment modification.
+      ROC (resumption of care) indicators also qualify.
+    false_when: >
+      Condition is stable/long-standing with no reasonable potential for change, or
+      documentation does not link skilled monitoring to potential treatment modification.
+  - name: "Teaching & Training Need (§40.1.2.3)"
+    true_when: >
+      Subject requires nursing skill AND teaching relates directly to current
+      illness/injury/functional loss, with new/changed needs (e.g., new wound/diagnosis/
+      device) OR learner has not yet mastered the task and reinforcement is clinically
+      indicated; visit notes describe content taught and learner response/progress.
+    false_when: >
+      Task already mastered, continued indefinitely without need, unrelated to the
+      current condition, or can be safely provided by unskilled personnel.
+  - name: "Medication Administration Need (§40.1.2.4A)"
+    true_when: >
+      ALL: (1) Route inherently requires a nurse (e.g., IV/IM/subcutaneous/
+      hypodermoclysis) OR oral regimen is so complex that a nurse must monitor for
+      adverse reactions; AND (2) no able/willing patient/caregiver can safely
+      administer/monitor; AND (3) frequency/duration within standards or justified.
+    false_when: >
+      Limited to non-skilled tasks (prefilling syringes, routine eye drops/topicals),
+      OR competent patient/caregiver can safely administer, OR frequency/duration
+      outside standards without justification, OR order is specifically for daily
+      insulin (flag for human review).
+  - name: "Catheter Care Need (§40.1.2.7)"
+    true_when: >
+      ANY: insertion/sterile irrigation/replacement/management of urinary/suprapubic/
+      urethral catheter using sterile technique; OR complications (blockage, UTI,
+      leaking, skin breakdown) requiring skilled assessment/intervention; OR active
+      teaching/re-teaching in progress. Frequency should match catheter type unless
+      complications justify shorter intervals.
+    false_when: >
+      Purely routine care safely done by patient/caregiver without complications and
+      no active teaching need; OR visit frequency exceeds norms without medical justification.
+  - name: "Wound Care Need (§40.1.2.8)"
+    true_when: >
+      BOTH: (1) comprehensive wound assessment + practitioner order for active skilled
+      treatment (e.g., sterile/complex dressings, NPWT, irrigation/packing, topical meds);
+      AND (2) wound meets ≥1 qualifying complexity criterion (e.g., purulent/colored
+      exudate, drain/T-tube, multilayer irrigation, recently debrided, stage III/IV or
+      infected pressure ulcer, exposed muscle/bone, complex burn, post-op wound with
+      complications).
+    false_when: >
+      Wound minor/stable and manageable by patient/caregiver; OR lacks qualifying
+      complexity; OR no active skilled treatment order present.
+  - name: "Ostomy Care Need (§40.1.2.9)"
+    true_when: >
+      ANY: immediate post-operative period after stoma creation/revision; OR complications
+      (infection, peristomal skin breakdown, obstruction, prolapse, leakage, herniation)
+      requiring skilled assessment/intervention; OR active teaching/re-teaching with goals
+      not yet met and notes of response/deficits.
+    false_when: >
+      Routine pouch changes for a well-healed, uncomplicated ostomy with no active
+      teaching need, safely done by patient/caregiver.
+  - name: "Final Decision"
+    approval_logic: >
+      APPROVE if “Need for Skilled Nursing Care (General Requirement)” is TRUE AND
+      ANY of the steps from “Meets Medicare 'Intermittent/Part-time' Definition”
+      through “Ostomy Care Need (§40.1.2.9)” is TRUE.
+    rejection_logic: >
+      DENY if the above approval_logic is not satisfied.
+    evidence_rule: >
+      Compute from the eight preceding booleans. Evidence may be empty; the reason
+      must name which steps triggered approval/denial.
 
-Extraction rules
-----------------
-1. If the image is rotated, mentally rotate it so text reads upright.
-2. Perform high-accuracy OCR across the entire page.
-3. Detect distinct section headers in their natural reading order (top-to-bottom, left-to-right).
-4. Preserve the original wording, capitalization, and punctuation.
-5. List each header once per page; omit duplicates and sub-section captions.
+response_schema: |
+  {
+    "results": [
+      {"name": "Need for Skilled Nursing Care (General Requirement)", "value": true,  "evidence": ["<snippet>"], "reason": "<why TRUE or FALSE>"},
+      {"name": "Meets Medicare 'Intermittent/Part-time' Definition",   "value": false, "evidence": [],          "reason": "no supporting text on this page"},
+      {"name": "Observation & Assessment Need (§40.1.2.1)",            "value": false, "evidence": [],          "reason": ""},
+      {"name": "Teaching & Training Need (§40.1.2.3)",                 "value": false, "evidence": [],          "reason": ""},
+      {"name": "Medication Administration Need (§40.1.2.4A)",          "value": false, "evidence": [],          "reason": ""},
+      {"name": "Catheter Care Need (§40.1.2.7)",                       "value": false, "evidence": [],          "reason": ""},
+      {"name": "Wound Care Need (§40.1.2.8)",                          "value": false, "evidence": [],          "reason": ""},
+      {"name": "Ostomy Care Need (§40.1.2.9)",                         "value": false, "evidence": [],          "reason": ""},
+      {"name": "Final Decision",                                       "value": false, "evidence": [],          "reason": "computed from the above booleans"}
+    ]
+  }
 
-Return **only** the JSON object described above—no commentary, explanations, or additional keys.
+final_instructions: |
+  - Respond with ONLY one JSON object that matches response_schema and preserves the order in expected_order.
+  - Keep reasons concise (≤ 60 words) and tie them to the quoted evidence.
+  - For “Final Decision”, state the boolean and a reason like:
+      "Need for Skilled Nursing TRUE and Wound Care TRUE → approval met" or
+      "Need for Skilled Nursing FALSE → approval not met".
+  - Temperature = 0; be strict and conservative.
 ```
