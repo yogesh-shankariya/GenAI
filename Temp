@@ -1,112 +1,80 @@
 import json
-import re
 from pathlib import Path
-from collections import defaultdict, OrderedDict
-from typing import Union, List, Dict
+from typing import Union, List, Dict, Any
 
-PAGE_RE = re.compile(r"page-(\d+)\.json$", re.IGNORECASE)
-
-def _pages_in(dir_path: Path) -> List[Path]:
-    pages = []
-    for p in dir_path.glob("page-*.json"):
-        m = PAGE_RE.search(p.name)
-        if m:
-            pages.append((int(m.group(1)), p))
-    pages.sort(key=lambda x: x[0])
-    return [p for _, p in pages]
-
-def _gather_case_folders(json_root: Path) -> List[Path]:
-    folders = set()
-    for p in json_root.rglob("page-*.json"):
-        folders.add(p.parent)
-    return sorted(folders)
-
-def combine_page_jsons(
-    json_root: Union[str, Path],
-    output_root: Union[str, Path, None] = None,
-    combined_filename: str = "combined.json",
-    false_reason_msg: str = "no supporting text on all the page",
+def build_master_combined(
+    master_folder: Union[str, Path],
+    output_filename: str = "combined_master.json",
+    case_key: str = "folder",
+    count_key: str = "true_page_count",
+    pages_key: str = "true_pages",
+    steps_key: str = "steps",
     final_step_name: str = "Final Decision",
     approve_token: str = "APPROVE"
-) -> List[str]:
+) -> str:
     """
-    Build one combined.json per folder containing page-*.json.
+    Merge all subfolder-level `combined.json` files under `master_folder`
+    into a single master JSON. For each subfolder we emit an object:
 
-    Rules:
-      - Normal steps: include only items with value == True.
-      - Final Decision step (name matches `final_step_name`, case-insensitive):
-          include only items whose value == approve_token ("APPROVE" by default).
-          If none found, emit default {value: False, reason: false_reason_msg}.
+      {
+        "<case_key>": <subfolder name>,
+        "<count_key>": <# of unique pages with positive hits>,
+        "<pages_key>": [list of page numbers with positive hits],
+        "<steps_key>": <the original combined.json content as-is (list)>
+      }
+
+    Positive hit rules:
+      - Normal steps: item['value'] is True
+      - Final Decision: item['value'] equals approve_token (case-insensitive)
+
+    Returns the path to the written master JSON.
     """
-    json_root = Path(json_root).resolve()
-    out_root = Path(output_root).resolve() if output_root else None
-
-    written: List[str] = []
-    case_folders = _gather_case_folders(json_root)
+    root = Path(master_folder).resolve()
+    out_path = root / output_filename
     final_key = final_step_name.strip().lower()
-    approve_token_u = approve_token.upper()
+    approve_u = approve_token.upper()
 
-    for case_dir in case_folders:
-        out_dir = (out_root / case_dir.relative_to(json_root)) if out_root else case_dir
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out_file = out_dir / combined_filename
+    # find every combined.json one level or many levels below
+    combined_files = sorted(root.rglob("combined.json"))
 
-        hits_by_name: Dict[str, List[OrderedDict]] = defaultdict(list)
-        step_order: List[str] = []
+    master_payload: List[Dict[str, Any]] = []
 
-        for page_path in _pages_in(case_dir):
-            try:
-                data = json.loads(page_path.read_text(encoding="utf-8"))
-            except Exception:
-                data = {}
+    for cfile in combined_files:
+        try:
+            steps = json.loads(cfile.read_text(encoding="utf-8"))
+        except Exception:
+            # skip unreadable/bad JSON
+            continue
 
-            results = data.get("results", [])
-            # record first-seen step order
-            for item in results:
-                nm = item.get("name")
-                if nm and nm not in step_order:
-                    step_order.append(nm)
+        # collect unique pages with positive hits
+        positive_pages = set()
 
-            m = PAGE_RE.search(page_path.name)
-            page_no = int(m.group(1)) if m else None
+        for step in steps if isinstance(steps, list) else []:
+            name = (step.get("name") or "").strip().lower()
+            is_final = name == final_key
+            results = step.get("results", [])
 
             for item in results:
-                nm = item.get("name")
-                if not nm:
-                    continue
-                is_final = nm.strip().lower() == final_key
                 val = item.get("value")
+                page = item.get("page")
 
-                if is_final:
-                    if isinstance(val, str) and val.strip().upper() == approve_token_u:
-                        entry = OrderedDict()
-                        entry["page"] = page_no
-                        entry["value"] = approve_token_u
-                        entry["evidence"] = item.get("evidence", [])
-                        entry["reason"] = item.get("reason", "")
-                        hits_by_name[nm].append(entry)
-                else:
-                    if val is True:
-                        entry = OrderedDict()
-                        entry["page"] = page_no
-                        entry["value"] = True
-                        entry["evidence"] = item.get("evidence", [])
-                        entry["reason"] = item.get("reason", "")
-                        hits_by_name[nm].append(entry)
+                # positive for normal steps
+                if not is_final and val is True and isinstance(page, int):
+                    positive_pages.add(page)
 
-        combined = []
-        for nm in step_order:
-            obj = OrderedDict()
-            obj["name"] = nm
-            if hits_by_name.get(nm):
-                obj["results"] = hits_by_name[nm]
-            else:
-                obj["results"] = [OrderedDict([("value", False), ("reason", false_reason_msg)])]
-            combined.append(obj)
+                # positive for Final Decision only if APPROVE
+                if is_final and isinstance(val, str) and val.strip().upper() == approve_u and isinstance(page, int):
+                    positive_pages.add(page)
 
-        out_file.write_text(json.dumps(combined, ensure_ascii=False, indent=2), encoding="utf-8")
-        written.append(str(out_file))
-        print(f"Wrote: {out_file}")
+        entry = {
+            case_key: cfile.parent.name,                       # subfolder name
+            count_key: len(positive_pages),
+            pages_key: sorted(positive_pages),
+            steps_key: steps                                    # your existing combined content, unchanged
+        }
+        master_payload.append(entry)
 
-    print(f"\nFolders processed: {len(case_folders)}")
-    return written
+    # write master file
+    out_path.write_text(json.dumps(master_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"Wrote: {out_path}")
+    return str(out_path)
