@@ -1,32 +1,9 @@
-def inline_refs(model_cls) -> dict:
-    """
-    Recursively inline all $ref references in model_json_schema(), including
-    string refs used in discriminator.mapping (e.g. '#/$defs/BoolStep').
-    """
-    schema = model_cls.model_json_schema()
-    defs = schema.get("$defs", {})
+- from typing import List, Literal, Union, Annotated
++ from typing import List, Literal, Union
 
-    def resolve(obj):
-        # 1) dict: inline {"$ref": "..."} and walk fields (dropping $defs)
-        if isinstance(obj, dict):
-            if "$ref" in obj:
-                key = obj["$ref"].split("/")[-1]
-                return resolve(defs.get(key, {}))
-            return {k: resolve(v) for k, v in obj.items() if k != "$defs"}
+...  # your BoolStep and FinalDecisionStep stay exactly as you wrote them
 
-        # 2) list: recurse
-        if isinstance(obj, list):
-            return [resolve(i) for i in obj]
-
-        # 3) string: inline '#/$defs/...'
-        if isinstance(obj, str) and obj.startswith("#/$defs/"):
-            key = obj.split("/")[-1]
-            return resolve(defs.get(key, {}))
-
-        return obj
-
-    inlined = resolve(schema)
-    if isinstance(inlined, dict):
-        inlined.pop("$defs", None)
-        inlined.pop("definitions", None)  # safety for alt key
-    return inlined
+- # Discriminated union on "name"
+- Step = Annotated[Union[BoolStep, FinalDecisionStep], Field(discriminator="name")]
++ # Plain union (no discriminator) to satisfy strict JSON Schema validators
++ Step = Union[BoolStep, FinalDecisionStep]
