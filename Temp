@@ -1,64 +1,111 @@
+import json
+import re
 from pathlib import Path
-from collections import defaultdict
-from typing import Union
+from collections import defaultdict, OrderedDict
+from typing import Union, List, Dict
 
-def _index_stems_by_dir(root: Path, pattern: str):
+PAGE_RE = re.compile(r"page-(\d+)\.json$", re.IGNORECASE)
+
+def _pages_in(dir_path: Path) -> List[Path]:
+    """Return sorted page-*.json files in a folder (by page number)."""
+    pages = []
+    for p in dir_path.glob("page-*.json"):
+        m = PAGE_RE.search(p.name)
+        if m:
+            pages.append((int(m.group(1)), p))
+    pages.sort(key=lambda x: x[0])
+    return [p for _, p in pages]
+
+def _gather_case_folders(json_root: Path) -> List[Path]:
+    """Find all folders that contain at least one page-*.json."""
+    folders = set()
+    for p in json_root.rglob("page-*.json"):
+        folders.add(p.parent)
+    return sorted(folders)
+
+def combine_page_jsons(
+    json_root: Union[str, Path],
+    output_root: Union[str, Path, None] = None,
+    combined_filename: str = "combined.json",
+    false_reason_msg: str = "no supporting text on all the page"
+) -> List[str]:
     """
-    Return: dict[relative_dir -> set of file stems]
-    Example stem: 'page-1' for 'page-1.json' or 'page-1.txt'
+    For every folder under `json_root` that contains page-*.json:
+      - merge results by 'name'
+      - keep only entries with value == True, recording page number, value, evidence, reason
+      - if a step has no True anywhere, emit a single {value:false, reason:false_reason_msg}
+    Write one combined JSON per folder, mirroring hierarchy under `output_root` (or in-place if None).
+
+    Returns list of written file paths.
     """
-    idx = defaultdict(set)
-    for p in root.rglob(pattern):
-        if p.is_file():
-            rel = p.relative_to(root)
-            idx[rel.parent].add(p.stem)   # stem = filename without extension
-    return idx
+    json_root = Path(json_root).resolve()
+    out_root = Path(output_root).resolve() if output_root else None
 
-def compare_json_vs_txt(json_root: Union[str, Path],
-                        txt_root: Union[str, Path],
-                        verbose: bool = True) -> bool:
-    """
-    Cross-check that every folder under `json_root` and `txt_root`
-    contains the same page stems (e.g., page-1, page-2, ...) regardless of extension.
+    written: List[str] = []
+    case_folders = _gather_case_folders(json_root)
 
-    Returns True if all folders match exactly, else False.
-    Prints per-folder details.
-    """
-    jroot = Path(json_root).resolve()
-    troot = Path(txt_root).resolve()
+    for case_dir in case_folders:
+        # Determine output path (mirror hierarchy if output_root is provided)
+        if out_root:
+            rel = case_dir.relative_to(json_root)
+            out_dir = (out_root / rel)
+        else:
+            out_dir = case_dir
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_file = out_dir / combined_filename
 
-    j_idx = _index_stems_by_dir(jroot, "*.json")
-    t_idx = _index_stems_by_dir(troot, "*.txt")
+        # Accumulate hits by step-name
+        hits_by_name: Dict[str, List[OrderedDict]] = defaultdict(list)
+        step_order: List[str] = []
 
-    ok = True
-    all_dirs = sorted(set(j_idx.keys()) | set(t_idx.keys()), key=lambda p: p.as_posix())
+        pages = _pages_in(case_dir)
+        for page_path in pages:
+            page_text = page_path.read_text(encoding="utf-8") or "{}"
+            try:
+                data = json.loads(page_text)
+            except json.JSONDecodeError:
+                data = {}
 
-    for d in all_dirs:
-        j_stems = j_idx.get(d, set())
-        t_stems = t_idx.get(d, set())
+            results = data.get("results", [])
+            # record order the first time we see a step name
+            for item in results:
+                nm = item.get("name")
+                if nm is None:
+                    continue
+                if nm not in step_order:
+                    step_order.append(nm)
 
-        if j_stems == t_stems:
-            if verbose:
-                print(f"[OK] {d.as_posix() or '.'}: {len(j_stems)} files match")
-            continue
+            # collect True entries
+            m = PAGE_RE.search(page_path.name)
+            page_no = int(m.group(1)) if m else None
+            for item in results:
+                if item.get("value") is True:
+                    nm = item.get("name")
+                    if nm is None:
+                        continue
+                    entry = OrderedDict()
+                    entry["page"] = page_no
+                    entry["value"] = True
+                    entry["evidence"] = item.get("evidence", [])
+                    entry["reason"] = item.get("reason", "")
+                    hits_by_name[nm].append(entry)
 
-        ok = False
-        if verbose:
-            print(f"[MISMATCH] {d.as_posix() or '.'}")
-            missing_txt  = sorted(j_stems - t_stems)  # expected in .txt but not found
-            extra_txt    = sorted(t_stems - j_stems)  # present in .txt but not in .json
-            if missing_txt:
-                print(f"  Missing in TXT: {missing_txt}")
-            if extra_txt:
-                print(f"  Extra in TXT:   {extra_txt}")
-            print(f"  Counts → json:{len(j_stems)} txt:{len(t_stems)}")
+        # Build combined output preserving step order
+        combined = []
+        for nm in step_order:
+            obj = OrderedDict()
+            obj["name"] = nm
+            if hits_by_name.get(nm):  # at least one True somewhere
+                obj["results"] = hits_by_name[nm]
+            else:
+                obj["results"] = [OrderedDict([("value", False), ("reason", false_reason_msg)])]
+            combined.append(obj)
 
-    if verbose:
-        total_json = sum(len(v) for v in j_idx.values())
-        total_txt  = sum(len(v) for v in t_idx.values())
-        print("\nSummary:")
-        print(f"  Total json pages: {total_json}")
-        print(f"  Total txt  pages: {total_txt}")
-        print(f"  MATCH: {ok}")
+        # Persist
+        out_file.write_text(json.dumps(combined, ensure_ascii=False, indent=2), encoding="utf-8")
+        written.append(str(out_file))
+        print(f"Wrote: {out_file}")
 
-    return ok
+    # Summary
+    print(f"\nFolders processed: {len(case_folders)}")
+    return written
