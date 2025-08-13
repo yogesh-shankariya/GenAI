@@ -1,41 +1,95 @@
-from typing import List, Literal
-from pydantic import BaseModel, Field
+from typing import List, Literal, Union, Annotated
+from pydantic import BaseModel, Field, model_validator
 
 
-class BooleanStep(BaseModel):
-    name: str
-    value: bool
-    evidence: List[str]
-    reason: str
+# --- exact step names -------------------------------------------------------
+BoolStepName = Literal[
+    "Need for Skilled Nursing Care (General Requirement)",
+    "Meets Medicare “Intermittent/Part-time” Definition",
+    "Observation & Assessment Need",
+    "Teaching & Training Need",
+    "Medication Administration Need",
+    "Catheter Care Need",
+    "Wound Care Need",
+    "Ostomy Care Need",
+]
+FinalDecisionName = Literal["Final Decision"]
 
-    model_config = {
-        "extra": "forbid"
-    }
+EXPECTED_ORDER: List[str] = [
+    "Need for Skilled Nursing Care (General Requirement)",
+    "Meets Medicare “Intermittent/Part-time” Definition",
+    "Observation & Assessment Need",
+    "Teaching & Training Need",
+    "Medication Administration Need",
+    "Catheter Care Need",
+    "Wound Care Need",
+    "Ostomy Care Need",
+    "Final Decision",
+]
+
+
+# --- per-step schemas -------------------------------------------------------
+class BoolStep(BaseModel):
+    name: BoolStepName = Field(
+        ...,
+        description="Exact step name as listed; one of the first eight steps."
+    )
+    value: bool = Field(
+        ...,
+        description="Must be a boolean for the first eight steps."
+    )
+    evidence: List[str] = Field(
+        ...,
+        description="Snippets from the actual page text supporting the step."
+    )
+    reason: str = Field(
+        ...,
+        description="Short justification explaining why the value is True/False."
+    )
+
+    model_config = {"extra": "forbid"}
 
 
 class FinalDecisionStep(BaseModel):
-    name: str
-    value: Literal["APPROVE", "DENY"]
-    evidence: List[str]
-    reason: str
+    name: FinalDecisionName = Field(
+        ...,
+        description='Exact step name "Final Decision".'
+    )
+    value: Literal["APPROVE", "DENY"] = Field(
+        ...,
+        description='Only "APPROVE" or "DENY".'
+    )
+    evidence: List[str] = Field(
+        ...,
+        description="Snippets used to compute the final decision."
+    )
+    reason: str = Field(
+        ...,
+        description="Explain how the decision was computed from the eight booleans."
+    )
 
-    model_config = {
-        "extra": "forbid"
-    }
+    model_config = {"extra": "forbid"}
 
 
-class SkilledNursingStepsOutput(BaseModel):
-    need_for_skilled_nursing_care: BooleanStep = Field(..., alias="Need for Skilled Nursing Care (General Requirement)")
-    meets_medicare_defn: BooleanStep = Field(..., alias='Meets Medicare “Intermittent/Part-time” Definition')
-    observation_and_assessment: BooleanStep = Field(..., alias="Observation & Assessment Need")
-    teaching_and_training: BooleanStep = Field(..., alias="Teaching & Training Need")
-    medication_admin: BooleanStep = Field(..., alias="Medication Administration Need")
-    catheter_care: BooleanStep = Field(..., alias="Catheter Care Need")
-    wound_care: BooleanStep = Field(..., alias="Wound Care Need")
-    ostomy_care: BooleanStep = Field(..., alias="Ostomy Care Need")
-    final_decision: FinalDecisionStep = Field(..., alias="Final Decision")
+# Discriminated union on "name" so types are enforced by the exact step name
+Step = Annotated[Union[BoolStep, FinalDecisionStep], Field(discriminator="name")]
 
-    model_config = {
-        "extra": "forbid",
-        "populate_by_name": True
-    }
+
+# --- final payload schema (matches second & third attachments) --------------
+class SkilledNursingStepsOutputPayload(BaseModel):
+    results: List[Step] = Field(
+        ...,
+        description="Exactly 9 items in the required order with exact step names."
+    )
+
+    model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def _validate_results(self):
+        names = [r.name for r in self.results]
+        if names != EXPECTED_ORDER:
+            raise ValueError(
+                "results must contain exactly the following 9 items in order: "
+                + " | ".join(EXPECTED_ORDER)
+            )
+        return self
