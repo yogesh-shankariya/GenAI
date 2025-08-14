@@ -1,83 +1,63 @@
 import json
 from pathlib import Path
 
-def _get_ci(d: dict, key: str, fallbacks=()):
-    """case-insensitive get with optional fallback keys"""
-    if key in d:
-        return d[key]
-    lk = key.lower()
-    for k, v in d.items():
-        if k.lower() == lk:
-            return v
-    for fb in fallbacks:
-        if fb in d:
-            return d[fb]
-        fl = fb.lower()
-        for k, v in d.items():
-            if k.lower() == fl:
-                return v
-    return ""
-
-def map_pairs_with_combined(
-    combined_root: str,                # e.g. ".../Combined_Json_Final"
-    pair_extraction_json: str,         # e.g. "Paired_Extraction_Information.json"
-    output_root: str,                  # e.g. ".../Combined_Json_Mapped"
-    num_instructions: int = 23,
+def combined_json_to_markdown_tree(
+    input_root: str,                  # root that contains case folders with combined.json
+    output_root: str,                 # where to write the .md files (mirrors hierarchy)
     in_filename: str = "combined.json",
-    out_filename: str = "combined.json",
+    out_filename: str = "combined.md",
+    num_instructions: int = 23
 ) -> None:
     """
-    For each case combined.json under combined_root, write a new combined.json under output_root:
-    {
-      "original_extraction_information_1": "...",
-      "revised_extraction_information_1": "...",
-      "extracted_context_1": "...",
-      ...
-      "original_extraction_information_23": "...",
-      "revised_extraction_information_23": "...",
-      "extracted_context_23": "..."
-    }
+    For each .../<CASE>/combined.json containing:
+      original_extraction_information_i
+      revised_extraction_information_i
+      extracted_context_i
+    write .../<CASE>/combined.md with readable Markdown.
+
+    The directory structure under output_root mirrors input_root.
     """
-    combined_root = Path(combined_root)
-    output_root = Path(output_root)
+    in_root = Path(input_root)
+    out_root = Path(output_root)
 
-    # Load the original/revised pairs once
-    pairs = json.loads(Path(pair_extraction_json).read_text(encoding="utf-8"))
-
-    # Walk every case combined.json under combined_root (keeps any group/case hierarchy)
-    for cmb_path in combined_root.rglob(in_filename):
+    for json_path in in_root.rglob(in_filename):
         try:
-            case_combined = json.loads(cmb_path.read_text(encoding="utf-8"))
+            data = json.loads(json_path.read_text(encoding="utf-8"))
         except Exception:
             continue
 
-        out_obj = {}
+        # Build markdown
+        parts = []
+        # Case title = parent folder name
+        case_title = json_path.parent.name
+        parts.append(f"# {case_title} — Combined Extraction\n")
+
         for i in range(1, num_instructions + 1):
-            orig = _get_ci(pairs, f"original_extraction_information_{i}")
-            rev  = _get_ci(pairs, f"revised_extraction_information_{i}")
-            ctx  = _get_ci(
-                case_combined,
-                f"revised_extraction_information_{i}",
-                fallbacks=(f"Extracted_Text_{i}", f"extracted_context_{i}")
-            )
-            if not isinstance(ctx, str):  # normalize to string
-                ctx = json.dumps(ctx, ensure_ascii=False)
+            orig = data.get(f"original_extraction_information_{i}", "").strip()
+            rev  = data.get(f"revised_extraction_information_{i}", "").strip()
+            ctx  = data.get(f"extracted_context_{i}", "").strip()
 
-            out_obj[f"original_extraction_information_{i}"] = orig if isinstance(orig, str) else json.dumps(orig, ensure_ascii=False)
-            out_obj[f"revised_extraction_information_{i}"]  = rev  if isinstance(rev,  str) else json.dumps(rev,  ensure_ascii=False)
-            out_obj[f"extracted_context_{i}"]                = ctx.strip()
+            # Skip step if all empty
+            if not (orig or rev or ctx):
+                continue
 
-        # Mirror the hierarchy in output_root
-        rel_dir = cmb_path.parent.relative_to(combined_root)
-        out_dir = output_root / rel_dir
+            parts.append(f"## Step {i}\n")
+            if orig:
+                parts.append("**Original Extraction Information**\n")
+                parts.append(f"> {orig.replace('\n', '\n> ')}\n")
+            if rev:
+                parts.append("**Revised Extraction Information**\n")
+                parts.append(f"> {rev.replace('\n', '\n> ')}\n")
+            if ctx:
+                parts.append("**Extracted Context**\n")
+                parts.append("```text")
+                parts.append(ctx)
+                parts.append("```\n")
+
+        md_text = "\n".join(parts).strip() + "\n"
+
+        # Mirror hierarchy
+        rel_dir = json_path.parent.relative_to(in_root)
+        out_dir = out_root / rel_dir
         out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / out_filename).write_text(json.dumps(out_obj, indent=2, ensure_ascii=False), encoding="utf-8")
-
-
-
-map_pairs_with_combined(
-    combined_root="/.../Combined_Json_Final",
-    pair_extraction_json="/.../Paired_Extraction_Information.json",
-    output_root="/.../Combined_Json_Mapped",
-    num_instructions=23
-)
+        (out_dir / out_filename).write_text(md_text, encoding="utf-8")
