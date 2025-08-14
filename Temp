@@ -1,15 +1,14 @@
-Rewrite the following extraction instruction so it clearly tells an annotator what to
-extract from a HOME-HEALTH PDF section.
+from pydantic import BaseModel, Field
 
-Requirements:
-- Assume the WHOLE section text is available.
-- Use imperative voice; be specific and testable.
-- Name exactly WHAT to capture and WHERE it is usually found (orders, POC, notes, H&P, schedules).
-- Include needed fields (dates, frequency, duration, discipline, diagnosis links, updates/ addenda).
-- Call out common EXCLUSIONS if implied (e.g., items outside the certification period, PRN only).
-- ≤ 110 words. Keep original meaning; do not add new criteria.
+class RevisedExtractionInfo(BaseModel):
+    Revised_Extraction_Information: str = Field(
+        ...,
+        description="Rewritten instruction that clearly states what to extract from the PDF section in home-health context."
+    )
 
-Return as plain text only.
+    model_config = {
+        "extra": "forbid"  # disallow any keys other than the one above
+    }
 
-Original instruction:
-{{ORIGINAL_INSTRUCTION}}
+# JSON Schema to pass to an LLM if needed
+LLM_SCHEMA = RevisedExtractionInfo.model_json_schema()
