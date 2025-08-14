@@ -1,72 +1,15 @@
-import json
-import os
-from typing import Any, Dict, Iterable
+Rewrite the following extraction instruction so it clearly tells an annotator what to
+extract from a HOME-HEALTH PDF section.
 
-def extract_extraction_instructions(input_json_path: str, output_json_path: str) -> Dict[str, str]:
-    """
-    Collect every extraction instruction under sections → data_points (or data-points)
-    and write a single JSON:
-      {"extraction_instruction_1": "...", "extraction_instruction_2": "...", ...}
-    Returns the dict that was written.
-    """
-    if not os.path.isfile(input_json_path):
-        raise FileNotFoundError(f"Input file not found: {input_json_path}")
+Requirements:
+- Assume the WHOLE section text is available.
+- Use imperative voice; be specific and testable.
+- Name exactly WHAT to capture and WHERE it is usually found (orders, POC, notes, H&P, schedules).
+- Include needed fields (dates, frequency, duration, discipline, diagnosis links, updates/ addenda).
+- Call out common EXCLUSIONS if implied (e.g., items outside the certification period, PRN only).
+- ≤ 110 words. Keep original meaning; do not add new criteria.
 
-    with open(input_json_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+Return as plain text only.
 
-    visited_dp_ids = set()  # prevent double-yielding the same object
-
-    def iter_data_points(node: Any) -> Iterable[Dict[str, Any]]:
-        if isinstance(node, dict):
-            # Handle both key styles, but DO NOT recurse into them again
-            for key in ("data_points", "data-points"):
-                if isinstance(node.get(key), list):
-                    for dp in node[key]:
-                        if isinstance(dp, dict):
-                            obj_id = id(dp)
-                            if obj_id not in visited_dp_ids:
-                                visited_dp_ids.add(obj_id)
-                                yield dp
-            # Recurse into other children, skipping the data_points keys we already handled
-            for k, v in node.items():
-                if k in ("data_points", "data-points"):
-                    continue
-                if isinstance(v, (dict, list)):
-                    yield from iter_data_points(v)
-
-        elif isinstance(node, list):
-            for item in node:
-                yield from iter_data_points(item)
-
-    out: Dict[str, str] = {}
-    idx = 1
-
-    for dp in iter_data_points(data):
-        # Accept plural or singular key
-        instr = dp.get("extraction_instructions")
-        if instr is None:
-            instr = dp.get("extraction_instruction")
-        if instr is None:
-            continue
-
-        # Normalize to a single string
-        if isinstance(instr, str):
-            value = instr.strip()
-        elif isinstance(instr, list):
-            parts = []
-            for x in instr:
-                parts.append(x if isinstance(x, str) else json.dumps(x, ensure_ascii=False))
-            value = "\n".join(p.strip() for p in parts if p and p.strip())
-        else:
-            value = json.dumps(instr, ensure_ascii=False)
-
-        if value:
-            out[f"extraction_instruction_{idx}"] = value
-            idx += 1
-
-    os.makedirs(os.path.dirname(output_json_path) or ".", exist_ok=True)
-    with open(output_json_path, "w", encoding="utf-8") as f:
-        json.dump(out, f, indent=2, ensure_ascii=False)
-
-    return out
+Original instruction:
+{{ORIGINAL_INSTRUCTION}}
