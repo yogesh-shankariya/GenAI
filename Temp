@@ -4,20 +4,17 @@ import json
 import re
 from collections import OrderedDict
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Any
 
-from horizon_api import marshall_into_json  # uses your existing function
+from horizon_api import marshall_into_json  # your existing async function
 
-# --------- Configure file paths (change if needed) ----------
 INSTRUCTIONS_FILE = Path("extraction_instructions.json")
 PROMPT_FILE       = Path("Revised_Extraction_Information.txt")
-SCHEMA_FILE       = Path("Revised_Extraction_Information.json")  # constant output schema
-PAIRED_OUTPUT     = Path("Paired_Extraction_Information.json")   # new file you asked for
+SCHEMA_FILE       = Path("Revised_Extraction_Information.json")  # load AS JSON (dict)
+PAIRED_OUTPUT     = Path("Paired_Extraction_Information.json")
 
-# Placeholder that must exist in the prompt template
 PLACEHOLDER = "{{ORIGINAL_INSTRUCTION}}"
 
-# --------- Helpers ----------
 def load_instructions(path: Path) -> Dict[int, str]:
     data = json.loads(path.read_text(encoding="utf-8"))
     out: Dict[int, str] = {}
@@ -26,50 +23,44 @@ def load_instructions(path: Path) -> Dict[int, str]:
         if m:
             out[int(m.group(1))] = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)
     if not out:
-        raise ValueError("No keys of form 'extraction_instruction_#' found in extraction_instructions.json")
+        raise ValueError("No keys of form 'extraction_instruction_#' found")
     return dict(sorted(out.items()))
 
 def build_prompt(template: str, instruction: str) -> str:
-    if PLACEHOLDER in template:
-        return template.replace(PLACEHOLDER, instruction)
-    # Fallback: append the original instruction if placeholder not present
-    return f"{template.rstrip()}\n\nOriginal instruction:\n{instruction}"
+    return template.replace(PLACEHOLDER, instruction) if PLACEHOLDER in template \
+        else f"{template.rstrip()}\n\nOriginal instruction:\n{instruction}"
 
-async def call_llm(idx: int, instruction: str, schema_text: str, prompt_template: str, sem: asyncio.Semaphore) -> Tuple[int, str]:
+async def call_llm(idx: int, instruction: str, schema_obj: Any, prompt_template: str,
+                   sem: asyncio.Semaphore) -> Tuple[int, str]:
     prompt = build_prompt(prompt_template, instruction)
     async with sem:
-        resp = await marshall_into_json(schema=schema_text, prompt=prompt)
-    # Expecting {"Revised_Extraction_Information": "..."}
+        # pass the schema AS JSON (dict), NOT text
+        resp = await marshall_into_json(schema=schema_obj, prompt=prompt)
     revised = (resp or {}).get("Revised_Extraction_Information", "").strip()
     return idx, revised
 
-# --------- Main ----------
-async def main(
-    instructions_file: Path = INSTRUCTIONS_FILE,
-    prompt_file: Path = PROMPT_FILE,
-    schema_file: Path = SCHEMA_FILE,
-    paired_output: Path = PAIRED_OUTPUT,
-    max_concurrency: int = 8
-) -> None:
-    instructions = load_instructions(instructions_file)
-    prompt_template = prompt_file.read_text(encoding="utf-8")
-    schema_text = schema_file.read_text(encoding="utf-8")
+async def main(max_concurrency: int = 8) -> None:
+    instructions = load_instructions(INSTRUCTIONS_FILE)
+    prompt_template = PROMPT_FILE.read_text(encoding="utf-8")
+
+    # --- Load schema as JSON (dict) ---
+    with open(SCHEMA_FILE, "r", encoding="utf-8") as f:
+        schema_obj = json.load(f)   # <-- required change
 
     sem = asyncio.Semaphore(max_concurrency)
     tasks = [
-        call_llm(i, instr, schema_text, prompt_template, sem)
+        call_llm(i, instr, schema_obj, prompt_template, sem)
         for i, instr in instructions.items()
     ]
     results = await asyncio.gather(*tasks)
 
-    # Build the paired JSON as requested
     paired = OrderedDict()
     for idx, revised in sorted(results, key=lambda x: x[0]):
         paired[f"original_extraction_information_{idx}"] = instructions[idx]
         paired[f"revised_extraction_information_{idx}"] = revised
 
-    paired_output.write_text(json.dumps(paired, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"Done. Wrote paired output → {paired_output.resolve()}")
+    PAIRED_OUTPUT.write_text(json.dumps(paired, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"Done. Wrote paired output → {PAIRED_OUTPUT.resolve()}")
 
-if __name__ == "__main__":
-    asyncio.run(main())
+# In a Jupyter notebook, run:
+# await main()
