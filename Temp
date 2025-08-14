@@ -1,76 +1,83 @@
 import json
 from pathlib import Path
-from typing import Dict
 
-def combine_across_all_instructions(
-    input_root: str,    # e.g. ".../Combined_Json_Step_1"
-    output_root: str,   # e.g. ".../Combined_Json_Final"
+def _get_ci(d: dict, key: str, fallbacks=()):
+    """case-insensitive get with optional fallback keys"""
+    if key in d:
+        return d[key]
+    lk = key.lower()
+    for k, v in d.items():
+        if k.lower() == lk:
+            return v
+    for fb in fallbacks:
+        if fb in d:
+            return d[fb]
+        fl = fb.lower()
+        for k, v in d.items():
+            if k.lower() == fl:
+                return v
+    return ""
+
+def map_pairs_with_combined(
+    combined_root: str,                # e.g. ".../Combined_Json_Final"
+    pair_extraction_json: str,         # e.g. "Paired_Extraction_Information.json"
+    output_root: str,                  # e.g. ".../Combined_Json_Mapped"
     num_instructions: int = 23,
+    in_filename: str = "combined.json",
     out_filename: str = "combined.json",
 ) -> None:
     """
-    Input hierarchy example:
-      <input_root>/
-        A20241114493312/                     # CASE_GROUP (may exist)
-          REVISED_EXTRACTION_INFORMATION_1/
-            CAROLL SB-.../combined.json
-          REVISED_EXTRACTION_INFORMATION_2/
-            CAROLL SB-.../combined.json
-          ...
-        (repeat for other groups)
-
-    Output:
-      <output_root>/<CASE_GROUP>/<CASE_NAME>/combined.json
-      where combined.json is:
-      {
-        "revised_extraction_information_1":  "<text from REI_1/CASE/combined.json>",
-        ...
-        "revised_extraction_information_23": "<text from REI_23/CASE/combined.json>"
-      }
+    For each case combined.json under combined_root, write a new combined.json under output_root:
+    {
+      "original_extraction_information_1": "...",
+      "revised_extraction_information_1": "...",
+      "extracted_context_1": "...",
+      ...
+      "original_extraction_information_23": "...",
+      "revised_extraction_information_23": "...",
+      "extracted_context_23": "..."
+    }
     """
-    in_root = Path(input_root)
-    out_root = Path(output_root)
+    combined_root = Path(combined_root)
+    output_root = Path(output_root)
 
-    def _read_text_from_combined(p: Path) -> str:
-        if not p.exists():
-            return ""
+    # Load the original/revised pairs once
+    pairs = json.loads(Path(pair_extraction_json).read_text(encoding="utf-8"))
+
+    # Walk every case combined.json under combined_root (keeps any group/case hierarchy)
+    for cmb_path in combined_root.rglob(in_filename):
         try:
-            obj = json.loads(p.read_text(encoding="utf-8"))
+            case_combined = json.loads(cmb_path.read_text(encoding="utf-8"))
         except Exception:
-            return ""
-        if isinstance(obj, dict):
-            # your earlier step wrote {"extracted_text": "..."}
-            txt = obj.get("extracted_text") or obj.get("Extracted_Text") or obj.get("text") or ""
-            return txt.strip() if isinstance(txt, str) else json.dumps(txt, ensure_ascii=False)
-        return str(obj)
-
-    # Determine if there is a CASE_GROUP layer (e.g., A2024...).
-    # If REI_* dirs are directly under input_root, treat input_root as a single group.
-    group_dirs = [p for p in in_root.iterdir() if p.is_dir()]
-    has_group_layer = any((g / "REVISED_EXTRACTION_INFORMATION_1").exists() for g in group_dirs)
-    if not has_group_layer:
-        group_dirs = [in_root]
-
-    for group_dir in sorted(group_dirs):
-        # discover all case folders that appear under any REI dir
-        rei_dirs = sorted(group_dir.glob("REVISED_EXTRACTION_INFORMATION_*"))
-        if not rei_dirs:
             continue
 
-        case_names = set()
-        for rei in rei_dirs:
-            for case_dir in rei.iterdir():
-                if case_dir.is_dir():
-                    case_names.add(case_dir.name)
+        out_obj = {}
+        for i in range(1, num_instructions + 1):
+            orig = _get_ci(pairs, f"original_extraction_information_{i}")
+            rev  = _get_ci(pairs, f"revised_extraction_information_{i}")
+            ctx  = _get_ci(
+                case_combined,
+                f"revised_extraction_information_{i}",
+                fallbacks=(f"Extracted_Text_{i}", f"extracted_context_{i}")
+            )
+            if not isinstance(ctx, str):  # normalize to string
+                ctx = json.dumps(ctx, ensure_ascii=False)
 
-        # build one combined JSON per case
-        for case_name in sorted(case_names):
-            combined: Dict[str, str] = {}
-            for i in range(1, num_instructions + 1):
-                rei_case_combined = group_dir / f"REVISED_EXTRACTION_INFORMATION_{i}" / case_name / "combined.json"
-                combined[f"revised_extraction_information_{i}"] = _read_text_from_combined(rei_case_combined)
+            out_obj[f"original_extraction_information_{i}"] = orig if isinstance(orig, str) else json.dumps(orig, ensure_ascii=False)
+            out_obj[f"revised_extraction_information_{i}"]  = rev  if isinstance(rev,  str) else json.dumps(rev,  ensure_ascii=False)
+            out_obj[f"extracted_context_{i}"]                = ctx.strip()
 
-            out_dir = out_root if not has_group_layer else (out_root / group_dir.name)
-            out_dir = out_dir / case_name
-            out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / out_filename).write_text(json.dumps(combined, indent=2, ensure_ascii=False), encoding="utf-8")
+        # Mirror the hierarchy in output_root
+        rel_dir = cmb_path.parent.relative_to(combined_root)
+        out_dir = output_root / rel_dir
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / out_filename).write_text(json.dumps(out_obj, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+
+map_pairs_with_combined(
+    combined_root="/.../Combined_Json_Final",
+    pair_extraction_json="/.../Paired_Extraction_Information.json",
+    output_root="/.../Combined_Json_Mapped",
+    num_instructions=23
+)
