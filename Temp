@@ -1,55 +1,38 @@
 import json
-from pathlib import Path
-from typing import Union, List, Dict, Any
+import os
 
-def build_master_combined_simple(
-    master_folder: Union[str, Path],
-    output_dir: Union[str, Path] = "combine-output-master",
-    output_filename: str = "combined_master.json",
-    case_key: str = "folder",
-    steps_key: str = "steps",
-    strip_page_field: bool = True
-) -> str:
+def extract_instructions(input_json_path, output_json_path):
     """
-    For every subfolder under `master_folder` that contains `combined.json`,
-    produce a master file at:
-        combine-output-master/<MASTER_FOLDER_NAME>/combined_master.json
-
-    Output format (no aggregation):
-      [
-        {
-          "folder": "<subfolder name>",
-          "steps": <content of that subfolder's combined.json (with 'page' removed if strip_page_field)>
-        },
-        ...
-      ]
+    Extracts all 'extraction_instruction' values from a nested JSON structure
+    and writes them into a new JSON with keys extraction_instruction_1, extraction_instruction_2, etc.
+    
+    Args:
+        input_json_path (str): Path to the input JSON file
+        output_json_path (str): Path to store the output JSON file
     """
-    root = Path(master_folder).resolve()
-    out_root = Path(output_dir).resolve() / root.name
-    out_root.mkdir(parents=True, exist_ok=True)
-    out_path = out_root / output_filename
+    if not os.path.exists(input_json_path):
+        raise FileNotFoundError(f"Input file not found: {input_json_path}")
 
-    entries: List[Dict[str, Any]] = []
+    # Load the JSON file
+    with open(input_json_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
 
-    for cfile in sorted(root.rglob("combined.json")):
-        try:
-            steps = json.loads(cfile.read_text(encoding="utf-8"))
-        except Exception:
-            continue
+    extraction_data = {}
+    counter = 1
 
-        if strip_page_field and isinstance(steps, list):
-            for step in steps:
-                results = step.get("results", [])
-                if isinstance(results, list):
-                    for item in results:
-                        if isinstance(item, dict):
-                            item.pop("page", None)  # remove page number
+    # Traverse the structure
+    sections = data.get("sections", [])
+    for section in sections:
+        data_points = section.get("data-points", [])
+        for dp in data_points:
+            instruction = dp.get("extraction_instruction")
+            if instruction is not None:
+                key_name = f"extraction_instruction_{counter}"
+                extraction_data[key_name] = instruction
+                counter += 1
 
-        entries.append({
-            case_key: cfile.parent.name,
-            steps_key: steps
-        })
+    # Save the extracted instructions
+    with open(output_json_path, 'w', encoding='utf-8') as f:
+        json.dump(extraction_data, f, indent=4, ensure_ascii=False)
 
-    out_path.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"Wrote: {out_path}")
-    return str(out_path)
+    print(f"Extraction completed. Output saved to: {output_json_path}")
