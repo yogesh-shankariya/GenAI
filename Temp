@@ -1,14 +1,75 @@
-from pydantic import BaseModel, Field
+# step_extraction_runner.py
+import asyncio
+import json
+import re
+from collections import OrderedDict
+from pathlib import Path
+from typing import Dict, Tuple
 
-class RevisedExtractionInfo(BaseModel):
-    Revised_Extraction_Information: str = Field(
-        ...,
-        description="Rewritten instruction that clearly states what to extract from the PDF section in home-health context."
-    )
+from horizon_api import marshall_into_json  # uses your existing function
 
-    model_config = {
-        "extra": "forbid"  # disallow any keys other than the one above
-    }
+# --------- Configure file paths (change if needed) ----------
+INSTRUCTIONS_FILE = Path("extraction_instructions.json")
+PROMPT_FILE       = Path("Revised_Extraction_Information.txt")
+SCHEMA_FILE       = Path("Revised_Extraction_Information.json")  # constant output schema
+PAIRED_OUTPUT     = Path("Paired_Extraction_Information.json")   # new file you asked for
 
-# JSON Schema to pass to an LLM if needed
-LLM_SCHEMA = RevisedExtractionInfo.model_json_schema()
+# Placeholder that must exist in the prompt template
+PLACEHOLDER = "{{ORIGINAL_INSTRUCTION}}"
+
+# --------- Helpers ----------
+def load_instructions(path: Path) -> Dict[int, str]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    out: Dict[int, str] = {}
+    for k, v in data.items():
+        m = re.fullmatch(r"extraction_instruction_(\d+)", k.strip())
+        if m:
+            out[int(m.group(1))] = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)
+    if not out:
+        raise ValueError("No keys of form 'extraction_instruction_#' found in extraction_instructions.json")
+    return dict(sorted(out.items()))
+
+def build_prompt(template: str, instruction: str) -> str:
+    if PLACEHOLDER in template:
+        return template.replace(PLACEHOLDER, instruction)
+    # Fallback: append the original instruction if placeholder not present
+    return f"{template.rstrip()}\n\nOriginal instruction:\n{instruction}"
+
+async def call_llm(idx: int, instruction: str, schema_text: str, prompt_template: str, sem: asyncio.Semaphore) -> Tuple[int, str]:
+    prompt = build_prompt(prompt_template, instruction)
+    async with sem:
+        resp = await marshall_into_json(schema=schema_text, prompt=prompt)
+    # Expecting {"Revised_Extraction_Information": "..."}
+    revised = (resp or {}).get("Revised_Extraction_Information", "").strip()
+    return idx, revised
+
+# --------- Main ----------
+async def main(
+    instructions_file: Path = INSTRUCTIONS_FILE,
+    prompt_file: Path = PROMPT_FILE,
+    schema_file: Path = SCHEMA_FILE,
+    paired_output: Path = PAIRED_OUTPUT,
+    max_concurrency: int = 8
+) -> None:
+    instructions = load_instructions(instructions_file)
+    prompt_template = prompt_file.read_text(encoding="utf-8")
+    schema_text = schema_file.read_text(encoding="utf-8")
+
+    sem = asyncio.Semaphore(max_concurrency)
+    tasks = [
+        call_llm(i, instr, schema_text, prompt_template, sem)
+        for i, instr in instructions.items()
+    ]
+    results = await asyncio.gather(*tasks)
+
+    # Build the paired JSON as requested
+    paired = OrderedDict()
+    for idx, revised in sorted(results, key=lambda x: x[0]):
+        paired[f"original_extraction_information_{idx}"] = instructions[idx]
+        paired[f"revised_extraction_information_{idx}"] = revised
+
+    paired_output.write_text(json.dumps(paired, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"Done. Wrote paired output → {paired_output.resolve()}")
+
+if __name__ == "__main__":
+    asyncio.run(main())
