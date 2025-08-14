@@ -1,5 +1,60 @@
-def _triplets_with_overlap(paths, k, overlap: int = 0):
-    # force no-overlap behavior
-    if overlap != 0:
-        raise ValueError("Overlap must be 0 for this run.")
-    return [paths[i:i+k] for i in range(0, len(paths), k)]
+import json
+import re
+from pathlib import Path
+from typing import List
+
+def _sort_key(p: Path) -> List[int]:
+    # sort by first number in filename; fall back to name
+    m = re.search(r'(\d+)', p.name)
+    return [int(m.group(1))] if m else [10**9]
+
+def combine_case_jsons(input_root: str, output_root: str, combined_name: str = "combined.json") -> None:
+    """
+    Input hierarchy (example):
+      <input_root>/
+        REVISED_EXTRACTION_INFORMATION_1/
+          <CASE_FOLDER_A>/
+            pages_1-6.json
+            pages_7-10.json
+          <CASE_FOLDER_B>/ ...
+        REVISED_EXTRACTION_INFORMATION_2/
+          <CASE_FOLDER_A>/ ...
+        ...
+
+    Output written to:
+      <output_root>/<same REI>/<same CASE_FOLDER>/combined.json
+    """
+    in_root = Path(input_root)
+    out_root = Path(output_root)
+
+    for rei_dir in sorted(in_root.glob("REVISED_EXTRACTION_INFORMATION_*")):
+        if not rei_dir.is_dir():
+            continue
+
+        for case_dir in sorted([p for p in rei_dir.iterdir() if p.is_dir()]):
+            texts = []
+
+            json_files = sorted(case_dir.glob("*.json"), key=_sort_key)
+            for jf in json_files:
+                try:
+                    obj = json.loads(jf.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+
+                txt = (
+                    obj.get("extracted_text")
+                    or obj.get("Extracted_Text")
+                    or obj.get("text")
+                    or ""
+                )
+                if isinstance(txt, str) and txt.strip():
+                    texts.append(txt.strip())
+
+            out_dir = out_root / rei_dir.name / case_dir.name
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+            combined = {"extracted_text": "\n".join(texts).strip()}
+            (out_dir / combined_name).write_text(
+                json.dumps(combined, indent=2, ensure_ascii=False),
+                encoding="utf-8"
+            )
