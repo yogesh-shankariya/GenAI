@@ -1,38 +1,75 @@
 import json
 import os
+from typing import Any, Dict, Iterable
 
-def extract_instructions(input_json_path, output_json_path):
+def extract_extraction_instructions(input_json_path: str, output_json_path: str) -> Dict[str, str]:
     """
-    Extracts all 'extraction_instruction' values from a nested JSON structure
-    and writes them into a new JSON with keys extraction_instruction_1, extraction_instruction_2, etc.
-    
-    Args:
-        input_json_path (str): Path to the input JSON file
-        output_json_path (str): Path to store the output JSON file
+    Read the input JSON, find all extraction instructions under sections → data_points,
+    and save them to a single JSON with numbered keys.
+    Returns the dict that was written.
     """
-    if not os.path.exists(input_json_path):
+    if not os.path.isfile(input_json_path):
         raise FileNotFoundError(f"Input file not found: {input_json_path}")
 
-    # Load the JSON file
-    with open(input_json_path, 'r', encoding='utf-8') as f:
+    with open(input_json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    extraction_data = {}
-    counter = 1
+    def iter_data_points(node: Any) -> Iterable[Dict[str, Any]]:
+        # Yield all dicts that are data-points/data_points anywhere under sections
+        if isinstance(node, dict):
+            # typical key
+            if isinstance(node.get("data_points"), list):
+                for dp in node["data_points"]:
+                    if isinstance(dp, dict):
+                        yield dp
+            # hyphen variant (just in case)
+            if isinstance(node.get("data-points"), list):
+                for dp in node["data-points"]:
+                    if isinstance(dp, dict):
+                        yield dp
+            # dive into possible section containers
+            secs = node.get("sections")
+            if isinstance(secs, list):
+                for s in secs:
+                    yield from iter_data_points(s)
+            # generic dive to be safe
+            for v in node.values():
+                if isinstance(v, (dict, list)):
+                    yield from iter_data_points(v)
 
-    # Traverse the structure
-    sections = data.get("sections", [])
-    for section in sections:
-        data_points = section.get("data-points", [])
-        for dp in data_points:
-            instruction = dp.get("extraction_instruction")
-            if instruction is not None:
-                key_name = f"extraction_instruction_{counter}"
-                extraction_data[key_name] = instruction
-                counter += 1
+        elif isinstance(node, list):
+            for item in node:
+                yield from iter_data_points(item)
 
-    # Save the extracted instructions
-    with open(output_json_path, 'w', encoding='utf-8') as f:
-        json.dump(extraction_data, f, indent=4, ensure_ascii=False)
+    out: Dict[str, str] = {}
+    idx = 1
 
-    print(f"Extraction completed. Output saved to: {output_json_path}")
+    for dp in iter_data_points(data):
+        instr = (
+            dp.get("extraction_instructions")
+            if dp.get("extraction_instructions") is not None
+            else dp.get("extraction_instruction")
+        )
+        if instr is None:
+            continue
+
+        # normalize to a single string
+        if isinstance(instr, str):
+            value = instr.strip()
+        elif isinstance(instr, list):
+            parts = []
+            for x in instr:
+                parts.append(x if isinstance(x, str) else json.dumps(x, ensure_ascii=False))
+            value = "\n".join(p.strip() for p in parts if p and p.strip())
+        else:
+            value = json.dumps(instr, ensure_ascii=False)
+
+        if value:
+            out[f"extraction_instruction_{idx}"] = value
+            idx += 1
+
+    os.makedirs(os.path.dirname(output_json_path) or ".", exist_ok=True)
+    with open(output_json_path, "w", encoding="utf-8") as f:
+        json.dump(out, f, indent=2, ensure_ascii=False)
+
+    return out
