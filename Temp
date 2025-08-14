@@ -1,66 +1,28 @@
-# step_extraction_runner.py
-import asyncio
-import json
-import re
-from collections import OrderedDict
-from pathlib import Path
-from typing import Dict, Tuple, Any
+You are a home-health clinical document extractor. You receive SIX consecutive page images
+(from a PDF) and a Revised Extraction Information string. Your job is to return ONLY the
+requested section text that satisfies the revised instruction.
 
-from horizon_api import marshall_into_json  # your existing async function
+Revised Extraction Information:
+{{REVISED_EXTRACTION_INFORMATION}}
 
-INSTRUCTIONS_FILE = Path("extraction_instructions.json")
-PROMPT_FILE       = Path("Revised_Extraction_Information.txt")
-SCHEMA_FILE       = Path("Revised_Extraction_Information.json")  # load AS JSON (dict)
-PAIRED_OUTPUT     = Path("Paired_Extraction_Information.json")
+Instructions:
+1) Perform high-fidelity OCR on all six images, preserving reading order and paragraph breaks.
+   Mentally rotate or deskew any page that is sideways or tilted and then read it correctly.
+2) Treat the six images as a continuous page range. If the target section spans multiple pages,
+   capture the entire section across pages in correct order.
+3) Use the revised instruction to locate the best-matching section in a home-health context
+   (e.g., Plan of Care/orders, H&P, progress notes, visit frequency/duration, diagnoses justifying
+   skilled need). Prefer complete, labeled sections; include the section header if present.
+4) Include only in-scope content. Exclude page headers/footers, page numbers, watermarks,
+   unrelated sections, and duplicate artifacts. If tables or checkboxes provide required data,
+   read them and express them as plain text lines.
+5) If multiple candidates exist, choose the one that best fits the revised instruction. If none is
+   found, return found=false with a brief reason.
 
-PLACEHOLDER = "{{ORIGINAL_INSTRUCTION}}"
-
-def load_instructions(path: Path) -> Dict[int, str]:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    out: Dict[int, str] = {}
-    for k, v in data.items():
-        m = re.fullmatch(r"extraction_instruction_(\d+)", k.strip())
-        if m:
-            out[int(m.group(1))] = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)
-    if not out:
-        raise ValueError("No keys of form 'extraction_instruction_#' found")
-    return dict(sorted(out.items()))
-
-def build_prompt(template: str, instruction: str) -> str:
-    return template.replace(PLACEHOLDER, instruction) if PLACEHOLDER in template \
-        else f"{template.rstrip()}\n\nOriginal instruction:\n{instruction}"
-
-async def call_llm(idx: int, instruction: str, schema_obj: Any, prompt_template: str,
-                   sem: asyncio.Semaphore) -> Tuple[int, str]:
-    prompt = build_prompt(prompt_template, instruction)
-    async with sem:
-        # pass the schema AS JSON (dict), NOT text
-        resp = await marshall_into_json(schema=schema_obj, prompt=prompt)
-    revised = (resp or {}).get("Revised_Extraction_Information", "").strip()
-    return idx, revised
-
-async def main(max_concurrency: int = 8) -> None:
-    instructions = load_instructions(INSTRUCTIONS_FILE)
-    prompt_template = PROMPT_FILE.read_text(encoding="utf-8")
-
-    # --- Load schema as JSON (dict) ---
-    with open(SCHEMA_FILE, "r", encoding="utf-8") as f:
-        schema_obj = json.load(f)   # <-- required change
-
-    sem = asyncio.Semaphore(max_concurrency)
-    tasks = [
-        call_llm(i, instr, schema_obj, prompt_template, sem)
-        for i, instr in instructions.items()
-    ]
-    results = await asyncio.gather(*tasks)
-
-    paired = OrderedDict()
-    for idx, revised in sorted(results, key=lambda x: x[0]):
-        paired[f"original_extraction_information_{idx}"] = instructions[idx]
-        paired[f"revised_extraction_information_{idx}"] = revised
-
-    PAIRED_OUTPUT.write_text(json.dumps(paired, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"Done. Wrote paired output → {PAIRED_OUTPUT.resolve()}")
-
-# In a Jupyter notebook, run:
-# await main()
+Output as JSON exactly:
+{
+  "found": true|false,
+  "section_name": "<header text if visible, else empty string>",
+  "extracted_text": "<the full section text you extracted, spanning pages if needed>",
+  "pages": [start_index, end_index]   // 1-based indices within this 6-image batch
+}
