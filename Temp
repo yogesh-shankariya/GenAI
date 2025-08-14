@@ -61,3 +61,10 @@ def combined_json_to_markdown_tree(
         out_dir = out_root / rel_dir
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / out_filename).write_text(md_text, encoding="utf-8")
+
+
+combined_json_to_markdown_tree(
+    input_root="/.../Combined_Json_Mapped",     # where your per-case combined.json files are
+    output_root="/.../Combined_MD"              # destination root for the .md files
+)
+
