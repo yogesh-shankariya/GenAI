@@ -2,21 +2,12 @@ import json
 from pathlib import Path
 
 def combined_json_to_markdown_tree(
-    input_root: str,                  # root that contains case folders with combined.json
-    output_root: str,                 # where to write the .md files (mirrors hierarchy)
+    input_root: str,
+    output_root: str,
     in_filename: str = "combined.json",
     out_filename: str = "combined.md",
     num_instructions: int = 23
 ) -> None:
-    """
-    For each .../<CASE>/combined.json containing:
-      original_extraction_information_i
-      revised_extraction_information_i
-      extracted_context_i
-    write .../<CASE>/combined.md with readable Markdown.
-
-    The directory structure under output_root mirrors input_root.
-    """
     in_root = Path(input_root)
     out_root = Path(output_root)
 
@@ -26,28 +17,30 @@ def combined_json_to_markdown_tree(
         except Exception:
             continue
 
-        # Build markdown
         parts = []
-        # Case title = parent folder name
         case_title = json_path.parent.name
         parts.append(f"# {case_title} — Combined Extraction\n")
 
         for i in range(1, num_instructions + 1):
-            orig = data.get(f"original_extraction_information_{i}", "").strip()
-            rev  = data.get(f"revised_extraction_information_{i}", "").strip()
-            ctx  = data.get(f"extracted_context_{i}", "").strip()
+            orig = (data.get(f"original_extraction_information_{i}") or "").strip()
+            rev  = (data.get(f"revised_extraction_information_{i}")  or "").strip()
+            ctx  = (data.get(f"extracted_context_{i}")               or "").strip()
 
-            # Skip step if all empty
             if not (orig or rev or ctx):
                 continue
 
             parts.append(f"## Step {i}\n")
+
             if orig:
                 parts.append("**Original Extraction Information**\n")
-                parts.append(f"> {orig.replace('\n', '\n> ')}\n")
+                q_orig = "> " + orig.replace("\n", "\n> ")
+                parts.append(q_orig + "\n")
+
             if rev:
                 parts.append("**Revised Extraction Information**\n")
-                parts.append(f"> {rev.replace('\n', '\n> ')}\n")
+                q_rev = "> " + rev.replace("\n", "\n> ")
+                parts.append(q_rev + "\n")
+
             if ctx:
                 parts.append("**Extracted Context**\n")
                 parts.append("```text")
@@ -56,15 +49,7 @@ def combined_json_to_markdown_tree(
 
         md_text = "\n".join(parts).strip() + "\n"
 
-        # Mirror hierarchy
         rel_dir = json_path.parent.relative_to(in_root)
         out_dir = out_root / rel_dir
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / out_filename).write_text(md_text, encoding="utf-8")
-
-
-combined_json_to_markdown_tree(
-    input_root="/.../Combined_Json_Mapped",     # where your per-case combined.json files are
-    output_root="/.../Combined_MD"              # destination root for the .md files
-)
-
