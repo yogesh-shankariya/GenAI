@@ -1,109 +1,17 @@
-"""
-Data preprocessing module for reading JSON files and extracting records.
-
-- Loads each supported JSON file.
-- Extracts the list of records under the configured top-level key.
-- Converts each record to a canonical text string for embedding.
-- Returns (record_id, text, metadata) where metadata includes the original
-  record plus the JSON filename as `json_name`.
-
-Example:
-    from pathlib import Path
-    from data_preprocessing import FILE_KEY_MAP, load_records_from_json
-
-    p = Path("/path/to/alerts.json")
-    key = FILE_KEY_MAP[p.name]
-    rows = load_records_from_json(p, key)
-    for rid, text, meta in rows:
-        print(rid, text[:120], meta["json_name"])
-"""
-
-from __future__ import annotations
-
-import json
-import uuid
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, List, Tuple
+import json
+from transformers import AutoTokenizer
 
-# Mapping of JSON filenames to their array fields (as you specified)
-FILE_KEY_MAP: Dict[str, str] = {
-    "alerts.json": "careAlertMessages",
-    "authorizations.json": "authorizations",
-    "behavioral_health.json": "behavioralHealths",
-    "claims.json": "claims",
-    "communications.json": "communications",
-    "denied_pharmacy.json": "deniedPharmacyRecords",
-    "document_repository.json": "document_details",
-    "documents.json": "documents",
-    "emergency_department.json": "emergencies",
-    "immunization.json": "immunizations",
-    "inpatient_records.json": "inpatientRecords",
-    "labs.json": "labs",
-    "mods.json": "mods",
-    "office_visits.json": "visits",
-    "pharmacy.json": "pharmacyRecords",
-}
+MODEL_NAME = "mixedbread-ai/mxbai-embed-large-v1"
+TOKEN_LIMIT = 512
 
-__all__ = [
-    "FILE_KEY_MAP",
-    "load_records_from_json",
-    "iter_dataset",
-]
+tok = AutoTokenizer.from_pretrained(MODEL_NAME, use_fast=True)
 
-def _record_to_text(record: Dict[str, Any]) -> str:
-    """
-    Convert a record dict to a canonical string for embedding.
-    Uses JSON dumps with sorted keys for determinism.
-    """
+def count_tokens(text: str) -> int:
+    # Count with special tokens, no truncation
+    return len(tok.encode(text, add_special_tokens=True))
+
+def record_to_text(record: Dict[str, Any]) -> str:
+    # Same canonicalization as your preprocessing
     return json.dumps(record, sort_keys=True, ensure_ascii=False)
-
-def load_records_from_json(file_path: Path, key: str) -> List[Tuple[str, str, Dict[str, Any]]]:
-    """
-    Load records from a JSON file and convert them to text for embedding.
-
-    Args:
-        file_path: Path to the JSON file.
-        key: Top-level key that contains a list of records.
-
-    Returns:
-        List of tuples: (record_id, text, metadata)
-        - record_id: UUID4 string
-        - text: canonical string of the record for embedding
-        - metadata: original record + {"json_name": <filename>}
-    """
-    with open(file_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    records = data.get(key)
-    if records is None:
-        raise KeyError(f"Key '{key}' not found in {file_path.name}")
-    if not isinstance(records, list):
-        raise TypeError(
-            f"Expected list at key '{key}' in {file_path.name}, got {type(records).__name__}"
-        )
-
-    processed: List[Tuple[str, str, Dict[str, Any]]] = []
-    for record in records:
-        record_id = str(uuid.uuid4())          # unique point id for Qdrant
-        text = _record_to_text(record)
-        metadata = record.copy()
-        metadata["json_name"] = file_path.name  # <- include JSON filename
-        processed.append((record_id, text, metadata))
-
-    return processed
-
-def iter_dataset(directory: Path) -> Iterable[Tuple[str, str, List[Tuple[str, str, Dict[str, Any]]]]]:
-    """
-    Iterate over all supported JSON files in `directory`.
-
-    Yields:
-        (collection_name, file_path_str, records)
-        where `records` is the list returned by `load_records_from_json`.
-    """
-    for file_name, key in FILE_KEY_MAP.items():
-        path = directory / file_name
-        if not path.exists():
-            continue  # skip gracefully if a file isn't present
-        records = load_records_from_json(path, key)
-        collection_name = path.stem
-        yield collection_name, str(path), records
