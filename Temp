@@ -1,21 +1,45 @@
-from pathlib import Path
-from typing import Any, Dict, List, Tuple
+"""
+Data preprocessing module for reading JSON files and extracting records.
+
+This module provides functions to load JSON files containing healthcare-related
+data and extract a list of records based on a specified top-level key. The
+records are converted into textual representations suitable for embedding
+generation and returned alongside metadata. A special ``mcid`` field can be
+added to each record's metadata to allow grouping or filtering by medical
+client ID (MCID).
+
+Each supported JSON file has a mapping from the file name to the key
+containing the list of records. See ``FILE_KEY_MAP`` for the currently
+supported mappings. When adding new JSON files to the pipeline, simply
+update this mapping with the appropriate key name.
+
+Example usage:
+
+    from pathlib import Path
+    from data_preprocessing import FILE_KEY_MAP, load_records_from_json
+
+    file_path = Path("/path/to/alerts.json")
+    key = FILE_KEY_MAP[file_path.name]
+    records = load_records_from_json(file_path, key, mcid="XYZ123")
+
+    for record_id, text, metadata in records:
+        print(record_id)
+        print(text)
+        print(metadata["mcid"])
+
+"""
+
+from __future__ import annotations
+
 import json
-from transformers import AutoTokenizer
+import uuid
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-MODEL_NAME = "mixedbread-ai/mxbai-embed-large-v1"
-TOKEN_LIMIT = 512
-
-tok = AutoTokenizer.from_pretrained(MODEL_NAME, use_fast=True)
-
-def count_tokens(text: str) -> int:
-    # Count with special tokens, no truncation
-    return len(tok.encode(text, add_special_tokens=True))
-
-def record_to_text(record: Dict[str, Any]) -> str:
-    # Same canonicalization as your preprocessing
-    return json.dumps(record, sort_keys=True, ensure_ascii=False)
-
+# Mapping of JSON file names to the top-level key containing the records.
+# When processing a new JSON file, add an entry here with the file name as
+# the key and the record array key as the value. The values correspond to
+# the names provided by the user when describing the datasets.
 FILE_KEY_MAP: Dict[str, str] = {
     "alerts.json": "careAlertMessages",
     "authorizations.json": "authorizations",
@@ -35,47 +59,110 @@ FILE_KEY_MAP: Dict[str, str] = {
 }
 
 
-def load_json_records(path: Path, key: str | None = None) -> List[Dict[str, Any]]:
-    with path.open("r", encoding="utf-8") as f:
+def _record_to_text(record: Dict[str, Any]) -> str:
+    """Convert a record dictionary into a canonical textual representation.
+
+    The embedding model expects a string input. This helper function
+    transforms nested dictionaries and lists into a flattened JSON string.
+    You may customise this function to change how text is extracted from
+    records (e.g., by selecting specific fields or concatenating values).
+
+    Args:
+        record: The dictionary representing a single record from the JSON file.
+
+    Returns:
+        A string representation of the record.
+    """
+    # Use json.dumps to serialise the record into a compact string. Use
+    # sort_keys=True to ensure deterministic ordering of keys, which yields
+    # consistent embeddings for the same record.
+    return json.dumps(record, sort_keys=True, ensure_ascii=False)
+
+
+def load_records_from_json(
+    file_path: Path,
+    key: str,
+    *,
+    mcid: Optional[str] = None,
+    deterministic_id: bool = False,
+) -> List[Tuple[str, str, Dict[str, Any]]]:
+    """Load records from a JSON file and convert them to text for embedding.
+
+    This function reads a JSON file, extracts the list of records under the
+    provided key, and returns a list of tuples. Each tuple contains a
+    generated unique identifier, the textual representation of the record,
+    and the original record as metadata. If ``mcid`` is provided, a field
+    named ``mcid`` will be added to each metadata dictionary.
+
+    Args:
+        file_path: Path to the JSON file.
+        key: The top-level key in the JSON object that contains the list of
+            records to process.
+        mcid: Optional MCID value to assign to each record's metadata. If
+            omitted or ``None``, an ``mcid`` field with value ``None`` will
+            still be added to the metadata.
+        deterministic_id: If True and the record contains a field that can
+            serve as a unique identifier (e.g., ``id``), use that value as
+            the point ID. Otherwise, a new UUID4 is generated.
+
+    Returns:
+        A list of tuples where each tuple is ``(record_id, text, metadata)``.
+    """
+    with open(file_path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    arr_key = key or FILE_KEY_MAP.get(path.name)
-    if arr_key is None:
-        raise KeyError(f"Unknown array key for {path.name}. Pass key explicitly.")
-    rows = data.get(arr_key)
-    if not isinstance(rows, list):
-        raise TypeError(f"Expected list at key '{arr_key}' in {path.name}, got {type(rows).__name__}")
-    return rows
 
-def check_json(path: str | Path, key: str | None = None, token_limit: int = TOKEN_LIMIT) -> tuple[int,int]:
-    """Print offenders and return (total_records, over_limit_count)."""
-    p = Path(path)
-    records = load_json_records(p, key)
-    over = 0
-    for i, rec in enumerate(records):
-        txt = record_to_text(rec)
-        n = count_tokens(txt)
-        if n > token_limit:
-            over += 1
-            print("="*80)
-            print(f"FILE: {p.name} | INDEX: {i} | TOKENS: {n} > {token_limit}")
-            print(txt)              # full text (what you asked for)
-            print(f"LEN_TOKENS: {n}")
-    return len(records), over
+    # Navigate to the list of records using the specified key. If the key
+    # does not exist or is not a list, raise an informative error.
+    records = data.get(key)
+    if records is None:
+        raise KeyError(f"Key '{key}' not found in {file_path.name}")
+    if not isinstance(records, list):
+        raise TypeError(
+            f"Expected list at key '{key}' in {file_path.name}, got {type(records).__name__}"
+        )
 
-def check_dir(dir_path: str | Path, token_limit: int = TOKEN_LIMIT) -> tuple[int,int]:
-    d = Path(dir_path)
-    total, total_over = 0, 0
-    for p in sorted(d.glob("*.json")):
-        try:
-            cnt, over = check_json(p, key=None, token_limit=token_limit)
-            total += cnt; total_over += over
-        except Exception as e:
-            print(f"[WARN] {p.name}: {e}")
-    print("\nSUMMARY")
-    print(f"  total_records     : {total}")
-    print(f"  over_{token_limit}_tokens : {total_over}")
-    return total, total_over
+    processed_records: List[Tuple[str, str, Dict[str, Any]]] = []
+    for record in records:
+        # Determine the record ID. If deterministic_id is True and the record
+        # contains a simple string or integer field named 'id', use that value.
+        if deterministic_id and isinstance(record.get("id"), (str, int)):
+            record_id = str(record["id"])
+        else:
+            record_id = str(uuid.uuid4())
+        text = _record_to_text(record)
+        metadata = record.copy()
+        metadata["mcid"] = mcid  # assign the provided MCID (may be None)
+        processed_records.append((record_id, text, metadata))
+
+    return processed_records
 
 
-# Example: adjust the path to your JSON
-total, over = check_json("data/alerts.json")  # auto-detects 'careAlertMessages'
+def iter_dataset(
+    directory: Path,
+    *,
+    mcid: Optional[str] = None,
+    deterministic_id: bool = False,
+) -> Iterable[Tuple[str, str, List[Tuple[str, str, Dict[str, Any]]]]]:
+    """Iterate over all supported JSON files in a directory.
+
+    This generator yields a tuple for each supported JSON file found in the
+    given directory. Each tuple contains the collection name (derived from
+    the file stem), the full file path, and the list of processed records.
+
+    Args:
+        directory: Directory containing the JSON files.
+        mcid: Optional MCID value to assign to each record's metadata.
+        deterministic_id: Whether to use deterministic record IDs when
+            possible (see ``load_records_from_json``).
+
+    Yields:
+        A tuple ``(collection_name, file_path, records)`` for each supported file.
+    """
+    for file_name, key in FILE_KEY_MAP.items():
+        path = directory / file_name
+        if not path.exists():
+            # Skip missing files silently; the user may not have all files.
+            continue
+        records = load_records_from_json(path, key, mcid=mcid, deterministic_id=deterministic_id)
+        collection_name = path.stem
+        yield collection_name, str(path), records
