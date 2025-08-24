@@ -15,3 +15,67 @@ def count_tokens(text: str) -> int:
 def record_to_text(record: Dict[str, Any]) -> str:
     # Same canonicalization as your preprocessing
     return json.dumps(record, sort_keys=True, ensure_ascii=False)
+
+FILE_KEY_MAP: Dict[str, str] = {
+    "alerts.json": "careAlertMessages",
+    "authorizations.json": "authorizations",
+    "behavioral_health.json": "behavioralHealths",
+    "claims.json": "claims",
+    "communications.json": "communications",
+    "denied_pharmacy.json": "deniedPharmacyRecords",
+    "document_repository.json": "document_details",
+    "documents.json": "documents",
+    "emergency_department.json": "emergencies",
+    "immunization.json": "immunizations",
+    "inpatient_records.json": "inpatientRecords",
+    "labs.json": "labs",
+    "mods.json": "mods",
+    "office_visits.json": "visits",
+    "pharmacy.json": "pharmacyRecords",
+}
+
+
+def load_json_records(path: Path, key: str | None = None) -> List[Dict[str, Any]]:
+    with path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    arr_key = key or FILE_KEY_MAP.get(path.name)
+    if arr_key is None:
+        raise KeyError(f"Unknown array key for {path.name}. Pass key explicitly.")
+    rows = data.get(arr_key)
+    if not isinstance(rows, list):
+        raise TypeError(f"Expected list at key '{arr_key}' in {path.name}, got {type(rows).__name__}")
+    return rows
+
+def check_json(path: str | Path, key: str | None = None, token_limit: int = TOKEN_LIMIT) -> tuple[int,int]:
+    """Print offenders and return (total_records, over_limit_count)."""
+    p = Path(path)
+    records = load_json_records(p, key)
+    over = 0
+    for i, rec in enumerate(records):
+        txt = record_to_text(rec)
+        n = count_tokens(txt)
+        if n > token_limit:
+            over += 1
+            print("="*80)
+            print(f"FILE: {p.name} | INDEX: {i} | TOKENS: {n} > {token_limit}")
+            print(txt)              # full text (what you asked for)
+            print(f"LEN_TOKENS: {n}")
+    return len(records), over
+
+def check_dir(dir_path: str | Path, token_limit: int = TOKEN_LIMIT) -> tuple[int,int]:
+    d = Path(dir_path)
+    total, total_over = 0, 0
+    for p in sorted(d.glob("*.json")):
+        try:
+            cnt, over = check_json(p, key=None, token_limit=token_limit)
+            total += cnt; total_over += over
+        except Exception as e:
+            print(f"[WARN] {p.name}: {e}")
+    print("\nSUMMARY")
+    print(f"  total_records     : {total}")
+    print(f"  over_{token_limit}_tokens : {total_over}")
+    return total, total_over
+
+
+# Example: adjust the path to your JSON
+total, over = check_json("data/alerts.json")  # auto-detects 'careAlertMessages'
