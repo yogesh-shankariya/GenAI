@@ -1,101 +1,102 @@
 """
-Qdrant vector store utilities.
+Ingestion pipeline for BGE-M3 embeddings.
 
-This module encapsulates common operations for storing embeddings in
-a Qdrant vector database. It supports creating collections with the
-appropriate vector size and distance metric, as well as upserting
-points with metadata.
+This script orchestrates the process of reading healthcare JSON files,
+embedding their contents using the BGE-M3 model, and storing the
+resulting vectors along with metadata in a Qdrant vector database.
 
-Example usage::
+Features:
+    - Optional model download: fetch the BGE-M3 model into a local
+      directory before processing.
+    - MCID tagging: assign an ``mcid`` value to each record's metadata.
+    - Automatic collection creation: each JSON file is stored in its
+      own Qdrant collection (named after the file stem).
 
-    from vector_store import get_client, ensure_collection, upsert_vectors
+Usage::
 
-    client = get_client(host="localhost", port=6333)
-    collection_name = "alerts"
-    vector_size = 1024
-    ensure_collection(client, collection_name, vector_size)
-    upsert_vectors(client, collection_name, ids, vectors, payloads)
+    python ingestion_pipeline.py \
+        --data-dir /path/to/jsons \
+        --mcid ABC123 \
+        --download-model \
+        --model-dir hf_embedding_model \
+        --host localhost \
+        --port 6333
+
+Arguments:
+    --data-dir: Directory containing the JSON files to ingest.
+    --mcid: Value to assign to the ``mcid`` metadata field for all
+        ingested records.
+    --model-dir: Directory where the BGE-M3 model is stored. Defaults
+        to ``hf_embedding_model``.
+    --download-model: If specified, download the model to ``model-dir``
+        before processing (requires internet access).
+    --host: Qdrant host. Defaults to ``localhost``.
+    --port: Qdrant port. Defaults to ``6333``.
+    --api-key: Optional API key for Qdrant Cloud.
 
 """
 
 from __future__ import annotations
 
-import uuid
-from typing import Any, Dict, List, Optional
+import argparse
+from pathlib import Path
 
-from qdrant_client import QdrantClient
-from qdrant_client.http.models import (
-    Distance,
-    PointStruct,
-    VectorParams,
-)
+from data_preprocessing import iter_dataset
+from embedding import BgeM3Embedder, download_bge_m3
+from vector_store import get_client, ensure_collection, upsert_vectors
 
 
-def get_client(host: str = "localhost", port: int = 6333, api_key: Optional[str] = None) -> QdrantClient:
-    """Instantiate a Qdrant client.
-
-    Args:
-        host: Hostname where Qdrant is running.
-        port: Port number for Qdrant.
-        api_key: Optional API key for Qdrant Cloud.
-
-    Returns:
-        A ``QdrantClient`` instance.
-    """
-    return QdrantClient(host=host, port=port, api_key=api_key)
-
-
-def ensure_collection(
-    client: QdrantClient,
-    collection_name: str,
-    vector_size: int,
-    *,
-    distance: str = "Cosine",
-) -> None:
-    """Ensure that a collection exists in Qdrant.
-
-    If the collection already exists, no action is taken. Otherwise,
-    a new collection is created with the specified vector size and distance
-    metric.
-
-    Args:
-        client: A Qdrant client instance.
-        collection_name: Name of the collection.
-        vector_size: Dimensionality of the vectors.
-        distance: Distance metric to use ("Cosine", "Euclid", etc.).
-    """
-    existing = {col.name for col in client.get_collections().collections}
-    if collection_name not in existing:
-        client.recreate_collection(
-            collection_name=collection_name,
-            vectors_config=VectorParams(size=vector_size, distance=getattr(Distance, distance.upper())),
-        )
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Ingest JSON records into Qdrant using BGE-M3 embeddings.")
+    parser.add_argument("--data-dir", type=str, required=True, help="Directory containing JSON files to ingest")
+    parser.add_argument("--mcid", type=str, required=True, help="MCID value to assign to all records")
+    parser.add_argument("--model-dir", type=str, default="hf_embedding_model", help="Directory for the local BGE-M3 model")
+    parser.add_argument("--download-model", action="store_true", help="Download the BGE-M3 model before processing")
+    parser.add_argument("--host", type=str, default="localhost", help="Qdrant host (default: localhost)")
+    parser.add_argument("--port", type=int, default=6333, help="Qdrant port (default: 6333)")
+    parser.add_argument("--api-key", type=str, default=None, help="Optional API key for Qdrant Cloud")
+    parser.add_argument("--batch-size", type=int, default=8, help="Batch size for embedding computations")
+    return parser.parse_args()
 
 
-def upsert_vectors(
-    client: QdrantClient,
-    collection_name: str,
-    ids: List[str],
-    vectors: List[List[float]],
-    payloads: List[Dict[str, Any]],
-) -> None:
-    """Upsert points into a Qdrant collection.
+def main() -> None:
+    args = parse_args()
+    data_dir = Path(args.data_dir)
+    if not data_dir.is_dir():
+        raise FileNotFoundError(f"Data directory {data_dir} does not exist")
 
-    Args:
-        client: Qdrant client instance.
-        collection_name: Name of the target collection.
-        ids: A list of point IDs. Must be the same length as ``vectors``.
-        vectors: A list of embedding vectors.
-        payloads: A list of metadata dictionaries, one per point.
+    # Download model if requested
+    if args.download_model:
+        print(f"Downloading BGE-M3 model to {args.model_dir}...")
+        download_bge_m3(model_dir=args.model_dir)
+        print("Model download completed.")
 
-    Raises:
-        ValueError: If the lengths of ``ids``, ``vectors``, and ``payloads`` do not match.
-    """
-    if not (len(ids) == len(vectors) == len(payloads)):
-        raise ValueError("The lengths of ids, vectors, and payloads must be equal.")
-    points: List[PointStruct] = []
-    for pid, vec, payload in zip(ids, vectors, payloads):
-        # If an ID is None or empty, generate a new UUID4
-        point_id = pid or uuid.uuid4().hex
-        points.append(PointStruct(id=point_id, vector=vec, payload=payload))
-    client.upsert(collection_name=collection_name, points=points)
+    # Instantiate embedder using the local model directory
+    print("Loading BGE-M3 model...")
+    embedder = BgeM3Embedder(model_dir=args.model_dir)
+
+    # Connect to Qdrant
+    print(f"Connecting to Qdrant at {args.host}:{args.port}...")
+    client = get_client(host=args.host, port=args.port, api_key=args.api_key)
+
+    # Iterate over each supported JSON file in the directory
+    for collection_name, file_path, records in iter_dataset(data_dir, mcid=args.mcid):
+        if not records:
+            continue
+        print(f"Processing {file_path} ({len(records)} records)...")
+        # Extract IDs, texts, and metadata
+        ids = [rec_id for (rec_id, _, _) in records]
+        texts = [text for (_, text, _) in records]
+        metadata = [meta for (_, _, meta) in records]
+        # Compute embeddings
+        vectors = embedder.embed_documents(texts, batch_size=args.batch_size)
+        # Ensure collection exists
+        vector_size = len(vectors[0]) if vectors else 0
+        ensure_collection(client, collection_name, vector_size)
+        # Upsert vectors into Qdrant
+        upsert_vectors(client, collection_name, ids, vectors, metadata)
+        print(f"Upserted {len(vectors)} vectors into collection '{collection_name}'.")
+
+
+if __name__ == "__main__":
+    main()
