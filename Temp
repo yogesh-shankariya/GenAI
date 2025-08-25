@@ -1,127 +1,170 @@
 """
-Embedding utilities using HuggingFace models via LangChain.
+FAISS vector store integration using LangChain.
 
-This module exposes a simple helper to construct a HuggingFace
-embedding model compatible with LangChain.  The embedder returned
-here wraps models from the HuggingFace Hub and can produce dense
-embeddings for arbitrary text.  It provides two convenience methods
-for embedding a list of documents or a single query.
+This module wraps LangChain's FAISS integration to provide a simple
+interface for constructing, updating and querying FAISS indices over
+lists of ``Document`` objects.  Each collection corresponds to a
+separate FAISS index stored either in memory or on disk.  Documents
+are represented by LangChain's ``Document`` class, which stores both
+the text content and arbitrary metadata.
 
-LangChain integrates with HuggingFace through the
-``HuggingFaceEmbeddings`` class, which internally uses the
-``sentence_transformers`` library to load pre‑trained models.  To
-select a specific model, pass its name (e.g.
-``"BAAI/bge-m3"``) to ``create_embedder``.  The default model
-used here is ``"BAAI/bge-m3"``, a multilingual, long‑context
-embedding model from the Beijing Academy of Artificial Intelligence
-(BAAI) which has strong performance on retrieval tasks.  You can
-switch to any other compatible model by overriding the
-``model_name`` parameter.
+Key functions provided here:
+
+* ``create_faiss_store_from_documents`` – build a new FAISS index
+  from a list of ``Document`` objects and return the vector store.
+
+* ``add_documents`` – add additional documents to an existing vector
+  store.
+
+* ``query`` – perform a similarity search against a store for a
+  query string and return the most similar documents with scores.
+
+* ``save_store`` and ``load_store`` – persist a vector store to
+  disk and load it back later.
+
+These helpers use the LangChain ``FAISS`` class under the hood.  See
+the official documentation for more details: https://python.langchain.com/docs/integrations/vectorstores/faiss/
 
 Example usage::
 
+    from langchain.docstore.document import Document
     from embedding import create_embedder
+    from vector_store import (
+        create_faiss_store_from_documents,
+        add_documents,
+        query,
+        save_store,
+    )
 
-    # Create an embedder with the default model (BAAI/bge-m3)
-    embedder = create_embedder()
+    # Prepare some sample documents
+    docs = [
+        Document(page_content="Hello world", metadata={"id": 1}),
+        Document(page_content="Another document", metadata={"id": 2}),
+    ]
 
-    # Embed a list of texts
-    docs = ["Hello world", "Another sentence"]
-    vectors = embedder.embed_documents(docs)
+    # Create an embedder (using BGE-M3 via HuggingFace)
+    embedder = create_embedder(model_name="BAAI/bge-m3")
 
-    # Embed a single query
-    query_vec = embedder.embed_query("What does this mean?")
+    # Build the vector store
+    store = create_faiss_store_from_documents(docs, embedder)
 
-The embedder is intended to be used in conjunction with the
-``langchain_community.vectorstores.faiss.FAISS`` vector store (see
-``vector_store.py``), which accepts LangChain embeddings for
-constructing FAISS indices from documents.  See the LangChain docs for
-more details: https://python.langchain.com/docs/integrations/vectorstores/faiss/
-and https://python.langchain.com/docs/integrations/embeddings/huggingface
+    # Query the store
+    results = query(store, "world", k=2)
+    for doc, score in results:
+        print(doc.page_content, score)
+
+    # Persist the store to disk
+    save_store(store, "alerts_index")
+    # Later reload it:
+    store2 = load_store("alerts_index", embedder)
 """
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Tuple, Optional
 
 try:
-    # HuggingFaceEmbeddings is available in langchain_community for LangChain v0.1+
-    from langchain_community.embeddings import HuggingFaceEmbeddings  # type: ignore
+    # ``langchain_community.vectorstores.faiss`` is the new location for FAISS in LangChain >= 0.1
+    from langchain_community.vectorstores.faiss import FAISS  # type: ignore
 except ImportError:
     try:
-        # Fallback for older versions of LangChain (<0.1) where embeddings live under langchain.embeddings
-        from langchain.embeddings import HuggingFaceEmbeddings  # type: ignore
+        # Fallback for older versions of LangChain
+        from langchain.vectorstores.faiss import FAISS  # type: ignore
     except ImportError as e:
         raise ImportError(
-            "HuggingFaceEmbeddings could not be imported. "
-            "Please install langchain and sentence_transformers, e.g. with\n"
-            "    pip install langchain-community sentence-transformers"
+            "FAISS vector store could not be imported. Please install langchain-community and faiss-cpu."
         ) from e
 
+try:
+    from langchain.docstore.document import Document
+except ImportError as e:
+    raise ImportError(
+        "Could not import Document from langchain. Please ensure langchain is installed."
+    ) from e
 
-def create_embedder(
-    model_name: str = "BAAI/bge-m3",
-    model_kwargs: dict | None = None,
-    encode_kwargs: dict | None = None,
-) -> HuggingFaceEmbeddings:
-    """Instantiate a HuggingFace embedder for use with LangChain.
+from embedding import HFEmbedder  # type: ignore
+
+
+def create_faiss_store_from_documents(
+    documents: List[Document],
+    embedder: HFEmbedder,
+) -> FAISS:
+    """Create a FAISS vector store from a list of documents.
 
     Args:
-        model_name: Name of the HuggingFace sentence transformer model to load.
-        model_kwargs: Extra keyword arguments passed to the underlying model
-            constructor.  For example, you can set ``{"device": "cpu"}``
-            to force CPU usage.
-        encode_kwargs: Extra keyword arguments passed to the encoding step,
-            such as ``{"normalize_embeddings": False}``.  See the
-            LangChain documentation for details.
+        documents: A list of ``Document`` instances containing the text and metadata.
+        embedder: An embedder implementing ``embed_documents`` and ``embed_query``.
 
     Returns:
-        An instance of ``HuggingFaceEmbeddings`` configured with the given
-        model.
+        A LangChain ``FAISS`` vector store initialised with the provided documents.
+
+    This uses the static method ``FAISS.from_documents`` under the hood
+    (see LangChain docs).  The resulting store can be saved to disk
+    using ``save_store`` and reloaded with ``load_store``.
     """
-    model_kwargs = model_kwargs or {"device": "cpu"}
-    encode_kwargs = encode_kwargs or {"normalize_embeddings": False}
-    return HuggingFaceEmbeddings(
-        model_name=model_name,
-        model_kwargs=model_kwargs,
-        encode_kwargs=encode_kwargs,
-    )
+    # LangChain's FAISS.from_documents will handle embedding and indexing
+    return FAISS.from_documents(documents, embedder.embedder)
 
 
-class HFEmbedder:
-    """Simple wrapper providing embed_documents and embed_query methods.
+def add_documents(store: FAISS, documents: List[Document]) -> None:
+    """Add documents to an existing FAISS vector store.
 
-    This wrapper encapsulates a ``HuggingFaceEmbeddings`` instance and
-    exposes two methods (``embed_documents`` and ``embed_query``) that
-    follow the same interface as the BGE embedder used earlier in this
-    project.  It allows easy swapping between embedder types.
+    Args:
+        store: The FAISS vector store to update.
+        documents: A list of documents to add.
+
+    Raises:
+        ValueError: If the store is not a FAISS instance.
     """
+    if not isinstance(store, FAISS):
+        raise ValueError("store must be a FAISS vector store")
+    store.add_documents(documents)
 
-    def __init__(self, embedder: HuggingFaceEmbeddings) -> None:
-        self.embedder = embedder
 
-    def embed_documents(self, texts: List[str], batch_size: int | None = None) -> List[List[float]]:
-        """Embed a batch of documents.
+def query(store: FAISS, query_text: str, k: int = 5) -> List[Tuple[Document, float]]:
+    """Query the FAISS store for the top-k most similar documents.
 
-        Args:
-            texts: A list of strings to embed.
-            batch_size: Ignored for HuggingFace embeddings since the
-                underlying library handles batching internally.  Included
-                for signature compatibility with other embedders.
+    Args:
+        store: The FAISS vector store to query.
+        query_text: The raw text of the query.
+        k: Number of top documents to return.
 
-        Returns:
-            A list of dense embedding vectors.
-        """
-        # LangChain expects a list of strings and returns a list of lists of floats
-        return self.embedder.embed_documents(texts)
+    Returns:
+        A list of tuples ``(document, score)`` where ``score`` is the
+        similarity score (higher is more similar).  The length of the
+        returned list will be ``min(k, len(store))``.
 
-    def embed_query(self, query: str) -> List[float]:
-        """Embed a single query string.
+    This function calls the underlying ``similarity_search_with_score``
+    method provided by LangChain's ``FAISS`` implementation.
+    """
+    results: List[Tuple[Document, float]] = store.similarity_search_with_score(query_text, k=k)
+    return results
 
-        Args:
-            query: The text to embed.
 
-        Returns:
-            The embedding vector as a list of floats.
-        """
-        return self.embedder.embed_query(query)
+def save_store(store: FAISS, path: str) -> None:
+    """Persist a FAISS vector store to disk.
+
+    Args:
+        store: The FAISS vector store to save.
+        path: The filesystem path (directory) where the index will be
+            stored.  If the directory does not exist, it will be
+            created.  Note that the path should be unique for each
+            collection, as it will create multiple files with a
+            naming scheme based on this path.
+    """
+    store.save_local(path)
+
+
+def load_store(path: str, embedder: HFEmbedder) -> FAISS:
+    """Load a FAISS vector store from disk.
+
+    Args:
+        path: The directory where the vector store was saved.
+        embedder: An embedder used for queries.  The same model as
+            used when creating the index should be provided to ensure
+            correct similarity measurements.
+
+    Returns:
+        A ``FAISS`` vector store instance loaded from disk.
+    """
+    return FAISS.load_local(path, embedder.embedder)
