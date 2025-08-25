@@ -1,15 +1,127 @@
-# 1) Is anything listening locally?
-import socket
-def check(host, port):
-    s=socket.socket(); s.settimeout(2)
-    try: s.connect((host, port)); print(f"OK: {host}:{port} reachable")
-    except Exception as e: print(f"FAIL: {host}:{port} -> {e}")
-    finally: s.close()
-check("localhost", 6333)
+"""
+Embedding utilities using HuggingFace models via LangChain.
 
-# 2) HTTP probe (works for local)
-import requests
+This module exposes a simple helper to construct a HuggingFace
+embedding model compatible with LangChain.  The embedder returned
+here wraps models from the HuggingFace Hub and can produce dense
+embeddings for arbitrary text.  It provides two convenience methods
+for embedding a list of documents or a single query.
+
+LangChain integrates with HuggingFace through the
+``HuggingFaceEmbeddings`` class, which internally uses the
+``sentence_transformers`` library to load pre‑trained models.  To
+select a specific model, pass its name (e.g.
+``"BAAI/bge-m3"``) to ``create_embedder``.  The default model
+used here is ``"BAAI/bge-m3"``, a multilingual, long‑context
+embedding model from the Beijing Academy of Artificial Intelligence
+(BAAI) which has strong performance on retrieval tasks.  You can
+switch to any other compatible model by overriding the
+``model_name`` parameter.
+
+Example usage::
+
+    from embedding import create_embedder
+
+    # Create an embedder with the default model (BAAI/bge-m3)
+    embedder = create_embedder()
+
+    # Embed a list of texts
+    docs = ["Hello world", "Another sentence"]
+    vectors = embedder.embed_documents(docs)
+
+    # Embed a single query
+    query_vec = embedder.embed_query("What does this mean?")
+
+The embedder is intended to be used in conjunction with the
+``langchain_community.vectorstores.faiss.FAISS`` vector store (see
+``vector_store.py``), which accepts LangChain embeddings for
+constructing FAISS indices from documents.  See the LangChain docs for
+more details: https://python.langchain.com/docs/integrations/vectorstores/faiss/
+and https://python.langchain.com/docs/integrations/embeddings/huggingface
+"""
+
+from __future__ import annotations
+
+from typing import List
+
 try:
-    print(requests.get("http://localhost:6333/healthz", timeout=2).text)
-except Exception as e:
-    print("HTTP check failed:", e)
+    # HuggingFaceEmbeddings is available in langchain_community for LangChain v0.1+
+    from langchain_community.embeddings import HuggingFaceEmbeddings  # type: ignore
+except ImportError:
+    try:
+        # Fallback for older versions of LangChain (<0.1) where embeddings live under langchain.embeddings
+        from langchain.embeddings import HuggingFaceEmbeddings  # type: ignore
+    except ImportError as e:
+        raise ImportError(
+            "HuggingFaceEmbeddings could not be imported. "
+            "Please install langchain and sentence_transformers, e.g. with\n"
+            "    pip install langchain-community sentence-transformers"
+        ) from e
+
+
+def create_embedder(
+    model_name: str = "BAAI/bge-m3",
+    model_kwargs: dict | None = None,
+    encode_kwargs: dict | None = None,
+) -> HuggingFaceEmbeddings:
+    """Instantiate a HuggingFace embedder for use with LangChain.
+
+    Args:
+        model_name: Name of the HuggingFace sentence transformer model to load.
+        model_kwargs: Extra keyword arguments passed to the underlying model
+            constructor.  For example, you can set ``{"device": "cpu"}``
+            to force CPU usage.
+        encode_kwargs: Extra keyword arguments passed to the encoding step,
+            such as ``{"normalize_embeddings": False}``.  See the
+            LangChain documentation for details.
+
+    Returns:
+        An instance of ``HuggingFaceEmbeddings`` configured with the given
+        model.
+    """
+    model_kwargs = model_kwargs or {"device": "cpu"}
+    encode_kwargs = encode_kwargs or {"normalize_embeddings": False}
+    return HuggingFaceEmbeddings(
+        model_name=model_name,
+        model_kwargs=model_kwargs,
+        encode_kwargs=encode_kwargs,
+    )
+
+
+class HFEmbedder:
+    """Simple wrapper providing embed_documents and embed_query methods.
+
+    This wrapper encapsulates a ``HuggingFaceEmbeddings`` instance and
+    exposes two methods (``embed_documents`` and ``embed_query``) that
+    follow the same interface as the BGE embedder used earlier in this
+    project.  It allows easy swapping between embedder types.
+    """
+
+    def __init__(self, embedder: HuggingFaceEmbeddings) -> None:
+        self.embedder = embedder
+
+    def embed_documents(self, texts: List[str], batch_size: int | None = None) -> List[List[float]]:
+        """Embed a batch of documents.
+
+        Args:
+            texts: A list of strings to embed.
+            batch_size: Ignored for HuggingFace embeddings since the
+                underlying library handles batching internally.  Included
+                for signature compatibility with other embedders.
+
+        Returns:
+            A list of dense embedding vectors.
+        """
+        # LangChain expects a list of strings and returns a list of lists of floats
+        return self.embedder.embed_documents(texts)
+
+    def embed_query(self, query: str) -> List[float]:
+        """Embed a single query string.
+
+        Args:
+            query: The text to embed.
+
+        Returns:
+            The embedding vector as a list of floats.
+        """
+        return self.embedder.embed_query(query)
