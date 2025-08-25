@@ -1,168 +1,168 @@
 """
-Data preprocessing module for reading JSON files and extracting records.
+Embedding utilities for the BGE-M3 model.
 
-This module provides functions to load JSON files containing healthcare-related
-data and extract a list of records based on a specified top-level key. The
-records are converted into textual representations suitable for embedding
-generation and returned alongside metadata. A special ``mcid`` field can be
-added to each record's metadata to allow grouping or filtering by medical
-client ID (MCID).
+This module provides classes and functions to download the ``BAAI/bge-m3``
+model to a local directory and to compute dense embeddings for texts and
+queries. The embeddings are generated using mean pooling over token
+embeddings from the last hidden state of the model.
 
-Each supported JSON file has a mapping from the file name to the key
-containing the list of records. See ``FILE_KEY_MAP`` for the currently
-supported mappings. When adding new JSON files to the pipeline, simply
-update this mapping with the appropriate key name.
+Usage example:
 
-Example usage:
+    from embedding import download_bge_m3, BgeM3Embedder
 
-    from pathlib import Path
-    from data_preprocessing import FILE_KEY_MAP, load_records_from_json
+    # Download the model once (requires internet access)
+    download_bge_m3(model_dir="hf_embedding_model")
 
-    file_path = Path("/path/to/alerts.json")
-    key = FILE_KEY_MAP[file_path.name]
-    records = load_records_from_json(file_path, key, mcid="XYZ123")
+    # Initialise the embedder using the local directory
+    embedder = BgeM3Embedder(model_dir="hf_embedding_model")
 
-    for record_id, text, metadata in records:
-        print(record_id)
-        print(text)
-        print(metadata["mcid"])
+    # Embed a list of documents
+    docs = ["This is a test.", "Another document."]
+    vectors = embedder.embed_documents(docs)
+
+    # Embed a user query
+    query_vector = embedder.embed_query("What is the context window of bge-m3?")
 
 """
 
 from __future__ import annotations
 
-import json
-import uuid
-from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+import os
+from typing import List, Optional
 
-# Mapping of JSON file names to the top-level key containing the records.
-# When processing a new JSON file, add an entry here with the file name as
-# the key and the record array key as the value. The values correspond to
-# the names provided by the user when describing the datasets.
-FILE_KEY_MAP: Dict[str, str] = {
-    "alerts.json": "careAlertMessages",
-    "authorizations.json": "authorizations",
-    "behavioral_health.json": "behavioralHealths",
-    "claims.json": "claims",
-    "communications.json": "communications",
-    "denied_pharmacy.json": "deniedPharmacyRecords",
-    "document_repository.json": "document_details",
-    "documents.json": "documents",
-    "emergency_department.json": "emergencies",
-    "immunization.json": "immunizations",
-    "inpatient_records.json": "inpatientRecords",
-    "labs.json": "labs",
-    "mods.json": "mods",
-    "office_visits.json": "visits",
-    "pharmacy.json": "pharmacyRecords",
-}
+import torch
+from transformers import AutoTokenizer, AutoModel
+
+# Attempt to import huggingface_hub for explicit download; fallback silently
+try:
+    from huggingface_hub import snapshot_download
+except ImportError:
+    snapshot_download = None  # type: ignore
 
 
-def _record_to_text(record: Dict[str, Any]) -> str:
-    """Convert a record dictionary into a canonical textual representation.
+def download_bge_m3(model_name: str = "BAAI/bge-m3", model_dir: str = "hf_embedding_model") -> None:
+    """Download the BGE-M3 model to a local directory.
 
-    The embedding model expects a string input. This helper function
-    transforms nested dictionaries and lists into a flattened JSON string.
-    You may customise this function to change how text is extracted from
-    records (e.g., by selecting specific fields or concatenating values).
+    This function uses ``huggingface_hub.snapshot_download`` to fetch the
+    entire repository and store it in ``model_dir``. If the hub library
+    is not installed, this function will raise an informative error.
 
     Args:
-        record: The dictionary representing a single record from the JSON file.
+        model_name: The Hugging Face repository ID for the BGE-M3 model.
+        model_dir: Directory where the model files will be stored.
 
-    Returns:
-        A string representation of the record.
+    Raises:
+        ImportError: If ``huggingface_hub`` is not available.
     """
-    # Use json.dumps to serialise the record into a compact string. Use
-    # sort_keys=True to ensure deterministic ordering of keys, which yields
-    # consistent embeddings for the same record.
-    return json.dumps(record, sort_keys=True, ensure_ascii=False)
-
-
-def load_records_from_json(
-    file_path: Path,
-    key: str,
-    *,
-    mcid: Optional[str] = None,
-    deterministic_id: bool = False,
-) -> List[Tuple[str, str, Dict[str, Any]]]:
-    """Load records from a JSON file and convert them to text for embedding.
-
-    This function reads a JSON file, extracts the list of records under the
-    provided key, and returns a list of tuples. Each tuple contains a
-    generated unique identifier, the textual representation of the record,
-    and the original record as metadata. If ``mcid`` is provided, a field
-    named ``mcid`` will be added to each metadata dictionary.
-
-    Args:
-        file_path: Path to the JSON file.
-        key: The top-level key in the JSON object that contains the list of
-            records to process.
-        mcid: Optional MCID value to assign to each record's metadata. If
-            omitted or ``None``, an ``mcid`` field with value ``None`` will
-            still be added to the metadata.
-        deterministic_id: If True and the record contains a field that can
-            serve as a unique identifier (e.g., ``id``), use that value as
-            the point ID. Otherwise, a new UUID4 is generated.
-
-    Returns:
-        A list of tuples where each tuple is ``(record_id, text, metadata)``.
-    """
-    with open(file_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    # Navigate to the list of records using the specified key. If the key
-    # does not exist or is not a list, raise an informative error.
-    records = data.get(key)
-    if records is None:
-        raise KeyError(f"Key '{key}' not found in {file_path.name}")
-    if not isinstance(records, list):
-        raise TypeError(
-            f"Expected list at key '{key}' in {file_path.name}, got {type(records).__name__}"
+    if snapshot_download is None:
+        raise ImportError(
+            "huggingface_hub is required to download models. Install it with `pip install huggingface_hub`."
         )
-
-    processed_records: List[Tuple[str, str, Dict[str, Any]]] = []
-    for record in records:
-        # Determine the record ID. If deterministic_id is True and the record
-        # contains a simple string or integer field named 'id', use that value.
-        if deterministic_id and isinstance(record.get("id"), (str, int)):
-            record_id = str(record["id"])
-        else:
-            record_id = str(uuid.uuid4())
-        text = _record_to_text(record)
-        metadata = record.copy()
-        metadata["mcid"] = mcid  # assign the provided MCID (may be None)
-        processed_records.append((record_id, text, metadata))
-
-    return processed_records
+    os.makedirs(model_dir, exist_ok=True)
+    # Download the repository. ``local_dir_use_symlinks=False`` ensures the
+    # files are copied rather than symlinked, making the directory portable.
+    snapshot_download(
+        repo_id=model_name,
+        local_dir=model_dir,
+        local_dir_use_symlinks=False,
+        ignore_patterns=["*.safetensors"],  # skip large weight formats not needed
+    )
 
 
-def iter_dataset(
-    directory: Path,
-    *,
-    mcid: Optional[str] = None,
-    deterministic_id: bool = False,
-) -> Iterable[Tuple[str, str, List[Tuple[str, str, Dict[str, Any]]]]]:
-    """Iterate over all supported JSON files in a directory.
+class BgeM3Embedder:
+    """Embedder for the BGE-M3 model.
 
-    This generator yields a tuple for each supported JSON file found in the
-    given directory. Each tuple contains the collection name (derived from
-    the file stem), the full file path, and the list of processed records.
-
-    Args:
-        directory: Directory containing the JSON files.
-        mcid: Optional MCID value to assign to each record's metadata.
-        deterministic_id: Whether to use deterministic record IDs when
-            possible (see ``load_records_from_json``).
-
-    Yields:
-        A tuple ``(collection_name, file_path, records)`` for each supported file.
+    This class loads the tokenizer and model either from a local directory
+    (``model_dir``) or from Hugging Face if not already present. It
+    exposes methods to embed documents and queries using mean pooling.
     """
-    for file_name, key in FILE_KEY_MAP.items():
-        path = directory / file_name
-        if not path.exists():
-            # Skip missing files silently; the user may not have all files.
-            continue
-        records = load_records_from_json(path, key, mcid=mcid, deterministic_id=deterministic_id)
-        collection_name = path.stem
-        yield collection_name, str(path), records
+
+    def __init__(
+        self,
+        model_name: str = "BAAI/bge-m3",
+        model_dir: str = "hf_embedding_model",
+        device: Optional[str] = None,
+    ) -> None:
+        """Initialise the embedder.
+
+        Args:
+            model_name: Hugging Face repository ID for the BGE-M3 model.
+            model_dir: Directory containing the locally downloaded model. If
+                the directory does not exist or is empty, the model will be
+                downloaded automatically via the Hugging Face API (requires
+                internet access).
+            device: The device to load the model onto (e.g., "cpu" or
+                "cuda"). If ``None``, the embedder will choose GPU if
+                available, otherwise CPU.
+        """
+        self.model_name = model_name
+        self.model_dir = model_dir
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        # Load tokenizer and model. The ``local_files_only`` flag ensures
+        # ``AutoModel.from_pretrained`` will look in ``model_dir`` first and
+        # download if necessary.
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_dir if os.path.isdir(model_dir) and os.listdir(model_dir) else model_name,
+            cache_dir=model_dir,
+            use_fast=True,
+        )
+        self.model = AutoModel.from_pretrained(
+            model_dir if os.path.isdir(model_dir) and os.listdir(model_dir) else model_name,
+            cache_dir=model_dir,
+        ).to(self.device)
+        self.model.eval()
+
+    @staticmethod
+    def _mean_pooling(token_embeddings: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+        """Apply mean pooling over token embeddings.
+
+        Args:
+            token_embeddings: Tensor of shape (batch_size, seq_len, hidden_size).
+            attention_mask: Tensor of shape (batch_size, seq_len).
+
+        Returns:
+            Tensor of shape (batch_size, hidden_size) containing the pooled embeddings.
+        """
+        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+        sum_embeddings = torch.sum(token_embeddings * input_mask_expanded, dim=1)
+        sum_mask = input_mask_expanded.sum(dim=1)
+        return sum_embeddings / sum_mask
+
+    def embed_documents(self, texts: List[str], batch_size: int = 5) -> List[List[float]]:
+        """Embed a list of documents.
+
+        Args:
+            texts: A list of strings representing documents.
+            batch_size: Number of documents to process in a batch.
+
+        Returns:
+            A list of embeddings (lists of floats) corresponding to the input texts.
+        """
+        vectors: List[List[float]] = []
+        for start in range(0, len(texts), batch_size):
+            batch_texts = texts[start:start + batch_size]
+            encoded = self.tokenizer(
+                batch_texts,
+                padding=True,
+                truncation=True,
+                return_tensors="pt",
+            )
+            encoded = {k: v.to(self.device) for k, v in encoded.items()}
+            with torch.no_grad():
+                model_output = self.model(**encoded)
+            token_embeddings = model_output.last_hidden_state
+            pooled = self._mean_pooling(token_embeddings, encoded["attention_mask"])
+            vectors.extend(pooled.cpu().numpy().tolist())
+        return vectors
+
+    def embed_query(self, query: str) -> List[float]:
+        """Embed a single user query.
+
+        Args:
+            query: A text string representing the user's query.
+
+        Returns:
+            A single embedding vector (list of floats).
+        """
+        embeddings = self.embed_documents([query], batch_size=1)
+        return embeddings[0]
