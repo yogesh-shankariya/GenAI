@@ -1,168 +1,101 @@
 """
-Embedding utilities for the BGE-M3 model.
+Qdrant vector store utilities.
 
-This module provides classes and functions to download the ``BAAI/bge-m3``
-model to a local directory and to compute dense embeddings for texts and
-queries. The embeddings are generated using mean pooling over token
-embeddings from the last hidden state of the model.
+This module encapsulates common operations for storing embeddings in
+a Qdrant vector database. It supports creating collections with the
+appropriate vector size and distance metric, as well as upserting
+points with metadata.
 
-Usage example:
+Example usage::
 
-    from embedding import download_bge_m3, BgeM3Embedder
+    from vector_store import get_client, ensure_collection, upsert_vectors
 
-    # Download the model once (requires internet access)
-    download_bge_m3(model_dir="hf_embedding_model")
-
-    # Initialise the embedder using the local directory
-    embedder = BgeM3Embedder(model_dir="hf_embedding_model")
-
-    # Embed a list of documents
-    docs = ["This is a test.", "Another document."]
-    vectors = embedder.embed_documents(docs)
-
-    # Embed a user query
-    query_vector = embedder.embed_query("What is the context window of bge-m3?")
+    client = get_client(host="localhost", port=6333)
+    collection_name = "alerts"
+    vector_size = 1024
+    ensure_collection(client, collection_name, vector_size)
+    upsert_vectors(client, collection_name, ids, vectors, payloads)
 
 """
 
 from __future__ import annotations
 
-import os
-from typing import List, Optional
+import uuid
+from typing import Any, Dict, List, Optional
 
-import torch
-from transformers import AutoTokenizer, AutoModel
-
-# Attempt to import huggingface_hub for explicit download; fallback silently
-try:
-    from huggingface_hub import snapshot_download
-except ImportError:
-    snapshot_download = None  # type: ignore
+from qdrant_client import QdrantClient
+from qdrant_client.http.models import (
+    Distance,
+    PointStruct,
+    VectorParams,
+)
 
 
-def download_bge_m3(model_name: str = "BAAI/bge-m3", model_dir: str = "hf_embedding_model") -> None:
-    """Download the BGE-M3 model to a local directory.
-
-    This function uses ``huggingface_hub.snapshot_download`` to fetch the
-    entire repository and store it in ``model_dir``. If the hub library
-    is not installed, this function will raise an informative error.
+def get_client(host: str = "localhost", port: int = 6333, api_key: Optional[str] = None) -> QdrantClient:
+    """Instantiate a Qdrant client.
 
     Args:
-        model_name: The Hugging Face repository ID for the BGE-M3 model.
-        model_dir: Directory where the model files will be stored.
+        host: Hostname where Qdrant is running.
+        port: Port number for Qdrant.
+        api_key: Optional API key for Qdrant Cloud.
+
+    Returns:
+        A ``QdrantClient`` instance.
+    """
+    return QdrantClient(host=host, port=port, api_key=api_key)
+
+
+def ensure_collection(
+    client: QdrantClient,
+    collection_name: str,
+    vector_size: int,
+    *,
+    distance: str = "Cosine",
+) -> None:
+    """Ensure that a collection exists in Qdrant.
+
+    If the collection already exists, no action is taken. Otherwise,
+    a new collection is created with the specified vector size and distance
+    metric.
+
+    Args:
+        client: A Qdrant client instance.
+        collection_name: Name of the collection.
+        vector_size: Dimensionality of the vectors.
+        distance: Distance metric to use ("Cosine", "Euclid", etc.).
+    """
+    existing = {col.name for col in client.get_collections().collections}
+    if collection_name not in existing:
+        client.recreate_collection(
+            collection_name=collection_name,
+            vectors_config=VectorParams(size=vector_size, distance=getattr(Distance, distance.upper())),
+        )
+
+
+def upsert_vectors(
+    client: QdrantClient,
+    collection_name: str,
+    ids: List[str],
+    vectors: List[List[float]],
+    payloads: List[Dict[str, Any]],
+) -> None:
+    """Upsert points into a Qdrant collection.
+
+    Args:
+        client: Qdrant client instance.
+        collection_name: Name of the target collection.
+        ids: A list of point IDs. Must be the same length as ``vectors``.
+        vectors: A list of embedding vectors.
+        payloads: A list of metadata dictionaries, one per point.
 
     Raises:
-        ImportError: If ``huggingface_hub`` is not available.
+        ValueError: If the lengths of ``ids``, ``vectors``, and ``payloads`` do not match.
     """
-    if snapshot_download is None:
-        raise ImportError(
-            "huggingface_hub is required to download models. Install it with `pip install huggingface_hub`."
-        )
-    os.makedirs(model_dir, exist_ok=True)
-    # Download the repository. ``local_dir_use_symlinks=False`` ensures the
-    # files are copied rather than symlinked, making the directory portable.
-    snapshot_download(
-        repo_id=model_name,
-        local_dir=model_dir,
-        local_dir_use_symlinks=False,
-        ignore_patterns=["*.safetensors"],  # skip large weight formats not needed
-    )
-
-
-class BgeM3Embedder:
-    """Embedder for the BGE-M3 model.
-
-    This class loads the tokenizer and model either from a local directory
-    (``model_dir``) or from Hugging Face if not already present. It
-    exposes methods to embed documents and queries using mean pooling.
-    """
-
-    def __init__(
-        self,
-        model_name: str = "BAAI/bge-m3",
-        model_dir: str = "hf_embedding_model",
-        device: Optional[str] = None,
-    ) -> None:
-        """Initialise the embedder.
-
-        Args:
-            model_name: Hugging Face repository ID for the BGE-M3 model.
-            model_dir: Directory containing the locally downloaded model. If
-                the directory does not exist or is empty, the model will be
-                downloaded automatically via the Hugging Face API (requires
-                internet access).
-            device: The device to load the model onto (e.g., "cpu" or
-                "cuda"). If ``None``, the embedder will choose GPU if
-                available, otherwise CPU.
-        """
-        self.model_name = model_name
-        self.model_dir = model_dir
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        # Load tokenizer and model. The ``local_files_only`` flag ensures
-        # ``AutoModel.from_pretrained`` will look in ``model_dir`` first and
-        # download if necessary.
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            model_dir if os.path.isdir(model_dir) and os.listdir(model_dir) else model_name,
-            cache_dir=model_dir,
-            use_fast=True,
-        )
-        self.model = AutoModel.from_pretrained(
-            model_dir if os.path.isdir(model_dir) and os.listdir(model_dir) else model_name,
-            cache_dir=model_dir,
-        ).to(self.device)
-        self.model.eval()
-
-    @staticmethod
-    def _mean_pooling(token_embeddings: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
-        """Apply mean pooling over token embeddings.
-
-        Args:
-            token_embeddings: Tensor of shape (batch_size, seq_len, hidden_size).
-            attention_mask: Tensor of shape (batch_size, seq_len).
-
-        Returns:
-            Tensor of shape (batch_size, hidden_size) containing the pooled embeddings.
-        """
-        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-        sum_embeddings = torch.sum(token_embeddings * input_mask_expanded, dim=1)
-        sum_mask = input_mask_expanded.sum(dim=1)
-        return sum_embeddings / sum_mask
-
-    def embed_documents(self, texts: List[str], batch_size: int = 5) -> List[List[float]]:
-        """Embed a list of documents.
-
-        Args:
-            texts: A list of strings representing documents.
-            batch_size: Number of documents to process in a batch.
-
-        Returns:
-            A list of embeddings (lists of floats) corresponding to the input texts.
-        """
-        vectors: List[List[float]] = []
-        for start in range(0, len(texts), batch_size):
-            batch_texts = texts[start:start + batch_size]
-            encoded = self.tokenizer(
-                batch_texts,
-                padding=True,
-                truncation=True,
-                return_tensors="pt",
-            )
-            encoded = {k: v.to(self.device) for k, v in encoded.items()}
-            with torch.no_grad():
-                model_output = self.model(**encoded)
-            token_embeddings = model_output.last_hidden_state
-            pooled = self._mean_pooling(token_embeddings, encoded["attention_mask"])
-            vectors.extend(pooled.cpu().numpy().tolist())
-        return vectors
-
-    def embed_query(self, query: str) -> List[float]:
-        """Embed a single user query.
-
-        Args:
-            query: A text string representing the user's query.
-
-        Returns:
-            A single embedding vector (list of floats).
-        """
-        embeddings = self.embed_documents([query], batch_size=1)
-        return embeddings[0]
+    if not (len(ids) == len(vectors) == len(payloads)):
+        raise ValueError("The lengths of ids, vectors, and payloads must be equal.")
+    points: List[PointStruct] = []
+    for pid, vec, payload in zip(ids, vectors, payloads):
+        # If an ID is None or empty, generate a new UUID4
+        point_id = pid or uuid.uuid4().hex
+        points.append(PointStruct(id=point_id, vector=vec, payload=payload))
+    client.upsert(collection_name=collection_name, points=points)
