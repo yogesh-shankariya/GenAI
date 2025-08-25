@@ -1,17 +1,15 @@
-import os, sys, importlib
-os.chdir("/path/to/your/project")
-if "/path/to/your/project" not in sys.path:
-    sys.path.append("/path/to/your/project")
+# 1) Is anything listening locally?
+import socket
+def check(host, port):
+    s=socket.socket(); s.settimeout(2)
+    try: s.connect((host, port)); print(f"OK: {host}:{port} reachable")
+    except Exception as e: print(f"FAIL: {host}:{port} -> {e}")
+    finally: s.close()
+check("localhost", 6333)
 
-sys.argv = [
-    "ingestion_pipeline.py",
-    "--data-dir", "/path/to/jsons",
-    "--mcid", "YOUR_MCID",
-    "--model-dir", "hf_embedding_model",
-    "--host", "localhost",
-    "--port", "6333",
-    "--download-model",        # remove after first run
-]
-import ingestion_pipeline
-importlib.reload(ingestion_pipeline)
-ingestion_pipeline.main()
+# 2) HTTP probe (works for local)
+import requests
+try:
+    print(requests.get("http://localhost:6333/healthz", timeout=2).text)
+except Exception as e:
+    print("HTTP check failed:", e)
