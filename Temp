@@ -1,102 +1,17 @@
-"""
-Ingestion pipeline for BGE-M3 embeddings.
+import os, sys, importlib
+os.chdir("/path/to/your/project")
+if "/path/to/your/project" not in sys.path:
+    sys.path.append("/path/to/your/project")
 
-This script orchestrates the process of reading healthcare JSON files,
-embedding their contents using the BGE-M3 model, and storing the
-resulting vectors along with metadata in a Qdrant vector database.
-
-Features:
-    - Optional model download: fetch the BGE-M3 model into a local
-      directory before processing.
-    - MCID tagging: assign an ``mcid`` value to each record's metadata.
-    - Automatic collection creation: each JSON file is stored in its
-      own Qdrant collection (named after the file stem).
-
-Usage::
-
-    python ingestion_pipeline.py \
-        --data-dir /path/to/jsons \
-        --mcid ABC123 \
-        --download-model \
-        --model-dir hf_embedding_model \
-        --host localhost \
-        --port 6333
-
-Arguments:
-    --data-dir: Directory containing the JSON files to ingest.
-    --mcid: Value to assign to the ``mcid`` metadata field for all
-        ingested records.
-    --model-dir: Directory where the BGE-M3 model is stored. Defaults
-        to ``hf_embedding_model``.
-    --download-model: If specified, download the model to ``model-dir``
-        before processing (requires internet access).
-    --host: Qdrant host. Defaults to ``localhost``.
-    --port: Qdrant port. Defaults to ``6333``.
-    --api-key: Optional API key for Qdrant Cloud.
-
-"""
-
-from __future__ import annotations
-
-import argparse
-from pathlib import Path
-
-from data_preprocessing import iter_dataset
-from embedding import BgeM3Embedder, download_bge_m3
-from vector_store import get_client, ensure_collection, upsert_vectors
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Ingest JSON records into Qdrant using BGE-M3 embeddings.")
-    parser.add_argument("--data-dir", type=str, required=True, help="Directory containing JSON files to ingest")
-    parser.add_argument("--mcid", type=str, required=True, help="MCID value to assign to all records")
-    parser.add_argument("--model-dir", type=str, default="hf_embedding_model", help="Directory for the local BGE-M3 model")
-    parser.add_argument("--download-model", action="store_true", help="Download the BGE-M3 model before processing")
-    parser.add_argument("--host", type=str, default="localhost", help="Qdrant host (default: localhost)")
-    parser.add_argument("--port", type=int, default=6333, help="Qdrant port (default: 6333)")
-    parser.add_argument("--api-key", type=str, default=None, help="Optional API key for Qdrant Cloud")
-    parser.add_argument("--batch-size", type=int, default=8, help="Batch size for embedding computations")
-    return parser.parse_args()
-
-
-def main() -> None:
-    args = parse_args()
-    data_dir = Path(args.data_dir)
-    if not data_dir.is_dir():
-        raise FileNotFoundError(f"Data directory {data_dir} does not exist")
-
-    # Download model if requested
-    if args.download_model:
-        print(f"Downloading BGE-M3 model to {args.model_dir}...")
-        download_bge_m3(model_dir=args.model_dir)
-        print("Model download completed.")
-
-    # Instantiate embedder using the local model directory
-    print("Loading BGE-M3 model...")
-    embedder = BgeM3Embedder(model_dir=args.model_dir)
-
-    # Connect to Qdrant
-    print(f"Connecting to Qdrant at {args.host}:{args.port}...")
-    client = get_client(host=args.host, port=args.port, api_key=args.api_key)
-
-    # Iterate over each supported JSON file in the directory
-    for collection_name, file_path, records in iter_dataset(data_dir, mcid=args.mcid):
-        if not records:
-            continue
-        print(f"Processing {file_path} ({len(records)} records)...")
-        # Extract IDs, texts, and metadata
-        ids = [rec_id for (rec_id, _, _) in records]
-        texts = [text for (_, text, _) in records]
-        metadata = [meta for (_, _, meta) in records]
-        # Compute embeddings
-        vectors = embedder.embed_documents(texts, batch_size=args.batch_size)
-        # Ensure collection exists
-        vector_size = len(vectors[0]) if vectors else 0
-        ensure_collection(client, collection_name, vector_size)
-        # Upsert vectors into Qdrant
-        upsert_vectors(client, collection_name, ids, vectors, metadata)
-        print(f"Upserted {len(vectors)} vectors into collection '{collection_name}'.")
-
-
-if __name__ == "__main__":
-    main()
+sys.argv = [
+    "ingestion_pipeline.py",
+    "--data-dir", "/path/to/jsons",
+    "--mcid", "YOUR_MCID",
+    "--model-dir", "hf_embedding_model",
+    "--host", "localhost",
+    "--port", "6333",
+    "--download-model",        # remove after first run
+]
+import ingestion_pipeline
+importlib.reload(ingestion_pipeline)
+ingestion_pipeline.main()
