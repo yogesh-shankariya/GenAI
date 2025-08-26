@@ -1,8 +1,76 @@
-from huggingface_hub import snapshot_download
+"""
+Build ONE combined FAISS index from all JSONs.
 
-snapshot_download(
-    repo_id="BAAI/bge-m3",
-    local_dir="huggingface_embedding_model",
-    local_dir_use_symlinks=False,
-    ignore_patterns=["*.safetensors"],  # optional: skip extra weight formats
-)
+Usage:
+  python ingestion_pipeline.py \
+      --data-dir /path/to/jsons \
+      --mcid 74380480 \
+      --model-name huggingface_embedding_model \
+      --save-dir faiss_indices
+"""
+
+from __future__ import annotations
+import argparse
+from pathlib import Path
+
+from langchain.docstore.document import Document
+from data_preprocessing import iter_dataset
+from embedding import create_embedder, HFEmbedder
+from vector_store import create_faiss_store_from_documents, save_store
+
+
+def parse_args():
+    p = argparse.ArgumentParser("Ingest JSONs into ONE FAISS store")
+    p.add_argument("--data-dir", required=True)
+    p.add_argument("--mcid", required=True)
+    p.add_argument("--model-name", default="BAAI/bge-m3")
+    p.add_argument("--model-device", default="cpu")
+    p.add_argument("--encode-normalize", action="store_true")
+    p.add_argument("--save-dir", default=None)
+    return p.parse_args()
+
+
+def main():
+    args = parse_args()
+    data_dir = Path(args.data_dir)
+    if not data_dir.is_dir():
+        raise FileNotFoundError(data_dir)
+
+    # Embedder
+    embedder = HFEmbedder(
+        create_embedder(
+            model_name=args.model_name,
+            model_kwargs={"device": args.model_device},
+            encode_kwargs={"normalize_embeddings": args.encode_normalize},
+        )
+    )
+
+    # Collect ALL docs
+    all_docs: list[Document] = []
+    for _, file_path, records in iter_dataset(data_dir, mcid=args.mcid):
+        if not records:
+            continue
+        for rec_id, text, meta in records:
+            all_docs.append(
+                Document(page_content=text, metadata={**meta, "record_id": rec_id})
+            )
+        print(f"Loaded {len(records):>5} records from {file_path}")
+
+    if not all_docs:
+        print("No records found; nothing to index.")
+        return
+
+    # Build ONE FAISS index
+    store = create_faiss_store_from_documents(all_docs, embedder)
+    print(f"\nBuilt combined FAISS index with {len(all_docs)} documents.")
+
+    # Save once if requested
+    if args.save_dir:
+        out_dir = Path(args.save_dir) / f"combined_{args.mcid}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        save_store(store, str(out_dir))
+        print(f"Saved combined index to {out_dir}")
+
+
+if __name__ == "__main__":
+    main()
