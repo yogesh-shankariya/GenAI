@@ -1,93 +1,351 @@
+"""
+Utilities for normalising healthcare JSON files into human‑readable text.
+
+This module contains helpers to convert each supported JSON file into one or
+more ``.txt`` files.  Each JSON record is transformed into a series of
+``<key> is <value>`` lines and records are separated by a line of asterisks
+to aid readability.  Records are sorted in descending order by their date
+field before being written out.  Large collections of records are chunked
+across multiple output files, each containing at most ``token_limit``
+approximate tokens.  A token is approximated using whitespace separation.
+
+The mapping ``FILE_KEY_MAP`` defines the top‑level array for each JSON
+file, while ``DATE_FIELD_MAP`` specifies which field in each record
+contains the date used for sorting.  When adding new datasets, update
+these mappings accordingly.
+
+Example usage::
+
+    from pathlib import Path
+    from data_preprocessing import convert_all_jsons_to_txt
+
+    input_dir = Path("/path/to/jsons")
+    output_dir = Path("/path/to/output")
+    convert_all_jsons_to_txt(input_dir, output_dir, token_limit=10_000)
+
+After running the above, a folder will be created for each JSON file
+within ``output_dir`` (for example ``claims`` for ``claims.json``).
+Within each folder you will find ``chunk_1.txt``, ``chunk_2.txt``, etc.,
+containing sorted and normalised records.  The first chunk always holds
+the most recent records based on the configured date field.
+"""
+
+from __future__ import annotations
+
+import json
+import uuid
 from pathlib import Path
-import os
-import fitz  # PyMuPDF
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-# --- keep your existing converter + pipeline_options objects ---
+# Mapping of JSON file names to the top-level key containing the records.
+# When processing a new JSON file, add an entry here with the file name as
+# the key and the record array key as the value. The values correspond to
+# the names provided by the user when describing the datasets.
+FILE_KEY_MAP: Dict[str, str] = {
+    "alerts.json": "careAlertMessages",
+    "authorizations.json": "authorizations",
+    "behavioral_health.json": "behavioralHealths",
+    "claims.json": "claims",
+    "communications.json": "communications",
+    "denied_pharmacy.json": "deniedPharmacyRecords",
+    "document_repository.json": "document_details",
+    "documents.json": "documents",
+    "emergency_department.json": "emergencies",
+    "immunization.json": "immunizations",
+    "inpatient_records.json": "inpatientRecords",
+    "labs.json": "labs",
+    "mods.json": "mods",
+    "office_visits.json": "visits",
+    "pharmacy.json": "pharmacyRecords",
+}
 
-def _convert_single_pdf_to_combined_file(pdf_path: Path,
-                                         out_file: Path,
-                                         converter,
-                                         pipeline_options,
-                                         page_limit: int | None = None) -> None:
+# Mapping of JSON file names to the date-like field used for sorting records.
+# These fields correspond to the examples provided by the user.  When
+# introducing new JSON files, add an entry mapping the file name to
+# its primary date field.  Any file not present here defaults to the
+# ``date`` field.
+DATE_FIELD_MAP: Dict[str, str] = {
+    "alerts.json": "date",
+    "authorizations.json": "startDate",
+    "behavirol_health.json": "date",
+    "behavioral_health.json": "date",
+    "claims.json": "date",
+    "communications.json": "contactDate",
+    "denied_pharmacy.json": "date",
+    "document_repository.json": "date",
+    "documents.json": "date",
+    "emergency_dept.json": "date",
+    "emergency_department.json": "date",
+    "immunizations.json": "date",
+    "immunization.json": "date",
+    "inPatient_records.json": "admitDate",
+    "inpatient_records.json": "admitDate",
+    "labs.json": "observationDate",
+    "mods.json": "date",
+    "office_visits.json": "date",
+    "pharmacy.json": "date",
+}
+
+
+def _record_to_text(record: Dict[str, Any]) -> str:
+    """Convert a record dictionary into a canonical textual representation.
+
+    This helper converts nested dictionaries and lists into a
+    deterministic JSON string.  It can be customised to pull out
+    specific fields or reformat values, depending on downstream needs.
+
+    Args:
+        record: The dictionary representing a single record from the JSON file.
+
+    Returns:
+        A string representation of the record.
     """
-    Minimal change: same per-page logic, but append all pages into one file.
+    # Use json.dumps to serialise the record into a compact string.  The
+    # ``sort_keys`` flag ensures deterministic ordering of keys so that
+    # equivalent records always produce identical strings.
+    return json.dumps(record, sort_keys=True, ensure_ascii=False)
+
+
+def load_records_from_json(
+    file_path: Path,
+    key: str,
+    *,
+    mcid: Optional[str] = None,
+    deterministic_id: bool = False,
+) -> List[Tuple[str, str, Dict[str, Any]]]:
+    """Load records from a JSON file and convert them to text.
+
+    This function reads a JSON file, extracts the list of records under the
+    provided key, and returns a list of tuples. Each tuple contains a
+    generated unique identifier, the textual representation of the record,
+    and the original record as metadata.  A field named ``mcid`` will
+    always be present in the returned metadata; it will hold the passed
+    ``mcid`` value or ``None``.
+
+    Args:
+        file_path: Path to the JSON file.
+        key: The top-level key in the JSON object that contains the list of
+            records to process.
+        mcid: Optional MCID value to assign to each record's metadata. If
+            omitted or ``None``, an ``mcid`` field with value ``None`` will
+            still be added to the metadata.
+        deterministic_id: If True and the record contains a field that can
+            serve as a unique identifier (e.g., ``id``), use that value as
+            the point ID. Otherwise, a new UUID4 is generated.
+
+    Returns:
+        A list of tuples where each tuple is ``(record_id, text, metadata)``.
     """
-    out_file.parent.mkdir(parents=True, exist_ok=True)
-    # start fresh for this PDF
-    if out_file.exists():
-        out_file.unlink()
+    with open(file_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
 
-    # count pages
-    with fitz.open(pdf_path) as doc:
-        total_pages = len(doc)
-
-    pages_to_process = total_pages if page_limit is None else min(page_limit, total_pages)
-
-    for page_num in range(1, pages_to_process + 1):
-        # === your existing core logic, unchanged ===
-        result = converter.convert(
-            str(pdf_path),
-            page_range=(page_num, page_num),
-            pipeline_options=pipeline_options
+    # Navigate to the list of records using the specified key. If the key
+    # does not exist or is not a list, raise an informative error.
+    records = data.get(key)
+    if records is None:
+        raise KeyError(f"Key '{key}' not found in {file_path.name}")
+    if not isinstance(records, list):
+        raise TypeError(
+            f"Expected list at key '{key}' in {file_path.name}, got {type(records).__name__}"
         )
-        # Docling exports: try both names to match your environment
+
+    processed_records: List[Tuple[str, str, Dict[str, Any]]] = []
+    for record in records:
+        # Determine the record ID. If deterministic_id is True and the record
+        # contains a simple string or integer field named 'id', use that value.
+        if deterministic_id and isinstance(record.get("id"), (str, int)):
+            record_id = str(record["id"])
+        else:
+            record_id = str(uuid.uuid4())
+        text = _record_to_text(record)
+        metadata = record.copy()
+        # Include the MCID (can be None) and the base JSON file name (stem)
+        metadata["mcid"] = mcid
+        metadata["json_name"] = file_path.stem
+        processed_records.append((record_id, text, metadata))
+
+    return processed_records
+
+
+def normalize_json_to_txt(
+    json_path: Path,
+    output_root: Path,
+    *,
+    token_limit: int = 10000,
+    mcid: Optional[str] = None,
+) -> None:
+    """Convert a JSON file into one or more normalised text files.
+
+    This helper function reads the given JSON file, sorts its records in
+    descending order of the configured date field, normalises each
+    record into a human‐readable string, and writes the results to
+    chunked text files. Each chunk will contain as many records as
+    possible while keeping the approximate token count under
+    ``token_limit``. The output directory will be ``output_root``/``stem``,
+    where ``stem`` is the JSON filename without the ``.json`` suffix.
+
+    A record is normalised by converting each key–value pair into the
+    form ``<key> is <value>`` on a separate line. Records are
+    separated by a line of 64 asterisks ("*") to aid readability.
+
+    Args:
+        json_path: Path to the source JSON file.
+        output_root: Directory under which per‐file folders will be
+            created to hold chunked text files.
+        token_limit: Maximum approximate number of tokens per chunk. Tokens
+            are approximated by splitting words on whitespace.
+        mcid: Optional MCID value to assign to each record's metadata.  This
+            parameter is accepted for backward compatibility; it is
+            attached to the internal metadata but never written to the
+            output text.  You can ignore this parameter if MCID tags are
+            unnecessary for your workflow.
+
+    Raises:
+        KeyError: If the JSON file name is not present in ``FILE_KEY_MAP``.
+    """
+    from datetime import datetime
+    from dateutil import parser as date_parser  # type: ignore
+
+    # Determine collection name and sort key
+    file_name = json_path.name
+    if file_name not in FILE_KEY_MAP:
+        raise KeyError(f"Unsupported JSON file: {file_name}")
+    # Pick the appropriate date field for sorting, defaulting to "date"
+    sort_key = DATE_FIELD_MAP.get(file_name, "date")
+
+    # Load records via existing helper
+    key = FILE_KEY_MAP[file_name]
+    records = load_records_from_json(json_path, key, mcid=mcid, deterministic_id=False)
+
+    # Sort records by the date field in descending order
+    def parse_date(value: Any) -> datetime:
+        if value is None:
+            return datetime.min
         try:
-            md = result.document.export_to_markdown()
-        except AttributeError:
-            md = result.document.export_markdown()
+            return date_parser.parse(str(value))
+        except Exception:
+            return datetime.min
 
-        # append this page's OCR to the combined file
-        with open(out_file, "a", encoding="utf-8") as f:
-            f.write(f"\n\n<!-- ocr-service-page-start:{page_num} -->\n")
-            f.write(md)
+    sorted_records = sorted(
+        records,
+        key=lambda tup: parse_date(tup[2].get(sort_key)),
+        reverse=True,
+    )
+
+    # Normalise each record to a string
+    normalised_records: List[str] = []
+    for rec_id, text, meta in sorted_records:
+        # Copy the original metadata to avoid modifying the global record
+        local_meta = meta.copy()
+        # Remove fields not needed in the normalised output
+        local_meta.pop("mcid", None)
+        local_meta.pop("json_name", None)
+        # Build lines of "key is value".  If the value is a nested
+        # structure (dict or list), serialise it to JSON to avoid
+        # leaking Python object syntax into the text.
+        lines: List[str] = []
+        for k, v in local_meta.items():
+            # Represent nested structures as JSON, otherwise use plain string.
+            if isinstance(v, (dict, list)):
+                v_str = json.dumps(v, ensure_ascii=False)
+            else:
+                v_str = v
+            lines.append(f"{k} is {v_str}")
+        normalised_records.append("\n".join(lines))
+
+    # Chunk records into files based on approximate token count
+    chunks: List[List[str]] = []
+    current_chunk: List[str] = []
+    current_tokens = 0
+    for rec_str in normalised_records:
+        token_count = len(rec_str.split())
+        # If adding this record would exceed the limit, start a new chunk
+        if current_chunk and (current_tokens + token_count) > token_limit:
+            chunks.append(current_chunk)
+            current_chunk = [rec_str]
+            current_tokens = token_count
+        else:
+            current_chunk.append(rec_str)
+            current_tokens += token_count
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    # Create output directory for this JSON file
+    out_dir = output_root / json_path.stem
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write each chunk to its own text file
+    delim_line = "*" * 64
+    for idx, chunk_records in enumerate(chunks, 1):
+        chunk_lines: List[str] = []
+        for rec in chunk_records:
+            chunk_lines.append(delim_line)
+            chunk_lines.append(rec)
+        # Remove leading/trailing whitespace
+        content = "\n".join(chunk_lines).strip()
+        out_path = out_dir / f"chunk_{idx}.txt"
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(content)
 
 
-def ocr_folder_tree_to_combined_files(input_root: str | Path,
-                                      output_root: str | Path,
-                                      converter,
-                                      pipeline_options,
-                                      ext: str = ".md",
-                                      page_limit: int | None = None) -> None:
+def convert_all_jsons_to_txt(
+    input_dir: Path,
+    output_dir: Path,
+    *,
+    token_limit: int = 10000,
+    mcid: Optional[str] = None,
+) -> None:
+    """Convert all supported JSON files in a directory to normalised text files.
+
+    This convenience function iterates over the files defined in
+    ``FILE_KEY_MAP`` within ``input_dir``, and for each file present it
+    calls ``normalize_json_to_txt`` to produce one or more chunked text
+    files under ``output_dir``. Subdirectories will be created per
+    file based on the JSON filename stem.
+
+    Args:
+        input_dir: Directory containing the JSON files to process.
+        output_dir: Base directory where output subdirectories and
+            ``chunk_n.txt`` files will be written.
+        token_limit: Maximum approximate number of tokens per chunk.
+        mcid: Optional MCID value to include in the internal metadata during
+            loading.  This does not affect the normalised text output.
     """
-    Walk input_root, mirror the hierarchy in output_root,
-    and write ONE combined file per PDF with all page OCR appended.
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    for file_name in FILE_KEY_MAP:
+        json_path = input_dir / file_name
+        if not json_path.exists():
+            continue
+        normalize_json_to_txt(json_path, output_dir, token_limit=token_limit, mcid=mcid)
+
+
+def iter_dataset(
+    directory: Path,
+    *,
+    mcid: Optional[str] = None,
+    deterministic_id: bool = False,
+) -> Iterable[Tuple[str, str, List[Tuple[str, str, Dict[str, Any]]]]]:
+    """Iterate over all supported JSON files in a directory.
+
+    This generator yields a tuple for each supported JSON file found in the
+    given directory. Each tuple contains the collection name (derived from
+    the file stem), the full file path, and the list of processed records.
+
+    Args:
+        directory: Directory containing the JSON files.
+        mcid: Optional MCID value to assign to each record's metadata.
+        deterministic_id: Whether to use deterministic record IDs when
+            possible (see ``load_records_from_json``).
+
+    Yields:
+        A tuple ``(collection_name, file_path, records)`` for each supported file.
     """
-    input_root = Path(input_root).resolve()
-    output_root = Path(output_root).resolve()
-
-    for root, _dirs, files in os.walk(input_root):
-        root_path = Path(root)
-        for name in files:
-            if not name.lower().endswith(".pdf"):
-                continue
-
-            pdf_path = root_path / name
-            rel_dir = root_path.relative_to(input_root)
-            out_dir = output_root / rel_dir
-            out_file = out_dir / (pdf_path.stem + ext)  # change ext to ".txt" if you prefer
-
-            _convert_single_pdf_to_combined_file(
-                pdf_path=pdf_path,
-                out_file=out_file,
-                converter=converter,
-                pipeline_options=pipeline_options,
-                page_limit=page_limit
-            )
-            print(f"✓ {pdf_path} → {out_file}")
-
-
-# assumes you already created:
-# converter = DocumentConverter(...)
-# pipeline_options = VlmPipelineOptions(...)
-
-input_root  = "/path/to/your/unzipped_pdfs_root"
-output_root = "/path/to/output_root"
-
-ocr_folder_tree_to_combined_files(
-    input_root=input_root,
-    output_root=output_root,
-    converter=converter,
-    pipeline_options=pipeline_options,
-    ext=".md"     # or ".txt" if you prefer
-    # page_limit=10  # optional: cap pages per PDF
-)
+    for file_name, key in FILE_KEY_MAP.items():
+        path = directory / file_name
+        if not path.exists():
+            # Skip missing files silently; the user may not have all files.
+            continue
+        records = load_records_from_json(path, key, mcid=mcid, deterministic_id=deterministic_id)
+        collection_name = path.stem
+        yield collection_name, str(path), records
