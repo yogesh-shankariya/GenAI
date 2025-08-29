@@ -86,6 +86,51 @@ DATE_FIELD_MAP: Dict[str, str] = {
     "pharmacy.json": "date",
 }
 
+# ----------------------------------------------------------------------------
+# Token counting helper
+#
+# Tiktoken is a specialised library for counting tokens for models such as
+# GPT‑3.5 or GPT‑4.  In this environment the ``tiktoken`` package may not
+# be installed.  The ``count_tokens`` function attempts to import
+# tiktoken and use its encoding; if that fails it falls back to a simple
+# whitespace-based word count.  Adjust the fallback as needed.
+
+def _get_tiktoken_encoder():
+    try:
+        import tiktoken  # type: ignore
+    except ImportError:
+        return None
+    # Try to get a default encoding.  If a specific model encoding is
+    # unavailable, this may throw; in that case return None to fall back.
+    try:
+        return tiktoken.get_encoding("cl100k_base")  # commonly used encoding
+    except Exception:
+        return None
+
+
+_tiktoken_encoder = _get_tiktoken_encoder()
+
+
+def count_tokens(text: str) -> int:
+    """Return an approximate token count for the given text.
+
+    If the ``tiktoken`` library is available, this will use the
+    ``cl100k_base`` encoding to count tokens.  Otherwise, it falls
+    back to counting whitespace-separated words.  The token limit for
+    chunking should be interpreted relative to the tokenisation method
+    used here.
+
+    Args:
+        text: The input string.
+
+    Returns:
+        An integer token count.
+    """
+    if _tiktoken_encoder is not None:
+        return len(_tiktoken_encoder.encode(text))
+    # Fallback: approximate by word count
+    return len(text.split())
+
 
 def _record_to_text(record: Dict[str, Any]) -> str:
     """Convert a record dictionary into a canonical textual representation.
@@ -126,9 +171,9 @@ def load_records_from_json(
         file_path: Path to the JSON file.
         key: The top-level key in the JSON object that contains the list of
             records to process.
-        mcid: Optional MCID value to assign to each record's metadata. If
-            omitted or ``None``, an ``mcid`` field with value ``None`` will
-            still be added to the metadata.
+        mcid: Optional MCID value (currently ignored).  The returned
+            metadata is a shallow copy of the record without any added
+            fields.
         deterministic_id: If True and the record contains a field that can
             serve as a unique identifier (e.g., ``id``), use that value as
             the point ID. Otherwise, a new UUID4 is generated.
@@ -159,9 +204,6 @@ def load_records_from_json(
             record_id = str(uuid.uuid4())
         text = _record_to_text(record)
         metadata = record.copy()
-        # Include the MCID (can be None) and the base JSON file name (stem)
-        metadata["mcid"] = mcid
-        metadata["json_name"] = file_path.stem
         processed_records.append((record_id, text, metadata))
 
     return processed_records
@@ -213,9 +255,11 @@ def normalize_json_to_txt(
     # Pick the appropriate date field for sorting, defaulting to "date"
     sort_key = DATE_FIELD_MAP.get(file_name, "date")
 
-    # Load records via existing helper
+    # Load raw records directly from the JSON file without adding extra metadata
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
     key = FILE_KEY_MAP[file_name]
-    records = load_records_from_json(json_path, key, mcid=mcid, deterministic_id=False)
+    raw_records: List[Dict[str, Any]] = data.get(key) or []
 
     # Sort records by the date field in descending order
     def parse_date(value: Any) -> datetime:
@@ -226,26 +270,20 @@ def normalize_json_to_txt(
         except Exception:
             return datetime.min
 
-    sorted_records = sorted(
-        records,
-        key=lambda tup: parse_date(tup[2].get(sort_key)),
+    sorted_records: List[Dict[str, Any]] = sorted(
+        raw_records,
+        key=lambda rec: parse_date(rec.get(sort_key)),
         reverse=True,
     )
 
     # Normalise each record to a string
     normalised_records: List[str] = []
-    for rec_id, text, meta in sorted_records:
-        # Copy the original metadata to avoid modifying the global record
-        local_meta = meta.copy()
-        # Remove fields not needed in the normalised output
-        local_meta.pop("mcid", None)
-        local_meta.pop("json_name", None)
+    for record in sorted_records:
         # Build lines of "key is value".  If the value is a nested
         # structure (dict or list), serialise it to JSON to avoid
         # leaking Python object syntax into the text.
         lines: List[str] = []
-        for k, v in local_meta.items():
-            # Represent nested structures as JSON, otherwise use plain string.
+        for k, v in record.items():
             if isinstance(v, (dict, list)):
                 v_str = json.dumps(v, ensure_ascii=False)
             else:
@@ -258,7 +296,7 @@ def normalize_json_to_txt(
     current_chunk: List[str] = []
     current_tokens = 0
     for rec_str in normalised_records:
-        token_count = len(rec_str.split())
+        token_count = count_tokens(rec_str)
         # If adding this record would exceed the limit, start a new chunk
         if current_chunk and (current_tokens + token_count) > token_limit:
             chunks.append(current_chunk)
