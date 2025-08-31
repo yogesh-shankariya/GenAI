@@ -1,10 +1,88 @@
-# chat_schema, params_4o, chat_prompt come from your existing setup
-# chat_prompt must contain: "... {json_context} ..."
-out = await marshal_folder_chunks_async(
-    input_path=".../Normalised_Input_Jsons/58192827/claims",
-    chat_schema=chat_schema,
-    params_4o=params_4o,
-    chat_prompt_template=chat_prompt,
-    max_concurrency=8,
-)
-# `out` -> {"chunk_1": {...}, "chunk_2": {...}, ...}
+import asyncio
+import re
+from pathlib import Path
+from typing import Dict, Any, List, Tuple, Optional, Union
+
+CHUNK_RE = re.compile(r"^chunk[_-]?(\d+)\.txt$", re.IGNORECASE)
+
+def _sorted_chunk_files(folder: Path) -> List[Tuple[Path, int]]:
+    files: List[Tuple[Path, int]] = []
+    for fp in folder.rglob("chunk*.txt"):
+        m = CHUNK_RE.match(fp.name)
+        if m:
+            files.append((fp, int(m.group(1))))
+    files.sort(key=lambda t: t[1])  # by chunk number
+    return files
+
+def _coerce_desc(desc: Optional[Union[str, Path]]) -> str:
+    """
+    Accepts:
+      - raw string description, or
+      - path to a .txt/.md/.json file (as str/Path)
+    Returns the description text ("" if None).
+    """
+    if desc is None:
+        return ""
+    if isinstance(desc, Path) or Path(str(desc)).exists():
+        try:
+            return Path(str(desc)).read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            return ""
+    return str(desc)
+
+async def _marshal_one(
+    file_path: Path,
+    chat_schema: Any,
+    params_4o: Dict[str, Any],
+    prompt_template_with_desc: str,  # already has {json_desc} filled
+    sem: asyncio.Semaphore,
+) -> Any:
+    async with sem:
+        text = file_path.read_text(encoding="utf-8", errors="ignore")
+        prompt = prompt_template_with_desc.format(json_context=text)
+        return await hc4sass.marshal_into_json(
+            schema=chat_schema,
+            prompt=prompt,
+            params=params_4o,
+        )
+
+async def marshal_folder_chunks_async(
+    input_path: str,
+    chat_schema: Any,
+    params_4o: Dict[str, Any],
+    chat_prompt_template: str,          # contains {json_context} and {json_desc}
+    json_desc: Optional[Union[str, Path]] = None,  # ONE description (text or file path)
+    max_concurrency: int = 8,
+) -> Dict[str, Any]:
+    """
+    Process all chunk_*.txt inside a single folder (e.g., .../58192827/claims).
+    Fills {json_desc} once (from `json_desc`) and {json_context} per chunk.
+    Returns: {"chunk_1": <json>, "chunk_2": <json>, ...}
+    """
+    folder = Path(input_path)
+    assert folder.exists() and folder.is_dir(), f"Folder not found: {folder}"
+    assert "{json_context}" in chat_prompt_template, "Prompt must include {json_context}"
+    assert "{json_desc}" in chat_prompt_template, "Prompt must include {json_desc}"
+
+    # Fill the description once; then per-chunk we only inject {json_context}
+    desc_text = _coerce_desc(json_desc)
+    prompt_with_desc = chat_prompt_template.format(json_desc=desc_text)
+
+    sem = asyncio.Semaphore(max_concurrency)
+    chunk_files = _sorted_chunk_files(folder)
+
+    tasks = [
+        asyncio.create_task(
+            _marshal_one(fp, chat_schema, params_4o, prompt_with_desc, sem)
+        )
+        for fp, _ in chunk_files
+    ]
+
+    results: Dict[str, Any] = {}
+    gathered = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for (fp, idx), res in zip(chunk_files, gathered):
+        key = f"chunk_{idx}"
+        results[key] = {"_error": str(res)} if isinstance(res, Exception) else res
+
+    return results
