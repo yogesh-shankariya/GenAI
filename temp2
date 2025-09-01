@@ -1,21 +1,64 @@
-json_names = ["claims", "office_visits"]  # could be empty
+import asyncio
+from pathlib import Path
+from typing import List, Dict, Any, Optional, Union
 
-out = await marshal_categories_async(
-    base_path=".../Normalised_Input_Jsons/58192827",
-    json_names=json_names,
-    chat_schema=chat_schema,
-    params_4o=params_4o,
-    chat_prompt_template=chat_prompt,  # must contain {json_context} and {json_desc}
-    # Option A: single description for all
-    # common_json_desc=".../TMV_ChatBot_Final/Jsons_Description/common_desc.txt",
-    # Option B: per-category descriptions from a folder
-    desc_dir=".../TMV_ChatBot_Final/Jsons_Description",
-    chunk_concurrency=8,
-)
+# Requires: marshal_folder_chunks_async(...) from earlier
 
-# `out` structure:
-# {
-#   "claims": {"chunk_1": {...}, "chunk_2": {...}},
-#   "office_visits": {"chunk_1": {...}},
-# }
-# or {"message": "Information is not available."} when json_names == []
+async def marshal_categories_async(
+    base_path: str,                          # e.g. ".../Normalised_Input_Jsons/58192827"
+    json_names: List[str],                   # e.g. ["claims", "office_visits"]
+    chat_schema: Any,
+    params_4o: Dict[str, Any],
+    chat_prompt_template: str,
+    desc_dir: Optional[str] = None,          # e.g. ".../TMV_ChatBot_Final/Jsons_Description"
+    common_json_desc: Optional[Union[str, Path]] = None,  # pass ONE desc for all categories (text or file path)
+    chunk_concurrency: int = 8,
+) -> Dict[str, Any]:
+    """
+    Runs marshal_folder_chunks_async for each category in `json_names` concurrently.
+    If `common_json_desc` is provided, it is used for every category.
+    Otherwise, if `desc_dir` is provided, each category will use <desc_dir>/<name>.txt.
+    Returns:
+      {
+        "claims": {"chunk_1": {...}, ...} or {"_error": "..."},
+        "office_visits": {...},
+        ...
+      }
+    """
+    if not json_names:
+        return {"message": "Information is not available."}
+
+    base = Path(base_path)
+    tasks, keys = [], []
+
+    for name in json_names:
+        folder = base / name
+        # choose description for this category
+        if common_json_desc is not None:
+            desc_for_cat = common_json_desc
+        elif desc_dir is not None:
+            desc_for_cat = Path(desc_dir) / f"{name}.txt"
+        else:
+            desc_for_cat = None
+
+        # schedule the per-folder async run
+        task = asyncio.create_task(
+            marshal_folder_chunks_async(
+                input_path=str(folder),
+                chat_schema=chat_schema,
+                params_4o=params_4o,
+                chat_prompt_template=chat_prompt_template,
+                json_desc=desc_for_cat,
+                max_concurrency=chunk_concurrency,
+            )
+        )
+        tasks.append(task)
+        keys.append(name)
+
+    aggregated: Dict[str, Any] = {}
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for name, res in zip(keys, results):
+        aggregated[name] = {"_error": str(res)} if isinstance(res, Exception) else res
+
+    return aggregated
