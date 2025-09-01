@@ -1,12 +1,21 @@
-# chat_schema, params_4o, chat_prompt_template = ...
-# Pass ONE description (either raw text or a single file path)
+json_names = ["claims", "office_visits"]  # could be empty
 
-out = await marshal_folder_chunks_async(
-    input_path=".../Normalised_Input_Jsons/58192827/claims",
+out = await marshal_categories_async(
+    base_path=".../Normalised_Input_Jsons/58192827",
+    json_names=json_names,
     chat_schema=chat_schema,
     params_4o=params_4o,
-    chat_prompt_template=chat_prompt,
-    json_desc=".../TMV_ChatBot_Final/Jsons_Description/claims.txt",  # or a raw string
-    max_concurrency=8,
+    chat_prompt_template=chat_prompt,  # must contain {json_context} and {json_desc}
+    # Option A: single description for all
+    # common_json_desc=".../TMV_ChatBot_Final/Jsons_Description/common_desc.txt",
+    # Option B: per-category descriptions from a folder
+    desc_dir=".../TMV_ChatBot_Final/Jsons_Description",
+    chunk_concurrency=8,
 )
-# -> {"chunk_1": {...}, "chunk_2": {...}, ...}
+
+# `out` structure:
+# {
+#   "claims": {"chunk_1": {...}, "chunk_2": {...}},
+#   "office_visits": {"chunk_1": {...}},
+# }
+# or {"message": "Information is not available."} when json_names == []
