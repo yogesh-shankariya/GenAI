@@ -2,6 +2,68 @@
 This module provides asynchronous functions to process both structured JSON chunks
 and unstructured free‑form documents for a given medical case identifier (MCID).
 
+There are two sources of information for each MCID:
+
+* Normalised_Input_Jsons/<MCID>/<category>/chunk_*.txt – structured JSON input
+  files divided into one or more chunks.  Each category (e.g. ``claims``,
+  ``office_visits``) may have multiple ``chunk_*.txt`` files.  The
+  ``chat_prompt_template`` used for JSON processing must include the
+  ``{json_context}`` and ``{json_desc}`` placeholders.  A description file for
+  each category is automatically loaded from ``desc_dir/<category>.txt`` and
+  substituted into the ``{json_desc}`` placeholder.  The content of each
+  ``chunk_*.txt`` file replaces ``{json_context}`` before calling the
+  ``hc4sass.marshal_into_json`` service.
+
+* Normalised_Input_Docs/<MCID>/*.txt – unstructured documents such as CCDA or
+  patient summaries.  Each file is processed independently using
+  ``doc_prompt_template`` which must contain a single ``{doc_context}``
+  placeholder.  The entire contents of the document file are inserted into
+  ``{doc_context}`` and sent to ``hc4sass.marshal_into_json`` with its own
+  schema and parameter set.
+
+Both sources are processed concurrently using ``asyncio``.  The returned
+structure mirrors the input hierarchy: JSON categories map to dictionaries of
+``chunk_n`` responses, while documents map to dictionaries keyed by the
+document filename with a single ``chunk_n`` entry per file (the index is
+assigned based on document order).  If no categories or documents are
+available, a message indicating the absence of information is returned instead
+of raising an exception.
+
+These helpers do not perform any disk writes; they return Python objects
+containing the marshalled responses.  Downstream callers can decide how
+to persist or otherwise consume the data.
+
+Example usage::
+
+    import asyncio
+    from parallel_processing import marshal_json_and_docs
+
+    combined = asyncio.run(marshal_json_and_docs(
+        mcid="58192827",
+        json_base_path="/path/to/Normalised_Input_Jsons/58192827",
+        docs_base_path="/path/to/Normalised_Input_Docs/58192827",
+        json_categories=["claims", "office_visits"],
+        json_schema=chat_schema,
+        json_params=params_4o,
+        json_prompt_template=chat_prompt,  # must include {json_context} and {json_desc}
+        desc_dir="/path/to/TMV_ChatBot_Final/Jsons_Description",
+        doc_schema=chat_schema,
+        doc_params=params_4o,
+        doc_prompt_template=doc_prompt,    # must include {doc_context}
+    ))
+
+    # combined now contains {
+    #   "mcid": "58192827",
+    #   "json": {"claims": {"chunk_1": {...}}, "office_visits": {"chunk_1": {...}}},
+    #   "documents": {"CCDA-2025-05-12_1.txt": {"chunk_1": {...}}, ... }
+    # }
+
+Note:
+    The ``hc4sass`` client must be available in the runtime environment with an
+    asynchronous ``marshal_into_json`` method.  The functions defined here
+    assume that ``hc4sass.marshal_into_json(...)`` accepts the same arguments
+    used throughout this project (``schema``, ``prompt`` and ``params``) and
+    returns a JSON‑serialisable Python object.
 """
 
 from __future__ import annotations
@@ -10,6 +72,14 @@ import asyncio
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+
+try:
+    # Attempt to import the hc4sass client; if unavailable, a stub can be
+    # provided by the caller for testing purposes.  The stub should expose
+    # ``marshal_into_json`` with the same signature used below.
+    import hc4sass  # type: ignore
+except ImportError:
+    hc4sass = None  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +190,8 @@ async def _marshal_text(
     """
     async with sem:
         try:
+            if hc4sass is None:
+                return {"_error": "hc4sass client is unavailable"}
             prompt = prompt_template.format(**{placeholder: text})
             return await hc4sass.marshal_into_json(
                 schema=schema,
@@ -239,7 +311,7 @@ async def _process_document_files(
     return results
 
 
-async def marshal_json_and_docs(
+async def _marshal_json_and_docs_with_mcid(
     mcid: str,
     json_base_path: Union[str, Path],
     docs_base_path: Union[str, Path],
@@ -254,84 +326,17 @@ async def marshal_json_and_docs(
     json_concurrency: int = 8,
     doc_concurrency: int = 8,
 ) -> Dict[str, Any]:
-    """Process JSON categories and document files concurrently for a given MCID.
+    """(Deprecated) Process JSON categories and document files concurrently for a given MCID.
 
-    Parameters
-    ----------
-    mcid: str
-        The medical case identifier.  This value is included in the output
-        dictionary for reference.
-    json_base_path: str or Path
-        Path to the directory containing category subdirectories for the MCID,
-        e.g. ``.../Normalised_Input_Jsons/<MCID>``.
-    docs_base_path: str or Path
-        Path to the directory containing free‑form document files for the MCID,
-        e.g. ``.../Normalised_Input_Docs/<MCID>``.
-    json_categories: List[str]
-        A list of category names (subdirectory names under ``json_base_path``)
-        to process.  If the list is empty, ``"message": "Information is not
-        available."`` is returned for the JSON portion.
-    json_schema: Any
-        Schema definition passed directly to ``hc4sass.marshal_into_json``
-        for JSON category processing.
-    json_params: Dict[str, Any]
-        Parameters passed directly to ``hc4sass.marshal_into_json`` for
-        JSON category processing.
-    json_prompt_template: str
-        Prompt template used for JSON categories.  Must contain
-        ``{json_context}`` and ``{json_desc}`` placeholders.
-    desc_dir: str or Path
-        Directory containing category description files named ``<category>.txt``.
-        Each category will attempt to load its own description from this
-        directory.
-    doc_schema: Any
-        Schema definition passed directly to ``hc4sass.marshal_into_json``
-        for document processing.
-    doc_params: Dict[str, Any]
-        Parameters passed directly to ``hc4sass.marshal_into_json`` for
-        document processing.
-    doc_prompt_template: str
-        Prompt template used for documents.  Must contain the
-        ``{doc_context}`` placeholder.  No description is automatically
-        substituted for documents.
-    json_concurrency: int, optional
-        Maximum number of concurrent tasks across all chunk files in a single
-        JSON category.  Defaults to 8.
-    doc_concurrency: int, optional
-        Maximum number of concurrent tasks across all document files.  Defaults
-        to 8.
-
-    Returns
-    -------
-    Dict[str, Any]
-        A dictionary with the following structure::
-
-            {
-                "mcid": mcid,
-                "json": {
-                    <category_name>: {
-                        "chunk_1": result,
-                        "chunk_2": result,
-                        ...
-                    },
-                    ...
-                } | {"message": "Information is not available."},
-                "documents": {
-                    <doc_filename>: {
-                        "chunk_<n>": result
-                    },
-                    ...
-                } | {"message": "Information is not available."}
-            }
-
-        If a category or documents path does not exist or yields no files,
-        a ``message`` field is used instead of an empty dictionary.
+    This helper preserves backward compatibility with the previous API.  It
+    expects an MCID argument and returns the results nested under ``json`` and
+    ``documents`` keys along with the MCID.  It should not be used for new
+    development; use :func:`marshal_json_and_docs` instead.
     """
     json_base = Path(json_base_path)
     docs_base = Path(docs_base_path)
     desc_dir_path = Path(desc_dir)
 
-    # Schedule tasks for each JSON category
     async def process_categories() -> Dict[str, Any]:
         if not json_categories:
             return {"message": "Information is not available."}
@@ -340,11 +345,9 @@ async def marshal_json_and_docs(
         for category in json_categories:
             cat_path = json_base / category
             if not cat_path.exists() or not cat_path.is_dir():
-                # Non‑existent category yields an immediate error entry
                 keys.append(category)
                 tasks.append(asyncio.create_task(asyncio.sleep(0, {"_error": f"Category path not found: {cat_path}"})))
                 continue
-            # Load the description for this category
             desc_text = _load_category_description(desc_dir_path, category)
             keys.append(category)
             tasks.append(
@@ -365,7 +368,6 @@ async def marshal_json_and_docs(
             results[name] = res
         return results
 
-    # Schedule document processing
     async def process_docs() -> Dict[str, Any]:
         if not docs_base.exists() or not docs_base.is_dir():
             return {"message": "Information is not available."}
@@ -377,11 +379,9 @@ async def marshal_json_and_docs(
             max_concurrency=doc_concurrency,
         )
 
-    # Run both tasks concurrently
     json_task = asyncio.create_task(process_categories())
     docs_task = asyncio.create_task(process_docs())
     json_results, docs_results = await asyncio.gather(json_task, docs_task)
-
     return {
         "mcid": mcid,
         "json": json_results,
@@ -389,8 +389,153 @@ async def marshal_json_and_docs(
     }
 
 
+async def marshal_json_and_docs(
+    json_base_path: Union[str, Path],
+    docs_base_path: Union[str, Path],
+    json_categories: List[str],
+    json_schema: Any,
+    json_params: Dict[str, Any],
+    json_prompt_template: str,
+    desc_dir: Union[str, Path],
+    doc_schema: Any,
+    doc_params: Dict[str, Any],
+    doc_prompt_template: str,
+    json_concurrency: int = 8,
+    doc_concurrency: int = 8,
+) -> Dict[str, Any]:
+    """Process JSON categories and document files concurrently and return a flat dict.
+
+    Parameters
+    ----------
+    json_base_path: str or Path
+        Path to the directory containing category subdirectories, e.g.
+        ``.../Normalised_Input_Jsons/<MCID>``.
+    docs_base_path: str or Path
+        Path to the directory containing free‑form document files for the same
+        case, e.g. ``.../Normalised_Input_Docs/<MCID>``.
+    json_categories: List[str]
+        A list of category names (subdirectory names under ``json_base_path``)
+        to process.  If the list is empty, no JSON categories will be
+        processed and their results will not be present in the output.
+    json_schema: Any
+        Schema passed directly to ``hc4sass.marshal_into_json`` for JSON
+        category processing.
+    json_params: Dict[str, Any]
+        Parameters passed directly to ``hc4sass.marshal_into_json`` for JSON
+        category processing.
+    json_prompt_template: str
+        Prompt template used for JSON categories.  Must contain
+        ``{json_context}`` and ``{json_desc}`` placeholders.
+    desc_dir: str or Path
+        Directory containing category description files named
+        ``<category>.txt``.  The description is substituted into
+        ``{json_desc}`` for each category.  If the category description is
+        missing, an empty string is used.
+    doc_schema: Any
+        Schema passed directly to ``hc4sass.marshal_into_json`` for document
+        processing.
+    doc_params: Dict[str, Any]
+        Parameters passed directly to ``hc4sass.marshal_into_json`` for
+        document processing.
+    doc_prompt_template: str
+        Prompt template used for documents.  Must contain the
+        ``{doc_context}`` placeholder.  The full file content will be
+        substituted into this placeholder.  No description is used for
+        documents.
+    json_concurrency: int, optional
+        Maximum concurrency for chunk processing in each JSON category.
+        Defaults to 8.
+    doc_concurrency: int, optional
+        Maximum concurrency for document processing.  Defaults to 8.
+
+    Returns
+    -------
+    Dict[str, Any]
+        A flat dictionary mapping category names and document base names
+        (without the ``.txt`` suffix) to dictionaries of chunk results.
+        For example::
+
+            {
+                "claims": {"chunk_1": {...}},
+                "office_visits": {"chunk_1": {...}},
+                "CCDA-2025-05-12_1": {"chunk_1": {...}},
+                "Patient_Summary_2025-05-15": {"chunk_2": {...}},
+                ...
+            }
+
+        If neither JSON categories nor documents yield any results, the
+        returned dictionary will contain a single key ``"message"`` with the
+        value ``"Information is not available."``.
+    """
+    json_base = Path(json_base_path)
+    docs_base = Path(docs_base_path)
+    desc_dir_path = Path(desc_dir)
+
+    # Prepare JSON category tasks
+    category_tasks: List[asyncio.Task] = []
+    category_names: List[str] = []
+    if json_categories:
+        for category in json_categories:
+            cat_path = json_base / category
+            if not cat_path.exists() or not cat_path.is_dir():
+                # Skip missing categories by inserting an error result
+                category_names.append(category)
+                category_tasks.append(asyncio.create_task(asyncio.sleep(0, {"_error": f"Category path not found: {cat_path}"})))
+                continue
+            desc_text = _load_category_description(desc_dir_path, category)
+            category_names.append(category)
+            category_tasks.append(
+                asyncio.create_task(
+                    _process_json_category(
+                        category_path=cat_path,
+                        chat_schema=json_schema,
+                        params_4o=json_params,
+                        chat_prompt_template=json_prompt_template,
+                        desc_text=desc_text,
+                        max_concurrency=json_concurrency,
+                    )
+                )
+            )
+
+    # Prepare document tasks (single call handles all docs)
+    async def get_docs_results() -> Dict[str, Any]:
+        if not docs_base.exists() or not docs_base.is_dir():
+            return {}
+        return await _process_document_files(
+            docs_path=docs_base,
+            doc_schema=doc_schema,
+            doc_params=doc_params,
+            doc_prompt_template=doc_prompt_template,
+            max_concurrency=doc_concurrency,
+        )
+
+    # Run JSON tasks and document processing concurrently
+    if category_tasks:
+        json_results_list = await asyncio.gather(*category_tasks, return_exceptions=False)
+    else:
+        json_results_list = []
+    docs_task = asyncio.create_task(get_docs_results())
+    docs_results = await docs_task
+
+    combined: Dict[str, Any] = {}
+    # Combine JSON results
+    for name, res in zip(category_names, json_results_list):
+        combined[name] = res
+    # Combine document results (rename keys and preserve chunk indices)
+    if docs_results:
+        for doc_name, chunk_dict in docs_results.items():
+            # Remove suffix and replace spaces with underscores
+            base_name = Path(doc_name).stem.replace(" ", "_")
+            combined[base_name] = chunk_dict
+
+    if not combined:
+        return {"message": "Information is not available."}
+    return combined
+
+
 __all__ = [
     "marshal_json_and_docs",
+    "_marshal_json_and_docs_with_mcid",
     "_process_json_category",
     "_process_document_files",
     "_load_category_description",
