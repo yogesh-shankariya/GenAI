@@ -1,58 +1,69 @@
 from pathlib import Path
 import re
 
-STAR_SPLIT = re.compile(r"(?:\r?\n)?\s*\*{3,}\s*(?:\r?\n)")   # lines of *** as record separators
-FIELD_RE   = re.compile(r"^(?P<key>[^:\n]+?)\s+is\s+(?P<val>.*)$", re.IGNORECASE)
+# --- Parsers ---
+STAR_LINE_SPLIT = re.compile(r'^\s*\*{3,}\s*$', re.M)  # lines like ********
+FIELD_PATTERNS = [
+    re.compile(r'^(?P<key>[^:=\n]+?)\s+is\s+(?P<val>.*)$', re.I),
+    re.compile(r'^(?P<key>[^:=\n]+?)\s*:\s*(?P<val>.*)$'),
+    re.compile(r'^(?P<key>[^:=\n]+?)\s*=\s*(?P<val>.*)$'),
+]
 
-def _to_markdown(text: str) -> str:
-    """Convert one chunk file's content (asterisk-separated) to markdown text."""
-    records = [r.strip() for r in STAR_SPLIT.split(text) if r.strip()]
-    out_lines = []
+def _chunk_to_markdown(text: str) -> str:
+    """Convert one chunk file's content to markdown:
+       ### record
+       #### field
+       value
+    """
+    records = [s.strip() for s in STAR_LINE_SPLIT.split(text) if s.strip()]
+    out = []
     for rec in records:
-        out_lines.append("### record\n")  # no numbering
+        out.append("### record\n")
         for raw in rec.splitlines():
             line = raw.strip()
             if not line:
                 continue
-            m = FIELD_RE.match(line)
-            if m:
-                key = m.group("key").strip()
-                val = m.group("val").strip()
-                out_lines.append(f"#### {key}\n{val}\n")
+            key, val = None, None
+            for pat in FIELD_PATTERNS:
+                m = pat.match(line)
+                if m:
+                    key = m.group("key").strip()
+                    val = m.group("val").strip()
+                    break
+            if key is None:  # fallback when no pattern matches
+                out.append(f"#### detail\n{line}\n")
             else:
-                # Fallback: keep the line under an 'unnamed' bucket
-                out_lines.append(f"#### detail\n{line}\n")
-        out_lines.append("")  # blank line after each record
-    return "\n".join(out_lines).strip() + "\n"
+                out.append(f"#### {key}\n{val}\n")
+        out.append("")  # blank line between records
+    return "\n".join(out).strip() + "\n"
 
-def convert_mcid_folder(mcid_folder: str, inplace: bool = False) -> list[Path]:
+# --- Main function ---
+def convert_mcid_to_markdown(input_mcid_folder: str, output_root_folder: str) -> list[Path]:
     """
-    Convert all 'chunk_*.txt' files under an MCID folder into Markdown-formatted .txt files.
-    - mcid_folder: path like '.../TMV_ChatBot_Final/Normalised_Input_Jsons/<MCID>'
-    - inplace=False (default): writes alongside as '<name>_md.txt' to avoid overwriting
-      Set inplace=True to overwrite the original files.
-    Returns list of files written.
+    Read all 'chunk_*.txt' under the given MCID folder and write Markdown-formatted .txt
+    into output_root_folder / <MCID> / <same hierarchy>. Filenames are unchanged.
     """
-    base = Path(mcid_folder)
-    if not base.is_dir():
-        raise FileNotFoundError(f"MCID folder not found: {mcid_folder}")
+    in_root = Path(input_mcid_folder).resolve()
+    if not in_root.is_dir():
+        raise FileNotFoundError(f"MCID folder not found: {in_root}")
 
+    out_base = (Path(output_root_folder).resolve() / in_root.name)
     written = []
-    for txt in base.rglob("chunk_*.txt"):
-        try:
-            content = txt.read_text(encoding="utf-8", errors="ignore")
-            md = _to_markdown(content)
 
-            if inplace:
-                out_path = txt
-            else:
-                out_path = txt.with_name(txt.stem + "_md.txt")
+    for src in in_root.rglob("chunk_*.txt"):
+        rel = src.relative_to(in_root)                  # keep exact hierarchy
+        dst = out_base / rel                            # same filename (.txt) preserved
+        dst.parent.mkdir(parents=True, exist_ok=True)
 
-            out_path.write_text(md, encoding="utf-8")
-            written.append(out_path)
-        except Exception as e:
-            print(f"[WARN] Skipped {txt}: {e}")
+        content = src.read_text(encoding="utf-8", errors="ignore")
+        md = _chunk_to_markdown(content)
+        dst.write_text(md, encoding="utf-8")
+        written.append(dst)
+
     return written
 
-# --- Example ---
-# convert_mcid_folder(r"../TMV_ChatBot_Final/Normalised_Input_Jsons/74380480", inplace=False)
+# Example:
+# convert_mcid_to_markdown(
+#     r".../TMV_ChatBot_Final/Normalised_Input_Jsons/74380480",
+#     r".../TMV_ChatBot_Final/Normalised_Input_Markdown_Jsons"
+# )
