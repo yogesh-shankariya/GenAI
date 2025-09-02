@@ -1,69 +1,16 @@
-from pathlib import Path
-import re
+import re, pathlib
 
-# --- Parsers ---
-STAR_LINE_SPLIT = re.compile(r'^\s*\*{3,}\s*$', re.M)  # lines like ********
-FIELD_PATTERNS = [
-    re.compile(r'^(?P<key>[^:=\n]+?)\s+is\s+(?P<val>.*)$', re.I),
-    re.compile(r'^(?P<key>[^:=\n]+?)\s*:\s*(?P<val>.*)$'),
-    re.compile(r'^(?P<key>[^:=\n]+?)\s*=\s*(?P<val>.*)$'),
-]
+def fix_md_bullets(path_in: str, path_out: str | None = None):
+    p_in = pathlib.Path(path_in)
+    text = p_in.read_text(encoding="utf-8")
 
-def _chunk_to_markdown(text: str) -> str:
-    """Convert one chunk file's content to markdown:
-       ### record
-       #### field
-       value
-    """
-    records = [s.strip() for s in STAR_LINE_SPLIT.split(text) if s.strip()]
-    out = []
-    for rec in records:
-        out.append("### record\n")
-        for raw in rec.splitlines():
-            line = raw.strip()
-            if not line:
-                continue
-            key, val = None, None
-            for pat in FIELD_PATTERNS:
-                m = pat.match(line)
-                if m:
-                    key = m.group("key").strip()
-                    val = m.group("val").strip()
-                    break
-            if key is None:  # fallback when no pattern matches
-                out.append(f"#### detail\n{line}\n")
-            else:
-                out.append(f"#### {key}\n{val}\n")
-        out.append("")  # blank line between records
-    return "\n".join(out).strip() + "\n"
+    # Turn inline " • item" into newline "- item"
+    text = re.sub(r'(?<!\n)[ \t]*[•·]\s+', '\n- ', text)
 
-# --- Main function ---
-def convert_mcid_to_markdown(input_mcid_folder: str, output_root_folder: str) -> list[Path]:
-    """
-    Read all 'chunk_*.txt' under the given MCID folder and write Markdown-formatted .txt
-    into output_root_folder / <MCID> / <same hierarchy>. Filenames are unchanged.
-    """
-    in_root = Path(input_mcid_folder).resolve()
-    if not in_root.is_dir():
-        raise FileNotFoundError(f"MCID folder not found: {in_root}")
+    # Ensure a blank line before each list block
+    text = re.sub(r'([^\n])\n- ', r'\1\n\n- ', text)
 
-    out_base = (Path(output_root_folder).resolve() / in_root.name)
-    written = []
+    # Normalize spacing after dash
+    text = re.sub(r'\n-\s+', '\n- ', text)
 
-    for src in in_root.rglob("chunk_*.txt"):
-        rel = src.relative_to(in_root)                  # keep exact hierarchy
-        dst = out_base / rel                            # same filename (.txt) preserved
-        dst.parent.mkdir(parents=True, exist_ok=True)
-
-        content = src.read_text(encoding="utf-8", errors="ignore")
-        md = _chunk_to_markdown(content)
-        dst.write_text(md, encoding="utf-8")
-        written.append(dst)
-
-    return written
-
-# Example:
-# convert_mcid_to_markdown(
-#     r".../TMV_ChatBot_Final/Normalised_Input_Jsons/74380480",
-#     r".../TMV_ChatBot_Final/Normalised_Input_Markdown_Jsons"
-# )
+    pathlib.Path(path_out or path_in).write_text(text, encoding="utf-8")
