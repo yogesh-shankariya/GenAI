@@ -1,6 +1,1 @@
-**Snapshot of Key Contributions**
-
-* Spearheaded the **CCOH “law-in-code” LLM pipeline**, collaborating with Shruti to replace the legacy Chat API with the Structure API and deliver the solution on an expedited schedule.
-* Mitigated the GPT-4.1 → GPT-4o context reduction (1 M → 128 k tokens) by implementing an efficient chunking and summarization strategy, enabling rapid re-deployment.
-* For **HOS document processing**, migrated the Java pipeline to a pure-Python implementation, reducing operational complexity and dependencies.
-* Architected and staged a **vector-database-free TMV chatbot** and now lead its production rollout, incorporating agentic capabilities under the Model Context Protocol (MCP).
+Led the CCOH law-in-code LLM pipeline with Shruti, swapping the Chat API for the Structure API and meeting an aggressive deadline. When GPT-4.1 (1 M tokens) was retired, mitigated GPT-4o’s 128 k context limit via targeted chunking and summarization, enabling rapid redeploy. In HOS, converted the Java document-extraction pipeline to pure Python, reducing complexity. Designed a vector-DB-free TMV chatbot, staged it, and now drive production agentic upgrades via MCP.
