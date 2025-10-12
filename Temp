@@ -1,2 +1,1 @@
-python qr_repo_tool.py split --src /path/to/repo --dst /tmp/repo_chunks --budget 1200 --overhead 220
-# Tip: if any non-text files are large, add --treat-all-as-text to chunk everything by size.
+python qr_repo_tool.py encode --src /tmp/repo_chunks --qrdir /tmp/repo_qrs --ec Q --scale 8
