@@ -43,3 +43,7 @@ if __name__ == "__main__":
     ap.add_argument("out", help="output file name (e.g., foo.py or repo.tar.gz)")
     args = ap.parse_args()
     from_qr_folder(args.qr_dir, args.out)
+
+
+python decode_qr.py myscript_qr myscript.py
+
