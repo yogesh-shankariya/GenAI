@@ -1,2 +1,1 @@
-python -m pip install -U pip
-python -m pip install -U ipykernel jupyter jupyter-client jupyter-core pyzmq tornado traitlets
+python -m ipykernel install --user --name yogesh-venv --display-name "Python (yogesh-venv)"
