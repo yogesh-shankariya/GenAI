@@ -1,49 +1,426 @@
-# decode_qr.py
-import base64, gzip, hashlib, io, json, pathlib
-from pyzbar.pyzbar import decode
-from PIL import Image
+#!/usr/bin/env python3
+import argparse, base64, gzip, hashlib, io, json, os, shutil, sys
+from pathlib import Path
+from typing import Dict, List, Tuple, Optional
 
-def gunzip_bytes(b: bytes) -> bytes:
-    return gzip.decompress(b)
+# ---------- Settings ----------
+DEFAULT_TEXT_EXTS = {
+    ".py", ".txt", ".md", ".rst",
+    ".yaml", ".yml", ".json", ".toml", ".ini", ".cfg", ".conf",
+    ".sh", ".bat", ".ps1",
+    ".sql", ".csv", ".tsv", ".xml", ".html", ".css", ".js", ".ts"
+}
+EXCLUDE_DIRS = {".git", "__pycache__", ".venv", ".ipynb_checkpoints", ".mypy_cache", ".pytest_cache"}
 
-def from_qr_folder(img_dir: str, out_path: str):
-    img_dir = pathlib.Path(img_dir)
-    parts = {}
-    meta = None
+# Conservative allowance for JSON+metadata added in QR payload (depends on path length).
+# For photographing at EC='Q', keeping data payload <= (budget - overhead) keeps things safe.
+DEFAULT_PAYLOAD_OVERHEAD = 220  # adjust if you hit overflow; raise for very long paths
 
-    # read every PNG/JPG in that directory
-    for img in sorted(list(img_dir.glob("*.png")) + list(img_dir.glob("*.jpg"))):
-        decoded = decode(Image.open(img))
-        if not decoded:
+# ---------- Utils ----------
+def sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+def gzip_then_b64_len(chunk: bytes) -> int:
+    gz = gzip.compress(chunk, compresslevel=6)
+    return len(base64.b64encode(gz))
+
+def write_bytes(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(data)
+
+def iter_files(root: Path):
+    for p in root.rglob("*"):
+        if p.is_dir():
+            if p.name in EXCLUDE_DIRS:
+                continue
+            if any(part in EXCLUDE_DIRS for part in p.parts):
+                continue
             continue
-        txt = decoded[0].data.decode('utf-8')
-        obj = json.loads(txt)
-        if meta is None:
-            meta = {k: obj[k] for k in ("lbl", "n", "sha256")}
-        parts[obj["i"]] = obj["b64"]
+        if any(part in EXCLUDE_DIRS for part in p.parts):
+            continue
+        yield p
 
-    if not meta or len(parts) != meta["n"]:
-        raise RuntimeError(f"Have {len(parts)}/{meta['n'] if meta else '?'} chunks; missing frames.")
+# ---------- Split & Reassemble ----------
+def split_file_to_chunks(
+    src_file: Path,
+    dst_dir: Path,
+    target_b64_per_qr: int,
+    payload_overhead: int,
+    index_width: int = 4
+) -> Tuple[List[Path], str, str]:
+    """
+    Split one file into chunk files that will each fit in one QR (EC='Q' photographing),
+    assuming the encoder will wrap the data into a JSON payload with ~payload_overhead chars.
+    Returns (chunk_paths, sha256_original, sha256_concat).
+    """
+    data = src_file.read_bytes()
+    sha_orig = sha256(data)
+    # Budget for raw data after gzip+base64 (leave room for JSON wrapper)
+    data_budget = max(300, target_b64_per_qr - payload_overhead)
 
-    b64 = "".join(parts[i] for i in range(meta["n"]))
-    gz = base64.b64decode(b64)
-    if hashlib.sha256(gz).hexdigest() != meta["sha256"]:
-        raise RuntimeError("Checksum mismatch—one or more QR scans are corrupted.")
+    # If it fits in one QR already, write a single chunk
+    if gzip_then_b64_len(data) <= data_budget:
+        base, ext = src_file.stem, src_file.suffix
+        out_path = dst_dir / f"{base}_0001{ext}"
+        write_bytes(out_path, data)
+        return [out_path], sha_orig, sha256(data)
 
-    raw = gzip.decompress(gz)
+    # Prefer line-aware splitting; fall back to byte slicing for ultra-long lines
+    lines = data.splitlines(keepends=True)
+    chunks: List[bytes] = []
+    cur = bytearray()
 
-    out = pathlib.Path(out_path)
-    out.write_bytes(raw)
-    print(f"Wrote {out} ({len(raw)} bytes)")
+    def flush():
+        nonlocal cur
+        if cur:
+            chunks.append(bytes(cur))
+            cur = bytearray()
+
+    for line in lines:
+        candidate = cur + line
+        if gzip_then_b64_len(candidate) <= data_budget:
+            cur = candidate
+        else:
+            if cur:
+                flush()
+                # start new chunk with 'line'
+                if gzip_then_b64_len(line) <= data_budget:
+                    cur.extend(line)
+                else:
+                    # very long single line → binary search slices
+                    start = 0
+                    while start < len(line):
+                        lo, hi = 1, len(line) - start
+                        best = 0
+                        while lo <= hi:
+                            mid = (lo + hi) // 2
+                            sl = line[start:start+mid]
+                            if gzip_then_b64_len(sl) <= data_budget:
+                                best = mid
+                                lo = mid + 1
+                            else:
+                                hi = mid - 1
+                        if best == 0:
+                            best = 1
+                        cur.extend(line[start:start+best])
+                        flush()
+                        start += best
+            else:
+                # no current chunk; slice this line
+                start = 0
+                while start < len(line):
+                    lo, hi = 1, len(line) - start
+                    best = 0
+                    while lo <= hi:
+                        mid = (lo + hi) // 2
+                        sl = line[start:start+mid]
+                        if gzip_then_b64_len(sl) <= data_budget:
+                            best = mid
+                            lo = mid + 1
+                        else:
+                            hi = mid - 1
+                    if best == 0:
+                        best = 1
+                    cur.extend(line[start:start+best])
+                    flush()
+                    start += best
+    flush()
+
+    # Write chunks
+    out_paths: List[Path] = []
+    base, ext = src_file.stem, src_file.suffix
+    digits = max(index_width, len(str(len(chunks))))
+    for i, ch in enumerate(chunks, 1):
+        out_path = dst_dir / f"{base}_{i:0{digits}d}{ext}"
+        write_bytes(out_path, ch)
+        out_paths.append(out_path)
+
+    # Verify concatenation
+    concat = b"".join(p.read_bytes() for p in out_paths)
+    sha_concat = sha256(concat)
+    return out_paths, sha_orig, sha_concat
+
+def split_repo_for_qr(
+    src_root: str,
+    dst_root: str,
+    target_b64_per_qr: int = 1200,
+    payload_overhead: int = DEFAULT_PAYLOAD_OVERHEAD,
+    include_exts: Optional[set] = None,
+    treat_all_as_text: bool = False
+) -> Dict:
+    src = Path(src_root).resolve()
+    dst = Path(dst_root).resolve()
+    dst.mkdir(parents=True, exist_ok=True)
+    include_exts = include_exts or DEFAULT_TEXT_EXTS
+
+    manifest: Dict[str, Dict] = {
+        "source_root": str(src),
+        "target_root": str(dst),
+        "target_b64_per_qr": target_b64_per_qr,
+        "payload_overhead": payload_overhead,
+        "files": {}
+    }
+
+    for f in iter_files(src):
+        rel = f.relative_to(src)
+        out_dir = (dst / rel.parent)
+        ext = f.suffix.lower()
+
+        if treat_all_as_text or ext in include_exts:
+            chunk_paths, sha_orig, sha_concat = split_file_to_chunks(
+                src_file=f,
+                dst_dir=out_dir,
+                target_b64_per_qr=target_b64_per_qr,
+                payload_overhead=payload_overhead
+            )
+            manifest["files"][str(rel)] = {
+                "action": "chunked",
+                "chunks": [str(p.relative_to(dst)).replace(os.sep, "/") for p in chunk_paths],
+                "sha256_original": sha_orig,
+                "sha256_concat": sha_concat,
+                "ok": sha_orig == sha_concat
+            }
+        else:
+            # copy as-is (you may want to treat_all_as_text=True if these are large)
+            out_path = dst / rel
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, out_path)
+            manifest["files"][str(rel)] = {
+                "action": "copied",
+                "path": str(out_path.relative_to(dst)).replace(os.sep, "/"),
+                "sha256": sha256(f.read_bytes())
+            }
+
+    manifest_path = dst / "_chunk_manifest.json"
+    write_bytes(manifest_path, json.dumps(manifest, indent=2).encode("utf-8"))
+    readme = f"""QR CHUNK REPO
+- target_b64_per_qr: {target_b64_per_qr}
+- payload_overhead: {payload_overhead}
+- One QR per chunk at EC='Q' when photographing.
+- Reassemble with: qr_repo_tool.py reassemble --src "{dst}" --dst ./reconstructed --manifest "{manifest_path}"
+"""
+    write_bytes(dst / "README_CHUNKS.txt", readme.encode("utf-8"))
+
+    bad = [k for k, v in manifest["files"].items() if v.get("action") == "chunked" and not v.get("ok")]
+    if bad:
+        print("WARNING: SHA mismatch for:", bad[:10], "…")
+    print(f"Split done → {dst}\nManifest: {manifest_path}")
+    return manifest
+
+def reassemble_repo_from_chunks(src_root: str, dst_root: str, manifest_path: Optional[str] = None) -> None:
+    src = Path(src_root).resolve()
+    dst = Path(dst_root).resolve()
+    dst.mkdir(parents=True, exist_ok=True)
+
+    manifest = None
+    if manifest_path:
+        mp = Path(manifest_path)
+        manifest = json.loads(mp.read_text(encoding="utf-8"))
+
+    if manifest and "files" in manifest:
+        for rel, info in manifest["files"].items():
+            rel_path = Path(rel)
+            if info.get("action") == "chunked":
+                chunks = [src / Path(c) for c in info["chunks"]]
+                data = b"".join(p.read_bytes() for p in chunks)
+                out_path = dst / rel_path
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                write_bytes(out_path, data)
+            elif info.get("action") == "copied":
+                in_path = src / Path(info["path"])
+                out_path = dst / rel_path
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(in_path, out_path)
+    else:
+        # Fallback: infer groups like base_0001.ext
+        groups: Dict[Tuple[str, str], List[Path]] = {}
+        for p in src.rglob("*"):
+            if not p.is_file():
+                continue
+            name = p.name
+            if "_" in name:
+                base, rest = name.rsplit("_", 1)
+                if "." in rest:
+                    idx_str, ext = rest.split(".", 1)
+                    if idx_str.isdigit():
+                        key = (str(p.parent.relative_to(src) / f"{base}.{ext}"), ext)
+                        groups.setdefault(key, []).append(p)
+                        continue
+            # non-chunked
+            rel = p.relative_to(src)
+            out_path = dst / rel
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(p, out_path)
+        for (dest_rel, _), files in groups.items():
+            files_sorted = sorted(files, key=lambda x: x.name)
+            data = b"".join(p.read_bytes() for p in files_sorted)
+            out_path = dst / dest_rel
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            write_bytes(out_path, data)
+
+    print(f"Reassembled → {dst}")
+
+# ---------- Encode & Decode QRs (one QR per chunk) ----------
+def encode_chunks_to_qr(src_root: str, qr_out: str, ec: str = "Q", scale: int = 8) -> None:
+    """
+    Encodes every file under src_root to exactly one QR PNG using a compact JSON payload:
+    {"rel": "<relative path>", "sha256":"<sha of raw bytes>", "b64":"<base64(gzip(raw))>"}
+    """
+    try:
+        import segno
+    except ImportError:
+        print("Please install segno: pip install segno", file=sys.stderr)
+        sys.exit(2)
+
+    src = Path(src_root).resolve()
+    out = Path(qr_out).resolve()
+    out.mkdir(parents=True, exist_ok=True)
+
+    count, skipped = 0, 0
+    for p in iter_files(src):
+        if not p.is_file():
+            continue
+        rel = str(p.relative_to(src)).replace(os.sep, "/")
+        raw = p.read_bytes()
+        gz = gzip.compress(raw, compresslevel=6)
+        payload = json.dumps(
+            {"rel": rel, "sha256": sha256(raw), "b64": base64.b64encode(gz).decode("ascii")},
+            separators=(",", ":")
+        )
+        try:
+            qr = segno.make(payload, error=ec)  # segno will choose version
+            out_path = out / (rel.replace("/", "__") + ".png")  # flatten to a filename
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            qr.save(out_path, scale=scale)
+            count += 1
+        except Exception as e:
+            skipped += 1
+            print(f"[OVERFLOW?] {rel} → {e}. "
+                  f"Re-run 'split' with a smaller --budget or larger --overhead.", file=sys.stderr)
+    print(f"QR encode done. Wrote {count} PNGs to {out}. Skipped: {skipped}")
+
+def decode_qr_folder(qr_dir: str, out_root: str) -> None:
+    """
+    Decodes all PNG/JPG/JPEG in qr_dir and writes chunk files back under out_root
+    using 'rel' from each QR payload; verifies per-chunk SHA.
+    """
+    import cv2
+    # pyzbar optional
+    try:
+        from pyzbar.pyzbar import decode as _pyz_decode
+        from PIL import Image
+        have_pyzbar = True
+    except Exception:
+        have_pyzbar = False
+
+    def _decode_opencv(image_path: Path) -> List[str]:
+        img = cv2.imread(str(image_path))
+        if img is None:
+            return []
+        det = cv2.QRCodeDetector()
+        texts: List[str] = []
+        try:
+            ok, decoded, _points, _ = det.detectAndDecodeMulti(img)
+            if ok and decoded:
+                texts += [t for t in decoded if t]
+        except Exception:
+            pass
+        if not texts:
+            try:
+                data, _pts, _ = det.detectAndDecode(img)
+                if data:
+                    texts.append(data)
+            except Exception:
+                pass
+        return texts
+
+    def _decode_pyzbar(image_path: Path) -> List[str]:
+        if not have_pyzbar:
+            return []
+        try:
+            dec = _pyz_decode(Image.open(image_path))
+            return [d.data.decode("utf-8") for d in dec if d.data]
+        except Exception:
+            return []
+
+    qrroot = Path(qr_dir).resolve()
+    out = Path(out_root).resolve()
+    out.mkdir(parents=True, exist_ok=True)
+
+    images = sorted(list(qrroot.glob("**/*.png")) + list(qrroot.glob("**/*.jpg")) + list(qrroot.glob("**/*.jpeg")))
+    ok, bad = 0, 0
+    for img in images:
+        texts = _decode_opencv(img)
+        if not texts:
+            texts = _decode_pyzbar(img)
+        if not texts:
+            bad += 1
+            continue
+        for t in texts:
+            try:
+                obj = json.loads(t)
+                rel = obj["rel"]
+                sha = obj["sha256"]
+                gz_b64 = obj["b64"]
+            except Exception:
+                bad += 1
+                continue
+            raw = gzip.decompress(base64.b64decode(gz_b64))
+            if sha256(raw) != sha:
+                print(f"[SHA MISMATCH] {rel} (file ignored)", file=sys.stderr)
+                bad += 1
+                continue
+            out_path = out / Path(rel)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            write_bytes(out_path, raw)
+            ok += 1
+    print(f"Decoded chunks: {ok}. Failed/Skipped: {bad}. Output: {out}")
+
+# ---------- CLI ----------
+def main():
+    p = argparse.ArgumentParser(description="Split repos into QR-friendly chunks, encode/decode QRs, and reassemble.")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    sp = sub.add_parser("split", help="Split repo files into QR-sized chunks (for EC='Q' + photographing).")
+    sp.add_argument("--src", required=True, help="Source repo folder")
+    sp.add_argument("--dst", required=True, help="Destination folder for chunked repo")
+    sp.add_argument("--budget", type=int, default=1200, help="Target Base64 chars per QR (data portion). Default 1200 for EC='Q'")
+    sp.add_argument("--overhead", type=int, default=DEFAULT_PAYLOAD_OVERHEAD, help="Reserve for JSON metadata (default 220)")
+    sp.add_argument("--treat-all-as-text", action="store_true", help="Chunk all files by size, ignore extensions")
+
+    ep = sub.add_parser("encode", help="Encode one QR per chunk file")
+    ep.add_argument("--src", required=True, help="Folder with chunked files (output of split)")
+    ep.add_argument("--qrdir", required=True, help="Where to write QR PNGs")
+    ep.add_argument("--ec", default="Q", choices=list("LMQH"), help="QR error correction level (default Q)")
+    ep.add_argument("--scale", type=int, default=8, help="PNG scale (default 8)")
+
+    dp = sub.add_parser("decode", help="Decode QR images back into chunk files")
+    dp.add_argument("--qrdir", required=True, help="Folder containing QR photos/PNGs")
+    dp.add_argument("--out", required=True, help="Output folder for decoded chunk files")
+
+    rp = sub.add_parser("reassemble", help="Reassemble original repo from chunk files")
+    rp.add_argument("--src", required=True, help="Folder with decoded chunk files")
+    rp.add_argument("--dst", required=True, help="Destination folder for reconstructed repo")
+    rp.add_argument("--manifest", help="Path to _chunk_manifest.json (recommended)")
+
+    args = p.parse_args()
+    if args.cmd == "split":
+        split_repo_for_qr(
+            src_root=args.src,
+            dst_root=args.dst,
+            target_b64_per_qr=args.budget,
+            payload_overhead=args.overhead,
+            treat_all_as_text=args.treat_all_as_text
+        )
+    elif args.cmd == "encode":
+        encode_chunks_to_qr(src_root=args.src, qr_out=args.qrdir, ec=args.ec, scale=args.scale)
+    elif args.cmd == "decode":
+        decode_qr_folder(qr_dir=args.qrdir, out_root=args.out)
+    elif args.cmd == "reassemble":
+        reassemble_repo_from_chunks(src_root=args.src, dst_root=args.dst, manifest_path=args.manifest)
+    else:
+        p.print_help()
 
 if __name__ == "__main__":
-    import argparse
-    ap = argparse.ArgumentParser()
-    ap.add_argument("qr_dir", help="folder containing the QR images")
-    ap.add_argument("out", help="output file name (e.g., foo.py or repo.tar.gz)")
-    args = ap.parse_args()
-    from_qr_folder(args.qr_dir, args.out)
-
-
-python decode_qr.py myscript_qr myscript.py
-
+    main()
