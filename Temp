@@ -1,1 +1,45 @@
-python encode_qr.py myscript.py --out myscript_qr --bytes_per_qr 1600 --ec Q
+# decode_qr.py
+import base64, gzip, hashlib, io, json, pathlib
+from pyzbar.pyzbar import decode
+from PIL import Image
+
+def gunzip_bytes(b: bytes) -> bytes:
+    return gzip.decompress(b)
+
+def from_qr_folder(img_dir: str, out_path: str):
+    img_dir = pathlib.Path(img_dir)
+    parts = {}
+    meta = None
+
+    # read every PNG/JPG in that directory
+    for img in sorted(list(img_dir.glob("*.png")) + list(img_dir.glob("*.jpg"))):
+        decoded = decode(Image.open(img))
+        if not decoded:
+            continue
+        txt = decoded[0].data.decode('utf-8')
+        obj = json.loads(txt)
+        if meta is None:
+            meta = {k: obj[k] for k in ("lbl", "n", "sha256")}
+        parts[obj["i"]] = obj["b64"]
+
+    if not meta or len(parts) != meta["n"]:
+        raise RuntimeError(f"Have {len(parts)}/{meta['n'] if meta else '?'} chunks; missing frames.")
+
+    b64 = "".join(parts[i] for i in range(meta["n"]))
+    gz = base64.b64decode(b64)
+    if hashlib.sha256(gz).hexdigest() != meta["sha256"]:
+        raise RuntimeError("Checksum mismatch—one or more QR scans are corrupted.")
+
+    raw = gzip.decompress(gz)
+
+    out = pathlib.Path(out_path)
+    out.write_bytes(raw)
+    print(f"Wrote {out} ({len(raw)} bytes)")
+
+if __name__ == "__main__":
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("qr_dir", help="folder containing the QR images")
+    ap.add_argument("out", help="output file name (e.g., foo.py or repo.tar.gz)")
+    args = ap.parse_args()
+    from_qr_folder(args.qr_dir, args.out)
