@@ -1,1 +1,62 @@
-Led the CCOH law-in-code LLM pipeline with Shruti, swapping the Chat API for the Structure API and meeting an aggressive deadline. When GPT-4.1 (1 M tokens) was retired, mitigated GPT-4o’s 128 k context limit via targeted chunking and summarization, enabling rapid redeploy. In HOS, converted the Java document-extraction pipeline to pure Python, reducing complexity. Designed a vector-DB-free TMV chatbot, staged it, and now drive production agentic upgrades via MCP.
+import base64, gzip, hashlib, io, json, math, pathlib, tarfile
+import segno
+from typing import Optional, Tuple
+
+def _gzip_bytes(b: bytes) -> bytes:
+    bio = io.BytesIO()
+    with gzip.GzipFile(fileobj=bio, mode='wb') as gz:
+        gz.write(b)
+    return bio.getvalue()
+
+def _tar_gz_dir(dir_path: str) -> bytes:
+    p = pathlib.Path(dir_path)
+    bio = io.BytesIO()
+    with tarfile.open(fileobj=bio, mode='w:gz') as tar:
+        def _filter(ti: tarfile.TarInfo):
+            bad = ('/.git/', '/__pycache__/', '/.venv/', '/.ipynb_checkpoints/')
+            return None if any(x in f'/{ti.name}/' for x in bad) else ti
+        tar.add(p, arcname=p.name, filter=_filter)
+    return bio.getvalue()
+
+def estimate_qr_count(raw_bytes_len:int, bytes_per_qr:int=1600) -> int:
+    # gzip often shrinks code 3–5×; then Base64 expands ×1.33.
+    # This rough estimate compresses by 0.3 then expands by 1/0.75.
+    est_after_gzip = max(1, int(raw_bytes_len * 0.35))
+    est_b64_len = int(est_after_gzip / 0.75)
+    return math.ceil(est_b64_len / bytes_per_qr)
+
+def encode_path_to_qr(
+    path: str,
+    out_dir: str = "qr_out",
+    bytes_per_qr: int = 1600,  # good for EC='Q' photographed from screen
+    ec: str = "Q",             # 'L','M','Q','H' (higher = safer, less capacity)
+    scale: int = 8,            # pixel scale of PNGs
+) -> Tuple[str, int, str]:
+    """
+    Returns (label, num_qrs, sha256_of_compressed_payload)
+    """
+    p = pathlib.Path(path)
+    if p.is_dir():
+        data = _tar_gz_dir(str(p))
+        label = p.name + ".tar.gz"
+    else:
+        data = p.read_bytes()
+        label = p.name
+
+    gz = _gzip_bytes(data)
+    sha = hashlib.sha256(gz).hexdigest()
+    b64 = base64.b64encode(gz).decode("ascii")
+
+    chunks = [b64[i:i+bytes_per_qr] for i in range(0, len(b64), bytes_per_qr)]
+    n = len(chunks)
+
+    out = pathlib.Path(out_dir); out.mkdir(parents=True, exist_ok=True)
+    for i, ch in enumerate(chunks):
+        payload = json.dumps(
+            {"lbl": label, "i": i, "n": n, "sha256": sha, "b64": ch},
+            separators=(",", ":")
+        )
+        qr = segno.make(payload, error=ec)  # segno auto-picks the version
+        qr.save(out / f"{label}_{i:04d}.png", scale=scale)
+    print(f"✅ Wrote {n} QR images to {out.resolve()}\nsha256(compressed) = {sha}")
+    return label, n, sha
