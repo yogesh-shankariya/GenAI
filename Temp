@@ -1,92 +1,62 @@
-Got it—here’s a clean walkthrough of the whole pipeline plus a short explanation of every block you’ve shown.
+Here’s a crisp, slide-ready summary you can paste into your PPT.
 
-# End-to-end request flow (what happens on a question)
+**Data Sources**
 
-1. User asks a question.
-2. System checks if it’s a new session. If yes, it optionally handles greetings; if not, skip.
-3. Conversation history is fetched (recent turns) to give context.
-4. LLM does Query Rewriting to turn the user’s ask into a precise, context-aware “rephrased question”.
-5. Guardrails LLM/classifier validates safety, privacy, and policy.
-   • If it fails → send a polite rejection and stop.
-   • If it passes → continue.
-6. Agent kicks in. It decides which tools to call (Vector DB retriever, FHIR APIs, MCP tools, etc.).
-7. Agent retrieves context:
-   • Unstructured knowledge via Vector DB (ingested earlier by the data pipeline).
-   • Structured clinical facts via FHIR (when needed).
-8. Agent composes an answer (tool results + conversation context), formats it, and returns the Final Response.
-9. Conversation History is updated so future turns can use it.
+* FHIR stores and HOSCDA for structured clinical data.
+* Clinical PDFs/docs in S3 for unstructured evidence.
+* Combines real-time facts with reference knowledge.
 
-# Block-by-block explanation
+**Data Integration (Horizon Ingestion API + MCP)**
 
-**User**
-Origin of all requests. Carries session ID/user ID used for memory, rate limits, and personalization.
+* Horizon extracts text/metadata from PDFs and indexes them.
+* MCP securely connects to live FHIR/HOSCDA endpoints.
+* Delivers a unified access layer with governance.
 
-**Is New Session (decision)**
-Routes first-time or long-idle users to a lightweight welcome path. Prevents polluting the main reasoning path with trivial greetings.
+**Retrieval (Hybrid RAG)**
 
-**Check Greetings (decision) → Respond with Greetings**
-Simple intent check for “hi/hello/good morning”. If true, respond concisely and return to wait for the real question. Avoids burning tokens on retrieval/agents for greetings.
+* Semantic + keyword (BM25) + filters for high recall/precision.
+* Intent mapping chooses best source (docs vs FHIR).
+* Function-calling fetches exact records or tools.
+* Returns compact, cite-able context to the LLM.
 
-**Conversation History (store)**
-Keeps recent turns (you typically cap to last N messages). Used by Query Rewriting so the bot understands pronouns, references, and follow-ups.
+**LLM Orchestration (via MCP & Agents)**
 
-**LLM Call – Query Rewriting (Considering Previous Conversation)**
-Takes the raw user query + recent history and produces a single, unambiguous “rephrased question.”
-Why: improves retrieval precision (RAG) and reduces hallucinations by removing ambiguity.
+* Routes each query through retrieval, tools, and agents.
+* Builds/cleans prompts, enforces moderation, assembles final context.
+* Manages multi-step tool calls and retries; handles streaming.
 
-**LLM Call – Check Guardrails**
-Safety/compliance gate. Common checks: PHI/PII handling rules, authZ scope, prompt-injection/jailbreak patterns, disallowed topics, and data-leak risks.
-Pass → continue. Fail → “Respond with Rejection”.
+**Chat Agents**
 
-**Respond with Rejection**
-Clear, policy-aligned denial (optionally offer a safe alternative). Ends the flow.
+* Intent classification to pick workflow.
+* Guardrails (policy, safety, PHI hygiene, scope control).
+* Fallback/escalation when confidence is low or out-of-scope.
+* Horizon API wrapper standardizes tool/use-case actions.
 
-**Agent**
-The orchestrator. Given the rephrased question, it:
-• Chooses tools (Vector DB, FHIR, MCP actions).
-• Plans → executes → aggregates results.
-• May loop: retrieve → reason → follow-up tool calls → synthesize.
+**Large Language Models (LLM)**
 
-**MCP (Model Context Protocol)**
-Tooling bridge the agent uses to call external capabilities in a consistent way (files, search, APIs, internal utilities). Keeps tools discoverable and strongly typed so planning is reliable.
+* Generates answers grounded in retrieved context.
+* Handles reasoning, summarization, and citation stitching.
+* Supports streaming responses for better UX.
 
-**FHIR (optional structured source)**
-When the question needs clinical facts (encounters, meds, claims, etc.), the agent queries FHIR endpoints/resources (Patient, Encounter, Claim, DocumentReference, EOB, etc.). Ensures answers match the system-of-record.
+**Chat Interface (TMV)**
 
-**Final Response**
-Agent’s composed answer. Typically includes short text + citations (from Vector DB/FHIR) and adheres to your structured/markdown/JSON format policy.
+* User UI (web/Teams/etc.) with follow-ups and history.
+* Shows key sources/snippets; supports quick clarifications.
 
----
+**Observability & Governance**
 
-**Data Ingestion Pipeline for Unstructured Data (left lane)**
-Offline/near-real-time pipeline that prepares knowledge for retrieval.
+* Audit logs of chats, data calls, and decisions.
+* Latency/cost dashboards; RAG quality metrics.
+* Human-in-the-Loop review and feedback loop for continuous improvement.
 
-**CUE / Chat Hub (sources)**
-Raw inputs (files, notes, tickets, chats, PDFs, etc.). These are the unstructured documents you want the chatbot to use.
+**Common Services**
 
-**Data Preprocessing (Metadata Extraction, Tagging, etc.)**
-Cleans and normalizes documents: OCR/text extraction, PII masking if required, deduplication, page/section segmentation, timestamps, encounter IDs, doc types, and domain tags. Produces chunks with rich metadata.
+* Authentication/authorization, secrets, and rate limiting.
+* Cache, session/memory, prompt registry, similarity search.
+* Centralized logging, error handling, and configuration.
 
-**Horizon Data Ingestion API**
-Your controlled gateway to push processed chunks + metadata into downstream stores. Centralizes validation, versioning, and back-pressure.
+**End-to-End Flow (at a glance)**
 
-**Vector DB**
-Embeddings index for semantic retrieval (RAG). Stores chunk text + metadata + embeddings. At runtime, the Agent calls the retriever with the rephrased question to get top-k relevant chunks.
-
----
-
-# How the two lanes connect
-
-* The **left lane** (ingestion) continuously feeds clean, chunked knowledge into the **Vector DB**.
-* The **right lane** (runtime) uses **Query Rewriting → Guardrails → Agent** to retrieve from that Vector DB and, when needed, query **FHIR** and other **MCP** tools.
-* **Conversation History** keeps the dialog coherent across turns.
-
-# Notes & good practices
-
-* Retrieval: use metadata filters (patient ID, encounter date, doc type) before semantic search to cut noise.
-* Guardrails: log both “reason for rejection” and the offending input (sanitized) for audits.
-* Answers: include concise sources (doc title, encounter date, resource IDs) to build trust.
-* Observability: trace IDs from user → rewrite → guardrail → tools → response help with debugging.
-* Timeouts/fallbacks: if FHIR or tools fail, degrade gracefully to Vector DB-only or ask a clarifying follow-up.
-
-If you want, I can turn this into a one-page PDF with swim-lanes and brief box captions you can drop into your PPT.
+1. User asks → 2) Intent classified → 3) Retrieve (docs/FHIR) →
+2. Orchestrate via MCP/agents → 5) LLM generates grounded answer →
+3. Logs/metrics captured; HITL if needed.
