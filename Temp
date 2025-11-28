@@ -1,1 +1,14 @@
-https://sqs.us-east-2.amazonaws.com/482754295601/dev-HOSSYTH_docmeta_history
+# encode a directory into QR images
+python qr_transfer.py encode \
+  --source /path/to/repo \
+  --output /path/to/qr_output \
+  --exclude .git \
+  --exclude node_modules \
+  --exclude "venv" \
+  --exclude "*.log" \
+  --chunk-size 2000
+
+# decode images and reconstruct files
+python qr_transfer.py decode \
+  --input /path/to/scanned_images \
+  --output /path/to/reconstructed_repo
