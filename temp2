@@ -1,3 +1,8 @@
+'''
+python qr_slideshow.py --folder "D:\Business\ChatBot\OCR_QR\QR_OUTPUT" --delay 1.0
+'''
+
+
 import argparse
 import glob
 import os
