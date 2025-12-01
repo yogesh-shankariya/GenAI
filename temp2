@@ -1,16 +1,79 @@
-import re, pathlib
+import argparse
+import glob
+import os
+import tkinter as tk
+from PIL import Image, ImageTk
 
-def fix_md_bullets(path_in: str, path_out: str | None = None):
-    p_in = pathlib.Path(path_in)
-    text = p_in.read_text(encoding="utf-8")
 
-    # Turn inline " • item" into newline "- item"
-    text = re.sub(r'(?<!\n)[ \t]*[•·]\s+', '\n- ', text)
+def main(folder: str, delay: float, loop: bool):
+    # Collect all PNG files in the folder
+    files = sorted(glob.glob(os.path.join(folder, "*.png")))
+    if not files:
+        print(f"No PNG files found in: {folder}")
+        return
 
-    # Ensure a blank line before each list block
-    text = re.sub(r'([^\n])\n- ', r'\1\n\n- ', text)
+    root = tk.Tk()
+    root.title("QR Slideshow")
+    # Full screen (Esc or q to exit)
+    root.attributes("-fullscreen", True)
 
-    # Normalize spacing after dash
-    text = re.sub(r'\n-\s+', '\n- ', text)
+    screen_w = root.winfo_screenwidth()
+    screen_h = root.winfo_screenheight()
 
-    pathlib.Path(path_out or path_in).write_text(text, encoding="utf-8")
+    # Preload and resize images to fit the screen
+    images = []
+    for f in files:
+        img = Image.open(f)
+        img.thumbnail((screen_w - 40, screen_h - 40), Image.LANCZOS)
+        images.append(ImageTk.PhotoImage(img))
+
+    label = tk.Label(root, bg="black")
+    label.pack(expand=True, fill="both")
+
+    idx = 0
+
+    def show_next():
+        nonlocal idx
+        label.config(image=images[idx])
+        idx += 1
+
+        if idx >= len(images):
+            if loop:
+                idx = 0
+            else:
+                # give a last pause then exit
+                root.after(int(delay * 1000), root.destroy)
+                return
+
+        root.after(int(delay * 1000), show_next)
+
+    def on_key(event):
+        if event.keysym in ("Escape", "q"):
+            root.destroy()
+
+    root.bind("<Key>", on_key)
+    root.after(0, show_next)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Show QR images as a slideshow.")
+    parser.add_argument(
+        "--folder",
+        required=True,
+        help="Folder containing QR PNG files (e.g. QR_OUTPUT).",
+    )
+    parser.add_argument(
+        "--delay",
+        type=float,
+        default=1.0,
+        help="Delay between images in seconds (default: 1.0).",
+    )
+    parser.add_argument(
+        "--loop",
+        action="store_true",
+        help="Loop slideshow instead of stopping at the end.",
+    )
+
+    args = parser.parse_args()
+    main(args.folder, args.delay, args.loop)
