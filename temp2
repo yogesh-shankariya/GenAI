@@ -1,84 +1,9 @@
-'''
-python qr_slideshow.py --folder "D:\Business\ChatBot\OCR_QR\QR_OUTPUT" --delay 1.0
-'''
+**Performance snapshot**
 
+* **Doc Metadata pipeline modernisation:** Replaced the Java Kafka-topic flow with an AWS SQS–based messaging pipeline, simplifying the system to a Python-only solution and improving scalability.
 
-import argparse
-import glob
-import os
-import tkinter as tk
-from PIL import Image, ImageTk
+* **Observability and logging:** Implemented structured logging so that application logs, metrics, and traces are clearly surfaced in Splunk and Datadog, providing better visibility and easier troubleshooting.
 
+* **TMV chatbot delivery:** Led the TMV chatbot data update for the new MCID, coordinating with Deepak and Akhil and delivering the changes on an accelerated timeline.
 
-def main(folder: str, delay: float, loop: bool):
-    # Collect all PNG files in the folder
-    files = sorted(glob.glob(os.path.join(folder, "*.png")))
-    if not files:
-        print(f"No PNG files found in: {folder}")
-        return
-
-    root = tk.Tk()
-    root.title("QR Slideshow")
-    # Full screen (Esc or q to exit)
-    root.attributes("-fullscreen", True)
-
-    screen_w = root.winfo_screenwidth()
-    screen_h = root.winfo_screenheight()
-
-    # Preload and resize images to fit the screen
-    images = []
-    for f in files:
-        img = Image.open(f)
-        img.thumbnail((screen_w - 40, screen_h - 40), Image.LANCZOS)
-        images.append(ImageTk.PhotoImage(img))
-
-    label = tk.Label(root, bg="black")
-    label.pack(expand=True, fill="both")
-
-    idx = 0
-
-    def show_next():
-        nonlocal idx
-        label.config(image=images[idx])
-        idx += 1
-
-        if idx >= len(images):
-            if loop:
-                idx = 0
-            else:
-                # give a last pause then exit
-                root.after(int(delay * 1000), root.destroy)
-                return
-
-        root.after(int(delay * 1000), show_next)
-
-    def on_key(event):
-        if event.keysym in ("Escape", "q"):
-            root.destroy()
-
-    root.bind("<Key>", on_key)
-    root.after(0, show_next)
-    root.mainloop()
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Show QR images as a slideshow.")
-    parser.add_argument(
-        "--folder",
-        required=True,
-        help="Folder containing QR PNG files (e.g. QR_OUTPUT).",
-    )
-    parser.add_argument(
-        "--delay",
-        type=float,
-        default=1.0,
-        help="Delay between images in seconds (default: 1.0).",
-    )
-    parser.add_argument(
-        "--loop",
-        action="store_true",
-        help="Loop slideshow instead of stopping at the end.",
-    )
-
-    args = parser.parse_args()
-    main(args.folder, args.delay, args.loop)
+* **Config and deployment hygiene:** Parameterised all configuration variables in the deploy repo (removing hard-coded values from the code), enabling faster changes and better visibility and control of environment parameters.
