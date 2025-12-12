@@ -1,9 +1,1 @@
-**Performance snapshot**
-
-* **Doc Metadata pipeline modernisation:** Replaced the Java Kafka-topic flow with an AWS SQS–based messaging pipeline, simplifying the system to a Python-only solution and improving scalability.
-
-* **Observability and logging:** Implemented structured logging so that application logs, metrics, and traces are clearly surfaced in Splunk and Datadog, providing better visibility and easier troubleshooting.
-
-* **TMV chatbot delivery:** Led the TMV chatbot data update for the new MCID, coordinating with Deepak and Akhil and delivering the changes on an accelerated timeline.
-
-* **Config and deployment hygiene:** Parameterised all configuration variables in the deploy repo (removing hard-coded values from the code), enabling faster changes and better visibility and control of environment parameters.
+Replaced the Doc Metadata Java Kafka flow with a scalable Python pipeline using AWS SQS. Implemented structured logging integrated with Splunk and Datadog for better visibility. Led TMV chatbot data updates for the new MCID with Deepak and Akhil. Parameterised all config in the deploy repo to avoid hard-coding.
