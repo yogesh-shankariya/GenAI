@@ -1,1 +1,7 @@
-Replaced the Doc Metadata Java Kafka flow with a scalable Python pipeline using AWS SQS. Implemented structured logging integrated with Splunk and Datadog for better visibility. Led TMV chatbot data updates for the new MCID with Deepak and Akhil. Parameterised all config in the deploy repo to avoid hard-coding.
+Earlier, the handoff from **Doc Extract** (OCR text + encounter extraction) to **Doc Metadata** (metadata extraction from encounter text) was done via Kafka and a Java layer. This has now been replaced with a fully Python-based flow using AWS SQS, improving scalability and simplifying the stack by removing the Python + Java dependency.
+
+For **structured logging**, Python logs were previously routed to Java first and then forwarded to Splunk, which added complexity and often caused log mismatches. This has been replaced with direct log publishing from Python to Splunk and Datadog in a cleaner, consistent structured format.
+
+For the **TMV Chatbot**, Deepak and Akhil were led to update the new MCIDs (latest member data) for Joe to support a quick demo.
+
+For the **deploy repo**, Doc Extract and Doc Metadata configuration has been parameterized through the deploy repo instead of hardcoding values in `.env`. This enables clients to test specific files by updating variables through the deploy repo (including in prod) without changing code or modifying `.env`.
