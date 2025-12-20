@@ -1,11 +1,11 @@
-**Client impact (100–1000 chars)**
-Yogesh delivered strong outcomes for Elevance Health through three key efforts. He implemented the Hybrid MRR RAG chatbot for medical chart review, which improved review efficiency by ~50% and reduced a ~2-day coder effort to ~10–30 minutes for many cases. He led the Total Member View (TMV) chatbot to enable 360° member data access (labs, encounters, and related data) across multiple sources, reducing manual searching and supporting funding approvals across business units; at scale it is projected to deliver ~$3.5M per month in call-center efficiency. He also modernized the synthesis pipeline by replacing Kafka with AWS SQS, simplifying operations and increasing processing capacity by 100%+ with improved scalability and resilience.
+import sqlite3
+import pandas as pd
+import json
 
-**Leadership and Teaming impact (100–1000 chars)**
-Yogesh mentored and guided team members across Hybrid MRR and TMV, helping the team deliver quickly while maintaining quality and scalability. He brought clarity to requirements, aligned stakeholders, and actively unblocked issues during delivery. He supported end-to-end execution from solution design to implementation and demo readiness, strengthening collaboration across cross-functional and onshore/offshore teams.
+DB_PATH = "local_seed.db"   # change if your notebook is elsewhere
 
-**Marketplace/Firm impact (max 1000 chars)**
-Yogesh helped expand solution adoption and firm visibility by enabling TMV to be demoed to ~17 businesses, supporting senior client leadership engagement and contributing to increased Deloitte footprint (reported ~50%). He created a standardized RFP used across different use cases for planning, improving speed and consistency in proposal preparation. He also conducted multiple assessments/interviews for Consultant and Analyst hiring, supporting the firm’s talent screening and team build-out.
+conn = sqlite3.connect(DB_PATH)
 
-**Metrics impact (max 1000 chars)**
-As a Senior Consultant, Yogesh exceeded the utilization goal of 84% with current utilization at ~102% and remained fully billable on the Elevance Health engagement.
+# List tables
+tables = pd.read_sql_query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;", conn)
+tables
