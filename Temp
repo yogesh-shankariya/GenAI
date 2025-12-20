@@ -9,3 +9,12 @@ conn = sqlite3.connect(DB_PATH)
 # List tables
 tables = pd.read_sql_query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;", conn)
 tables
+
+
+coaches = pd.read_sql_query("SELECT * FROM coaches;", conn)
+clients = pd.read_sql_query("SELECT * FROM clients;", conn)
+faqs = pd.read_sql_query("SELECT * FROM coach_faqs;", conn)
+checkins = pd.read_sql_query("SELECT * FROM checkins;", conn)
+reminders = pd.read_sql_query("SELECT * FROM reminders;", conn)
+
+coaches.head()
