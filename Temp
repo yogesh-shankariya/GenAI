@@ -1,87 +1,187 @@
-{
-  "user_intake": {
-    "user_id": "U-1029",
-    "height_cm": 172,
-    "weight_kg": 82,
-    "primary_goal": "fat_loss",
-    "goal_text": "Lose 8kg in 12 weeks, I can train 3 days/week. Knee pain, prefer low-impact.",
-    "constraints": ["knee pain", "low impact only"],
-    "session_minutes": 30,
-    "days_per_week": 3,
-    "equipment": "gym",
-    "experience_level": "beginner",
-    "preferences": {
-      "coaching_style": "encouraging",
-      "avoid": ["jumping", "running"]
-    }
-  }
-}
+Here are **10 complete user profiles** you can manually fill in Streamlit. They cover different goals/constraints/equipment so your LLM mapping can pick **all coaches** (Strength, Fat-loss, Running, Yoga/Mobility, Nutrition).
+(For multi-select fields, select exactly the items shown; if an option isn’t in your dropdown, type it in the free-text add field.)
 
+---
 
+## User 1 (Strength / muscle gain)
 
-{
-  "coach_catalog": [
-    {
-      "coach_id": "C001",
-      "coach_name": "Aarav Singh — Strength & Hypertrophy",
-      "tags": ["strength", "muscle_gain", "recomp"],
-      "best_for_constraints": ["limited equipment"],
-      "min_session_minutes": 30,
-      "max_session_minutes": 90
-    },
-    {
-      "coach_id": "C002",
-      "coach_name": "Maya Patel — Fat Loss & Habits",
-      "tags": ["fat_loss", "habits", "steps", "low_impact"],
-      "best_for_constraints": ["low impact only", "no jumping"],
-      "min_session_minutes": 15,
-      "max_session_minutes": 60
-    },
-    {
-      "coach_id": "C003",
-      "coach_name": "Ethan Brooks — Running & Endurance",
-      "tags": ["running", "5k", "10k", "endurance"],
-      "best_for_constraints": ["travel / irregular routine"],
-      "min_session_minutes": 20,
-      "max_session_minutes": 90
-    },
-    {
-      "coach_id": "C004",
-      "coach_name": "Ananya Iyer — Yoga & Mobility",
-      "tags": ["yoga", "mobility", "stress", "posture", "low_impact"],
-      "best_for_constraints": ["knee pain", "back pain", "stress / anxiety"],
-      "min_session_minutes": 10,
-      "max_session_minutes": 45
-    },
-    {
-      "coach_id": "C005",
-      "coach_name": "Riya Sharma — Nutrition",
-      "tags": ["nutrition", "fat_loss", "weight_gain"],
-      "best_for_constraints": ["travel / irregular routine"],
-      "min_session_minutes": 10,
-      "max_session_minutes": 60
-    }
-  ]
-}
+* Height (cm): **178**
+* Weight (kg): **76**
+* Primary Goal (select): **muscle_gain**
+* Primary Goal (free text): *(leave blank)*
+* Goal Text: **Gain lean muscle in 12 weeks, train 4 days/week, improve bench and squat.**
+* Constraints (select): **None**
+* Constraints (free text): *(blank)*
+* Session Minutes: **60**
+* Days per Week: **4**
+* Equipment (select): **gym**
+* Equipment (free text): *(blank)*
+* Experience Level: **intermediate**
+* Coaching Style (select): **direct**
+* Coaching Style (free text): *(blank)*
+* Avoid (select): **none**
+* Avoid (free text): *(blank)*
 
+---
 
+## User 2 (Strength + back-safe)
 
-You are a coach-matching engine.
+* Height: **172**
+* Weight: **88**
+* Primary Goal: **strength**
+* Goal Text: **Build strength but keep it back-safe. Prefer machines and controlled tempo.**
+* Constraints (select): **Back pain**
+* Constraints (free text): *(blank)*
+* Session Minutes: **45**
+* Days per Week: **3**
+* Equipment: **gym**
+* Experience Level: **beginner**
+* Coaching Style: **encouraging**
+* Avoid (select): *(choose if available)* **deadlift**
+* Avoid (free text if not available): **heavy deadlifts**
 
-Task:
-Given user intake and coach catalog, choose:
-- primary_coach_id (required)
-- secondary_coach_id (optional, null if not needed)
-Max 2 coaches.
+---
 
-Hard rules:
-- If session_minutes is outside coach min/max, penalize that coach.
-- Respect constraints (e.g., knee pain -> avoid running coach unless user explicitly wants running).
-- Return ONLY valid JSON matching the schema.
+## User 3 (Fat loss + busy schedule)
 
-Prefer:
-- Primary coach matches primary_goal strongly.
-- Secondary coach only if it clearly adds value (e.g., fat_loss + nutrition).
+* Height: **165**
+* Weight: **92**
+* Primary Goal: **fat_loss**
+* Goal Text: **Lose 8 kg in 12 weeks. Very busy, need simple plan and motivation.**
+* Constraints (select): **Very busy schedule**
+* Session Minutes: **25**
+* Days per Week: **3**
+* Equipment (select): **home_dumbbells**
+* Equipment (free text if needed): **adjustable dumbbells**
+* Experience Level: **beginner**
+* Coaching Style: **encouraging**
+* Avoid (select): *(if available)* **complicated workouts**
+* Avoid (free text): **complex routines**
 
-Output JSON schema:
-{...schema...}
+---
+
+## User 4 (Fat loss + knee pain low impact)
+
+* Height: **160**
+* Weight: **74**
+* Primary Goal: **fat_loss**
+* Goal Text: **Lose fat but knee pain. Need low impact, no running/jumping.**
+* Constraints (select): **Knee pain**, **Low impact only**, **No jumping**
+* Session Minutes: **30**
+* Days per Week: **4**
+* Equipment (select): **gym**
+* Experience Level: **intermediate**
+* Coaching Style: **calm**
+* Avoid (select): **running**, **jumping**
+* Avoid (free text if needed): *(blank)*
+
+---
+
+## User 5 (Running 5K)
+
+* Height: **180**
+* Weight: **78**
+* Primary Goal: **running_5k**
+* Goal Text: **Want to complete 5K without stopping in 8 weeks.**
+* Constraints (select): **None**
+* Session Minutes: **35**
+* Days per Week: **3**
+* Equipment (select): **outdoors**
+* Equipment (free text if needed): **road running**
+* Experience Level: **beginner**
+* Coaching Style: **encouraging**
+* Avoid (select): *(if available)* **heavy lifting**
+* Avoid (free text): **heavy gym training**
+
+---
+
+## User 6 (Running 10K + travel)
+
+* Height: **168**
+* Weight: **67**
+* Primary Goal: **running_10k**
+* Goal Text: **Train for 10K in 10 weeks. I travel often; schedule changes.**
+* Constraints (select): **Travel / irregular routine**
+* Session Minutes: **45**
+* Days per Week: **4**
+* Equipment (select): **treadmill**
+* Experience Level: **intermediate**
+* Coaching Style: **direct**
+* Avoid (select): *(if available)* **long sessions**
+* Avoid (free text): **sessions > 60 min**
+
+---
+
+## User 7 (Yoga + stress)
+
+* Height: **170**
+* Weight: **63**
+* Primary Goal: **yoga**
+* Goal Text: **Reduce stress and improve flexibility. Prefer short daily sessions.**
+* Constraints (select): **Stress / anxiety**
+* Session Minutes: **15**
+* Days per Week: **6**
+* Equipment (select): **bodyweight**
+* Experience Level: **beginner**
+* Coaching Style: **calm**
+* Avoid (select): *(if available)* **intense cardio**
+* Avoid (free text): **high intensity workouts**
+
+---
+
+## User 8 (Mobility / posture desk)
+
+* Height: **174**
+* Weight: **81**
+* Primary Goal: **posture**
+* Goal Text: **Desk job. Upper back stiffness and tight hips. Need posture routine.**
+* Constraints (select): **Very busy schedule**
+* Session Minutes: **10**
+* Days per Week: **6**
+* Equipment (select): **bodyweight**
+* Equipment (free text if needed): **resistance band**
+* Experience Level: **beginner**
+* Coaching Style: **encouraging**
+* Avoid (free text): **long workouts**
+
+---
+
+## User 9 (Nutrition only)
+
+* Height: **158**
+* Weight: **52**
+* Primary Goal: **nutrition_only**
+* Goal Text: **Need meal structure and protein guidance. No workout plan needed.**
+* Constraints (select): **None**
+* Session Minutes: **20**
+* Days per Week: **3**
+* Equipment (select): **none**
+* Equipment (free text): *(blank)*
+* Experience Level: **beginner**
+* Coaching Style: **encouraging**
+* Avoid (free text): **strict dieting**
+
+---
+
+## User 10 (Weight gain + picky eater)
+
+* Height: **182**
+* Weight: **60**
+* Primary Goal: **weight_gain**
+* Goal Text: **Want to gain 5 kg in 12 weeks. Picky eater, want easy calorie strategy.**
+* Constraints (select): **Travel / irregular routine**
+* Session Minutes: **30**
+* Days per Week: **3**
+* Equipment (select): **gym**
+* Experience Level: **beginner**
+* Coaching Style: **direct**
+* Avoid (free text): **very spicy food, complicated meal prep**
+
+---
+
+If you tell me what **exact dropdown options** you used for:
+
+* equipment
+* coaching_style
+* avoid list
+  I can rewrite these 10 inputs so every value matches your UI options exactly (no free-text needed).
