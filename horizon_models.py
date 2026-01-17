@@ -1,0 +1,285 @@
+from __future__ import annotations
+
+import json
+import os
+import uuid
+from typing import Any, Dict, List, Optional, Sequence, Union
+
+from langchain_core.callbacks import CallbackManagerForLLMRun
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    ChatMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
+from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.runnables import Runnable, RunnableConfig
+from langchain_core.tools import BaseTool
+
+from horizon.tool_calling import run_tool_chat
+
+
+class HorizonToolCallingChat(BaseChatModel):
+    """
+    LangChain-compatible chat model that wraps the Horizon tool-chat API.
+    """
+
+    # Kept for compatibility with existing context usage, but not used directly.
+    engine: Optional[str] = None
+    conversation_id: Optional[str] = None
+
+    # Auth and request knobs for the Horizon tool-chat endpoint.
+    token: Optional[str] = None
+    qos: str = "accurate"
+    preview: bool = False
+    reasoning: bool = False
+    timeout: int = 30
+
+    def _resolve_token(self, context: Optional[Any], configurable: Dict[str, Any]) -> str:
+        """
+        Resolve an auth token from (highest priority first):
+        context, runnable config, model attribute, or env var.
+        """
+        token = None
+        if context is not None:
+            token = getattr(context, "tool_token", None) or getattr(context, "token", None)
+        if not token:
+            token = configurable.get("token")
+        if not token:
+            token = self.token or os.getenv("HORIZON_TOOL_TOKEN")
+        if not token:
+            raise ValueError(
+                "Missing Horizon tool chat token. "
+                "Set token=... or export HORIZON_TOOL_TOKEN."
+            )
+        return token
+
+    def _normalize_tool_result(self, content: Any) -> str:
+        """Ensure tool results are serialized as a string payload."""
+        if isinstance(content, str):
+            return content
+        try:
+            return json.dumps(content, ensure_ascii=True)
+        except TypeError:
+            return str(content)
+
+    def _prepare_messages(self, messages: List[BaseMessage]) -> List[Dict[str, Any]]:
+        """
+        Convert LangChain messages into Horizon tool-chat message format.
+        """
+        payload_messages: List[Dict[str, Any]] = []
+        for msg in messages:
+            if isinstance(msg, SystemMessage):
+                payload_messages.append(
+                    {"type": "message", "role": "system", "content": msg.content or ""}
+                )
+            elif isinstance(msg, HumanMessage):
+                payload_messages.append(
+                    {"type": "message", "role": "user", "content": msg.content or ""}
+                )
+            elif isinstance(msg, AIMessage):
+                if getattr(msg, "tool_calls", None):
+                    # Horizon expects tool calls as standalone messages.
+                    for call in msg.tool_calls:
+                        payload_messages.append(
+                            {
+                                "type": "tool_call",
+                                "id": call.get("id") or str(uuid.uuid4()),
+                                "name": call.get("name"),
+                                "input": call.get("args") or {},
+                            }
+                        )
+                else:
+                    payload_messages.append(
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": msg.content or "",
+                        }
+                    )
+            elif isinstance(msg, ToolMessage):
+                payload_messages.append(
+                    {
+                        "type": "tool_result",
+                        "role": "user",
+                        "id": msg.tool_call_id,
+                        "result": self._normalize_tool_result(msg.content),
+                    }
+                )
+            elif isinstance(msg, ChatMessage):
+                payload_messages.append(
+                    {"type": "message", "role": msg.role, "content": msg.content or ""}
+                )
+            else:
+                raise ValueError(f"Unsupported message type: {type(msg)}")
+        return payload_messages
+
+    def _merge_message_history(
+        self,
+        context: Optional[Any],
+        messages: List[BaseMessage],
+    ) -> List[Dict[str, Any]]:
+        """
+        Merge any provided history (raw dicts or BaseMessage) with new messages.
+        """
+        payload_messages: List[Dict[str, Any]] = []
+        history = getattr(context, "message_history", None) if context else None
+        if history:
+            if isinstance(history, list) and history and isinstance(history[0], BaseMessage):
+                payload_messages.extend(self._prepare_messages(history))
+            else:
+                payload_messages.extend(history)
+        payload_messages.extend(self._prepare_messages(messages))
+        return payload_messages
+
+    def _normalize_tools(
+        self, tools: Optional[Sequence[Union[BaseTool, Dict[str, Any]]]]
+    ) -> List[Dict[str, Any]]:
+        """Ensure tools are in Horizon's expected schema."""
+        if not tools:
+            return []
+        if isinstance(tools, list) and tools and isinstance(tools[0], BaseTool):
+            return [self._convert_tool(tool) for tool in tools]
+        return list(tools)
+
+    async def _chat_completion_request(
+        self,
+        messages: List[BaseMessage],
+        *,
+        context: Optional[Any],
+        tools: Optional[Sequence[Union[BaseTool, Dict[str, Any]]]],
+        token: str,
+        qos: str,
+        preview: bool,
+        reasoning: bool,
+        timeout: int,
+    ) -> Dict[str, Any]:
+        """
+        Send a Horizon tool-chat request with prepared messages and tools.
+        """
+        payload_messages = self._merge_message_history(context, messages)
+        tool_payload = self._normalize_tools(tools)
+        return await run_tool_chat(
+            token=token,
+            tools=tool_payload,
+            messages=payload_messages,
+            qos=qos,
+            preview=preview,
+            reasoning=reasoning,
+            timeout=timeout,
+        )
+
+    def _parse_response(self, data: Dict[str, Any]) -> AIMessage:
+        """
+        Translate Horizon response into a LangChain AIMessage + tool_calls.
+        """
+        messages = data.get("messages") or []
+        tool_calls = []
+
+        for msg in messages:
+            if msg.get("type") == "tool_call":
+                tool_calls.append(
+                    {
+                        "name": msg.get("name"),
+                        "args": msg.get("input") or {},
+                        "id": msg.get("id") or str(uuid.uuid4()),
+                    }
+                )
+
+        if tool_calls:
+            # When tool calls exist, LangChain expects them in AIMessage.tool_calls.
+            return AIMessage(content="", tool_calls=tool_calls)
+
+        for msg in reversed(messages):
+            if msg.get("type") == "message" and msg.get("role") == "assistant":
+                return AIMessage(content=msg.get("content") or "")
+
+        return AIMessage(content="")
+
+    async def _agenerate(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        """
+        Main async entrypoint used by LangChain to invoke the model.
+        """
+        config: RunnableConfig = kwargs.get("config") or {}
+        configurable = config.get("configurable", {}) or {}
+
+        tools = kwargs.get("tools") or configurable.get("tools")
+        context = kwargs.get("context")
+
+        token = self._resolve_token(context, configurable)
+        qos = kwargs.get("qos") or configurable.get("qos") or self.qos
+        preview = kwargs.get("preview") or configurable.get("preview") or self.preview
+        reasoning = kwargs.get("reasoning") or configurable.get("reasoning") or self.reasoning
+        timeout = kwargs.get("timeout") or configurable.get("timeout") or self.timeout
+
+        data = await self._chat_completion_request(
+            messages,
+            context=context,
+            tools=tools,
+            token=token,
+            qos=qos,
+            preview=preview,
+            reasoning=reasoning,
+            timeout=timeout,
+        )
+
+        ai_msg = self._parse_response(data)
+        generation = ChatGeneration(message=ai_msg, generation_info={"raw": data})
+        return ChatResult(generations=[generation])
+
+    def _generate(self, messages, stop=None, **kwargs) -> ChatResult:
+        raise NotImplementedError("HorizonToolCallingChat only supports async calls")
+
+    def bind_tools(
+        self,
+        tools: Sequence[BaseTool],
+        *,
+        tool_choice: Optional[str | Dict[str, Any]] = None,
+    ) -> Runnable:
+        """
+        Return a runnable with Horizon-formatted tools attached.
+        """
+        tool_specs = [self._convert_tool(tool) for tool in tools]
+        extra: Dict[str, Any] = {"tools": tool_specs}
+        if tool_choice is not None:
+            # Horizon tool-chat does not support forcing tool choice, but
+            # we accept it to remain compatible with LangChain APIs.
+            extra["tool_choice"] = tool_choice
+        return self.bind(**extra)
+
+    def _convert_tool(self, tool: BaseTool) -> Dict[str, Any]:
+        """
+        Convert a LangChain tool into Horizon's "adhoc" tool schema.
+        """
+        if getattr(tool, "args_schema", None):
+            schema = tool.args_schema.model_json_schema()
+        else:
+            schema = getattr(
+                tool,
+                "to_json_schema",
+                lambda: {"type": "object", "properties": {}, "required": []},
+            )()
+
+        return {
+            "type": "adhoc",
+            "name": tool.name,
+            "description": tool.description or "",
+            "parameters": schema,
+        }
+
+    @property
+    def _llm_type(self) -> str:
+        return "Horizon Tool Chat"
+
+    @property
+    def model(self) -> str:
+        return "HorizonToolChat"
