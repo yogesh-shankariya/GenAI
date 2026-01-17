@@ -1,133 +1,314 @@
-# client.py
+from __future__ import annotations
 
-import httpx
-from typing import List, Dict
+import json
+import os
+import uuid
+from typing import Any, Dict, List, Optional, Sequence, Union
+
+from langchain_core.callbacks import CallbackManagerForLLMRun
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    ChatMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
+from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.runnables import Runnable, RunnableConfig
+from langchain_core.tools import BaseTool
+
+from horizon.client import HorizonApiClient
+from horizon.tool_calling import run_tool_chat
 
 
-API_URL = "https://api.llm.com/v2/tool/chats"
+class HorizonToolCallingChat(BaseChatModel):
+    """
+    LangChain-compatible chat model that wraps the Horizon tool-chat API.
+    """
 
+    # Kept for compatibility with existing context usage, but not used directly.
+    engine: Optional[str] = None
+    conversation_id: Optional[str] = None
 
-async def run_tool_chat(
-    token: str,
-    tools: List[Dict],
-    messages: List[Dict],
-    *,
-    qos: str = "accurate",
-    preview: bool = False,
-    reasoning: bool = False,
+    # Auth and request knobs for the Horizon tool-chat endpoint.
+    token: Optional[str] = None
+    qos: str = "accurate"
+    preview: bool = False
+    reasoning: bool = False
     timeout: int = 30
-) -> Dict:
-    """
-    Send a single request to the Custom Tool-Chat endpoint and return
-    the JSON response.
 
-    Parameters
-    ----------
-    token : Bearer token string.
-    tools : Tools section of the payload (list of dicts).
-    messages : Message history (list of dicts).
-    qos : 'accurate', 'fast', etc. (default: 'accurate')
-    preview : Whether to enable preview mode. (default: False)
-    reasoning : Whether to ask for chain-of-thought. (default: False)
-    timeout : Network timeout in seconds. (default: 30)
-    """
+    def _resolve_secure(self) -> bool:
+        env_value = os.getenv("HORIZON_API_SECURE", "")
+        if not env_value:
+            return True
+        return env_value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {token}",
-    }
+    async def _resolve_token(
+        self, context: Optional[Any], configurable: Dict[str, Any]
+    ) -> str:
+        """
+        Resolve an auth token from (highest priority first):
+        context, runnable config, model attribute, env var, or OAuth.
+        """
+        token = None
+        if context is not None:
+            token = getattr(context, "tool_token", None) or getattr(context, "token", None)
+        if not token:
+            token = configurable.get("token")
+        if not token:
+            token = self.token or os.getenv("HORIZON_TOOL_TOKEN")
+        if not token:
+            client_id = os.getenv("HORIZON_CLIENT_ID")
+            client_secret = os.getenv("HORIZON_CLIENT_SECRET")
+            gateway = os.getenv("HORIZON_GATEWAY")
+            if client_id and client_secret and gateway:
+                oauth_client = HorizonApiClient(
+                    client_id=client_id,
+                    client_secret=client_secret,
+                    gateway=gateway,
+                    secure=self._resolve_secure(),
+                )
+                try:
+                    return await oauth_client.get_token()
+                except Exception as exc:
+                    raise RuntimeError(
+                        "Failed to fetch Horizon tool chat token using OAuth. "
+                        "Check HORIZON_CLIENT_ID, HORIZON_CLIENT_SECRET, and "
+                        "HORIZON_GATEWAY."
+                    ) from exc
+            raise ValueError(
+                "Missing Horizon tool chat token. "
+                "Set token=... or export HORIZON_TOOL_TOKEN, "
+                "or set HORIZON_CLIENT_ID/HORIZON_CLIENT_SECRET/HORIZON_GATEWAY "
+                "to auto-fetch a token."
+            )
+        return token
 
-    params = {
-        "qos": qos,
-        "preview": str(preview).lower(),
-        "reasoning": str(reasoning).lower(),
-    }
+    def _normalize_tool_result(self, content: Any) -> str:
+        """Ensure tool results are serialized as a string payload."""
+        if isinstance(content, str):
+            return content
+        try:
+            return json.dumps(content, ensure_ascii=True)
+        except TypeError:
+            return str(content)
 
-    payload = {"tools": tools, "messages": messages}
+    def _prepare_messages(self, messages: List[BaseMessage]) -> List[Dict[str, Any]]:
+        """
+        Convert LangChain messages into Horizon tool-chat message format.
+        """
+        payload_messages: List[Dict[str, Any]] = []
+        for msg in messages:
+            if isinstance(msg, SystemMessage):
+                payload_messages.append(
+                    {"type": "message", "role": "system", "content": msg.content or ""}
+                )
+            elif isinstance(msg, HumanMessage):
+                payload_messages.append(
+                    {"type": "message", "role": "user", "content": msg.content or ""}
+                )
+            elif isinstance(msg, AIMessage):
+                if getattr(msg, "tool_calls", None):
+                    # Horizon expects tool calls as standalone messages.
+                    for call in msg.tool_calls:
+                        payload_messages.append(
+                            {
+                                "type": "tool_call",
+                                "id": call.get("id") or str(uuid.uuid4()),
+                                "name": call.get("name"),
+                                "input": call.get("args") or {},
+                            }
+                        )
+                else:
+                    payload_messages.append(
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": msg.content or "",
+                        }
+                    )
+            elif isinstance(msg, ToolMessage):
+                payload_messages.append(
+                    {
+                        "type": "tool_result",
+                        "role": "user",
+                        "id": msg.tool_call_id,
+                        "result": self._normalize_tool_result(msg.content),
+                    }
+                )
+            elif isinstance(msg, ChatMessage):
+                payload_messages.append(
+                    {"type": "message", "role": msg.role, "content": msg.content or ""}
+                )
+            else:
+                raise ValueError(f"Unsupported message type: {type(msg)}")
+        return payload_messages
 
-    async with httpx.AsyncClient(timeout=timeout, verify=False) as client:
-        resp = await client.post(API_URL, headers=headers, params=params, json=payload)
-        resp.raise_for_status()  # raises if status >= 400
-        return resp.json()
+    def _merge_message_history(
+        self,
+        context: Optional[Any],
+        messages: List[BaseMessage],
+    ) -> List[Dict[str, Any]]:
+        """
+        Merge any provided history (raw dicts or BaseMessage) with new messages.
+        """
+        payload_messages: List[Dict[str, Any]] = []
+        history = getattr(context, "message_history", None) if context else None
+        if history:
+            if isinstance(history, list) and history and isinstance(history[0], BaseMessage):
+                payload_messages.extend(self._prepare_messages(history))
+            else:
+                payload_messages.extend(history)
+        payload_messages.extend(self._prepare_messages(messages))
+        return payload_messages
 
+    def _normalize_tools(
+        self, tools: Optional[Sequence[Union[BaseTool, Dict[str, Any]]]]
+    ) -> List[Dict[str, Any]]:
+        """Ensure tools are in Horizon's expected schema."""
+        if not tools:
+            return []
+        if isinstance(tools, list) and tools and isinstance(tools[0], BaseTool):
+            return [self._convert_tool(tool) for tool in tools]
+        return list(tools)
 
-# Dev_11_01_2026.ipynb (code cells shown in images)
+    async def _chat_completion_request(
+        self,
+        messages: List[BaseMessage],
+        *,
+        context: Optional[Any],
+        tools: Optional[Sequence[Union[BaseTool, Dict[str, Any]]]],
+        token: str,
+        qos: str,
+        preview: bool,
+        reasoning: bool,
+        timeout: int,
+    ) -> Dict[str, Any]:
+        """
+        Send a Horizon tool-chat request with prepared messages and tools.
+        """
+        payload_messages = self._merge_message_history(context, messages)
+        tool_payload = self._normalize_tools(tools)
+        return await run_tool_chat(
+            token=token,
+            tools=tool_payload,
+            messages=payload_messages,
+            qos=qos,
+            preview=preview,
+            reasoning=reasoning,
+            timeout=timeout,
+        )
 
-import asyncio, os
+    def _parse_response(self, data: Dict[str, Any]) -> AIMessage:
+        """
+        Translate Horizon response into a LangChain AIMessage + tool_calls.
+        """
+        messages = data.get("messages") or []
+        tool_calls = []
 
+        for msg in messages:
+            if msg.get("type") == "tool_call":
+                tool_calls.append(
+                    {
+                        "name": msg.get("name"),
+                        "args": msg.get("input") or {},
+                        "id": msg.get("id") or str(uuid.uuid4()),
+                    }
+                )
 
-# --- 2.1 Define the tool schema ---------------------------------------------
+        if tool_calls:
+            # When tool calls exist, LangChain expects them in AIMessage.tool_calls.
+            return AIMessage(content="", tool_calls=tool_calls)
 
-weather_tool = [
-    {
-        "type": "adhoc",
-        "name": "getWeather",
-        "description": "Returns a weather summary for a location.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "location": {
-                    "type": "string",
-                    "description": (
-                        "The city and optional country/state "
-                        "(e.g., 'London, UK' or 'New York City, NY')."
-                    ),
-                }
-            },
-            "required": ["location"],
-            "additionalProperties": False,
-        },
-    }
-]
+        for msg in reversed(messages):
+            if msg.get("type") == "message" and msg.get("role") == "assistant":
+                return AIMessage(content=msg.get("content") or "")
 
+        return AIMessage(content="")
 
-# --- 2.2 Define a stub implementation of the tool ---------------------------
+    async def _agenerate(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        """
+        Main async entrypoint used by LangChain to invoke the model.
+        """
+        config: RunnableConfig = kwargs.get("config") or {}
+        configurable = config.get("configurable", {}) or {}
 
-def get_weather(location: str) -> str:
-    # In real code you'd call a weather API here.
-    return "hot and muggy"
+        tools = kwargs.get("tools") or configurable.get("tools")
+        context = kwargs.get("context")
 
+        token = await self._resolve_token(context, configurable)
+        qos = kwargs.get("qos") or configurable.get("qos") or self.qos
+        preview = kwargs.get("preview") or configurable.get("preview") or self.preview
+        reasoning = kwargs.get("reasoning") or configurable.get("reasoning") or self.reasoning
+        timeout = kwargs.get("timeout") or configurable.get("timeout") or self.timeout
 
-# --- 2.3 Conversation loop --------------------------------------------------
+        data = await self._chat_completion_request(
+            messages,
+            context=context,
+            tools=tools,
+            token=token,
+            qos=qos,
+            preview=preview,
+            reasoning=reasoning,
+            timeout=timeout,
+        )
 
-async def main():
-    token = 'a8lp8TNyjp57mpjoLsk98qQoRVIVUrxt'  # or hard-code for quick tests
+        ai_msg = self._parse_response(data)
+        generation = ChatGeneration(message=ai_msg, generation_info={"raw": data})
+        return ChatResult(generations=[generation])
 
-    # Step-1 : user asks a question
-    messages = [
-        {"type": "message", "role": "user", "content": "What is the weather in Chicago, IL"}
-    ]
+    def _generate(self, messages, stop=None, **kwargs) -> ChatResult:
+        raise NotImplementedError("HorizonToolCallingChat only supports async calls")
 
-    # Call the LLM
-    assistant_resp = await run_tool_chat(token, weather_tool, messages)
-    print("Assistant response =>", assistant_resp)
+    def bind_tools(
+        self,
+        tools: Sequence[BaseTool],
+        *,
+        tool_choice: Optional[str | Dict[str, Any]] = None,
+    ) -> Runnable:
+        """
+        Return a runnable with Horizon-formatted tools attached.
+        """
+        tool_specs = [self._convert_tool(tool) for tool in tools]
+        extra: Dict[str, Any] = {"tools": tool_specs}
+        if tool_choice is not None:
+            # Horizon tool-chat does not support forcing tool choice, but
+            # we accept it to remain compatible with LangChain APIs.
+            extra["tool_choice"] = tool_choice
+        return self.bind(**extra)
 
-    # Step-2 : inspect whether a tool call was requested
-    tool_call_msg = next((m for m in assistant_resp["messages"] if m["type"] == "tool_call"), None)
-    if not tool_call_msg:
-        raise RuntimeError("No tool_call message found!")
+    def _convert_tool(self, tool: BaseTool) -> Dict[str, Any]:
+        """
+        Convert a LangChain tool into Horizon's "adhoc" tool schema.
+        """
+        if getattr(tool, "args_schema", None):
+            schema = tool.args_schema.model_json_schema()
+        else:
+            schema = getattr(
+                tool,
+                "to_json_schema",
+                lambda: {"type": "object", "properties": {}, "required": []},
+            )()
 
-    # Step-3 : execute the tool locally
-    tool_output = get_weather(**tool_call_msg["input"])
+        return {
+            "type": "adhoc",
+            "name": tool.name,
+            "description": tool.description or "",
+            "parameters": schema,
+        }
 
-    # Step-4 : add tool_call + tool_result to the conversation
-    messages.extend(
-        [
-            tool_call_msg,
-            {
-                "type": "tool_result",
-                "role": "user",
-                "id": tool_call_msg["id"],
-                "result": tool_output,
-            },
-        ]
-    )
+    @property
+    def _llm_type(self) -> str:
+        return "Horizon Tool Chat"
 
-    # Step-5 : ask the model to finish the answer
-    final_resp = await run_tool_chat(token, weather_tool, messages)
-
-    # The last message should contain the natural-language answer
-    print("Final answer =>", final_resp["messages"][-1]["content"])
-
-
-await main()
+    @property
+    def model(self) -> str:
+        return "HorizonToolChat"
