@@ -1,187 +1,133 @@
-Here are **10 complete user profiles** you can manually fill in Streamlit. They cover different goals/constraints/equipment so your LLM mapping can pick **all coaches** (Strength, Fat-loss, Running, Yoga/Mobility, Nutrition).
-(For multi-select fields, select exactly the items shown; if an option isn’t in your dropdown, type it in the free-text add field.)
+# client.py
 
----
+import httpx
+from typing import List, Dict
 
-## User 1 (Strength / muscle gain)
 
-* Height (cm): **178**
-* Weight (kg): **76**
-* Primary Goal (select): **muscle_gain**
-* Primary Goal (free text): *(leave blank)*
-* Goal Text: **Gain lean muscle in 12 weeks, train 4 days/week, improve bench and squat.**
-* Constraints (select): **None**
-* Constraints (free text): *(blank)*
-* Session Minutes: **60**
-* Days per Week: **4**
-* Equipment (select): **gym**
-* Equipment (free text): *(blank)*
-* Experience Level: **intermediate**
-* Coaching Style (select): **direct**
-* Coaching Style (free text): *(blank)*
-* Avoid (select): **none**
-* Avoid (free text): *(blank)*
+API_URL = "https://api.llm.com/v2/tool/chats"
 
----
 
-## User 2 (Strength + back-safe)
+async def run_tool_chat(
+    token: str,
+    tools: List[Dict],
+    messages: List[Dict],
+    *,
+    qos: str = "accurate",
+    preview: bool = False,
+    reasoning: bool = False,
+    timeout: int = 30
+) -> Dict:
+    """
+    Send a single request to the Custom Tool-Chat endpoint and return
+    the JSON response.
 
-* Height: **172**
-* Weight: **88**
-* Primary Goal: **strength**
-* Goal Text: **Build strength but keep it back-safe. Prefer machines and controlled tempo.**
-* Constraints (select): **Back pain**
-* Constraints (free text): *(blank)*
-* Session Minutes: **45**
-* Days per Week: **3**
-* Equipment: **gym**
-* Experience Level: **beginner**
-* Coaching Style: **encouraging**
-* Avoid (select): *(choose if available)* **deadlift**
-* Avoid (free text if not available): **heavy deadlifts**
+    Parameters
+    ----------
+    token : Bearer token string.
+    tools : Tools section of the payload (list of dicts).
+    messages : Message history (list of dicts).
+    qos : 'accurate', 'fast', etc. (default: 'accurate')
+    preview : Whether to enable preview mode. (default: False)
+    reasoning : Whether to ask for chain-of-thought. (default: False)
+    timeout : Network timeout in seconds. (default: 30)
+    """
 
----
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}",
+    }
 
-## User 3 (Fat loss + busy schedule)
+    params = {
+        "qos": qos,
+        "preview": str(preview).lower(),
+        "reasoning": str(reasoning).lower(),
+    }
 
-* Height: **165**
-* Weight: **92**
-* Primary Goal: **fat_loss**
-* Goal Text: **Lose 8 kg in 12 weeks. Very busy, need simple plan and motivation.**
-* Constraints (select): **Very busy schedule**
-* Session Minutes: **25**
-* Days per Week: **3**
-* Equipment (select): **home_dumbbells**
-* Equipment (free text if needed): **adjustable dumbbells**
-* Experience Level: **beginner**
-* Coaching Style: **encouraging**
-* Avoid (select): *(if available)* **complicated workouts**
-* Avoid (free text): **complex routines**
+    payload = {"tools": tools, "messages": messages}
 
----
+    async with httpx.AsyncClient(timeout=timeout, verify=False) as client:
+        resp = await client.post(API_URL, headers=headers, params=params, json=payload)
+        resp.raise_for_status()  # raises if status >= 400
+        return resp.json()
 
-## User 4 (Fat loss + knee pain low impact)
 
-* Height: **160**
-* Weight: **74**
-* Primary Goal: **fat_loss**
-* Goal Text: **Lose fat but knee pain. Need low impact, no running/jumping.**
-* Constraints (select): **Knee pain**, **Low impact only**, **No jumping**
-* Session Minutes: **30**
-* Days per Week: **4**
-* Equipment (select): **gym**
-* Experience Level: **intermediate**
-* Coaching Style: **calm**
-* Avoid (select): **running**, **jumping**
-* Avoid (free text if needed): *(blank)*
+# Dev_11_01_2026.ipynb (code cells shown in images)
 
----
+import asyncio, os
 
-## User 5 (Running 5K)
 
-* Height: **180**
-* Weight: **78**
-* Primary Goal: **running_5k**
-* Goal Text: **Want to complete 5K without stopping in 8 weeks.**
-* Constraints (select): **None**
-* Session Minutes: **35**
-* Days per Week: **3**
-* Equipment (select): **outdoors**
-* Equipment (free text if needed): **road running**
-* Experience Level: **beginner**
-* Coaching Style: **encouraging**
-* Avoid (select): *(if available)* **heavy lifting**
-* Avoid (free text): **heavy gym training**
+# --- 2.1 Define the tool schema ---------------------------------------------
 
----
+weather_tool = [
+    {
+        "type": "adhoc",
+        "name": "getWeather",
+        "description": "Returns a weather summary for a location.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "location": {
+                    "type": "string",
+                    "description": (
+                        "The city and optional country/state "
+                        "(e.g., 'London, UK' or 'New York City, NY')."
+                    ),
+                }
+            },
+            "required": ["location"],
+            "additionalProperties": False,
+        },
+    }
+]
 
-## User 6 (Running 10K + travel)
 
-* Height: **168**
-* Weight: **67**
-* Primary Goal: **running_10k**
-* Goal Text: **Train for 10K in 10 weeks. I travel often; schedule changes.**
-* Constraints (select): **Travel / irregular routine**
-* Session Minutes: **45**
-* Days per Week: **4**
-* Equipment (select): **treadmill**
-* Experience Level: **intermediate**
-* Coaching Style: **direct**
-* Avoid (select): *(if available)* **long sessions**
-* Avoid (free text): **sessions > 60 min**
+# --- 2.2 Define a stub implementation of the tool ---------------------------
 
----
+def get_weather(location: str) -> str:
+    # In real code you'd call a weather API here.
+    return "hot and muggy"
 
-## User 7 (Yoga + stress)
 
-* Height: **170**
-* Weight: **63**
-* Primary Goal: **yoga**
-* Goal Text: **Reduce stress and improve flexibility. Prefer short daily sessions.**
-* Constraints (select): **Stress / anxiety**
-* Session Minutes: **15**
-* Days per Week: **6**
-* Equipment (select): **bodyweight**
-* Experience Level: **beginner**
-* Coaching Style: **calm**
-* Avoid (select): *(if available)* **intense cardio**
-* Avoid (free text): **high intensity workouts**
+# --- 2.3 Conversation loop --------------------------------------------------
 
----
+async def main():
+    token = 'a8lp8TNyjp57mpjoLsk98qQoRVIVUrxt'  # or hard-code for quick tests
 
-## User 8 (Mobility / posture desk)
+    # Step-1 : user asks a question
+    messages = [
+        {"type": "message", "role": "user", "content": "What is the weather in Chicago, IL"}
+    ]
 
-* Height: **174**
-* Weight: **81**
-* Primary Goal: **posture**
-* Goal Text: **Desk job. Upper back stiffness and tight hips. Need posture routine.**
-* Constraints (select): **Very busy schedule**
-* Session Minutes: **10**
-* Days per Week: **6**
-* Equipment (select): **bodyweight**
-* Equipment (free text if needed): **resistance band**
-* Experience Level: **beginner**
-* Coaching Style: **encouraging**
-* Avoid (free text): **long workouts**
+    # Call the LLM
+    assistant_resp = await run_tool_chat(token, weather_tool, messages)
+    print("Assistant response =>", assistant_resp)
 
----
+    # Step-2 : inspect whether a tool call was requested
+    tool_call_msg = next((m for m in assistant_resp["messages"] if m["type"] == "tool_call"), None)
+    if not tool_call_msg:
+        raise RuntimeError("No tool_call message found!")
 
-## User 9 (Nutrition only)
+    # Step-3 : execute the tool locally
+    tool_output = get_weather(**tool_call_msg["input"])
 
-* Height: **158**
-* Weight: **52**
-* Primary Goal: **nutrition_only**
-* Goal Text: **Need meal structure and protein guidance. No workout plan needed.**
-* Constraints (select): **None**
-* Session Minutes: **20**
-* Days per Week: **3**
-* Equipment (select): **none**
-* Equipment (free text): *(blank)*
-* Experience Level: **beginner**
-* Coaching Style: **encouraging**
-* Avoid (free text): **strict dieting**
+    # Step-4 : add tool_call + tool_result to the conversation
+    messages.extend(
+        [
+            tool_call_msg,
+            {
+                "type": "tool_result",
+                "role": "user",
+                "id": tool_call_msg["id"],
+                "result": tool_output,
+            },
+        ]
+    )
 
----
+    # Step-5 : ask the model to finish the answer
+    final_resp = await run_tool_chat(token, weather_tool, messages)
 
-## User 10 (Weight gain + picky eater)
+    # The last message should contain the natural-language answer
+    print("Final answer =>", final_resp["messages"][-1]["content"])
 
-* Height: **182**
-* Weight: **60**
-* Primary Goal: **weight_gain**
-* Goal Text: **Want to gain 5 kg in 12 weeks. Picky eater, want easy calorie strategy.**
-* Constraints (select): **Travel / irregular routine**
-* Session Minutes: **30**
-* Days per Week: **3**
-* Equipment (select): **gym**
-* Experience Level: **beginner**
-* Coaching Style: **direct**
-* Avoid (free text): **very spicy food, complicated meal prep**
 
----
-
-If you tell me what **exact dropdown options** you used for:
-
-* equipment
-* coaching_style
-* avoid list
-  I can rewrite these 10 inputs so every value matches your UI options exactly (no free-text needed).
+await main()
