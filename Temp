@@ -1,117 +1,55 @@
-from __future__ import annotations
+**Slide 1: Three-layer flow (Agents → Algorithms → Applications)**
 
-import json
-import os
-from typing import Any, Dict, Optional
+* Goal: convert raw healthcare data into usable member-level actions
+* Flow: data comes from Agents, gets processed by Algorithms, and is finally consumed by Applications/use cases
+* Output: standardized data (FHIR) + events/insights that power multiple apps
 
-import httpx
-from dotenv import load_dotenv
+**Slide 2: Layer 1 — Agents (Blue) | Data sources**
 
-from .auth import OAuthCredentials, TokenCache, is_token_valid
+* Provider health systems (EMR vendor solutions) send clinical events and records
+* Third-party health apps / tech vendors contribute additional member and clinical context
+* QHIN / QHIO networks exchange data across organizations (interoperability)
 
-load_dotenv()
+**Slide 3: Layer 2 — Algorithms/Services | Processing layer**
 
-__all__ = ["HorizonApiClient"]
+* Clinical Data Exchange (FHIR Server + Interop API)
 
+  * converts incoming data into a standard format (FHIR)
+  * makes data accessible via APIs
+* ADT Broadcaster
 
-class HorizonApiClient:
-    """Async wrapper around the Horizon text-structure endpoint."""
+  * detects admit/discharge/transfer events and triggers notifications
+* Care Gap Closure (or Prior Auth / Chart Chase Hub, based on use case)
 
-    _TOKEN_EP: str = "/oauth2/token"
-    _STRUCTURE_EP: str = "/v2/text/structures"
+  * identifies missing actions, gaps, or next steps and creates insights
 
-    # ------------------------------------------------------------------ #
-    def __init__(
-        self,
-        *,
-        gateway: str | None = None,
-        client_id: str | None = None,
-        client_secret: str | None = None,
-        secure: bool = True,
-        token_store: TokenCache | None = None,
-        timeout: int = 3000,
-    ) -> None:
-        creds = OAuthCredentials(
-            client_id=client_id or os.getenv("HORIZON_CLIENT_ID"),
-            client_secret=client_secret or os.getenv("HORIZON_CLIENT_SECRET"),
-            gateway=gateway or os.getenv("HORIZON_GATEWAY"),
-        )
+**Slide 4: Layer 3 — Applications/Use Cases (Green) | What users see**
 
-        self._creds = creds
-        self._secure = secure
-        self._proto = "https" if secure else "http"
-        self._timeout = timeout
+* Total Member View
 
-        self._token_store = token_store or TokenCache()
-        self._token_payload: Optional[Dict[str, Any]] = None  # lazy-loaded
+  * shows a 360° view of member data and history in one place
+* Registration & Self-Service
 
-    # ------------------------------ PUBLIC ----------------------------- #
-    async def marshall_into_json(
-        self,
-        *,
-        schema: Dict[str, Any] | str,
-        prompt: str,
-        params: Dict[str, Any] | None = None,
-    ) -> Dict[str, Any]:
-        """
-        Ask Horizon to transform *prompt* so that it respects *schema*.
-        Returns the “content” field (empty dict on error).
-        """
-        token = await self._get_token()
+  * enables providers/payers to register and manage member-related data
+* Coordination Hub (HealthOS Portal)
 
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        }
-        payload = {"prompt": prompt, "output": schema, "stream": False}
+  * supports secure handoffs, referrals, and workflow coordination between entities
 
-        async with httpx.AsyncClient(timeout=self._timeout, verify=False) as client:
-            resp = await client.post(
-                f"{self._proto}://{self._creds.gateway}{self._STRUCTURE_EP}",
-                json=payload,
-                headers=headers,
-                params=params,
-            )
-            resp.raise_for_status()
+**Slide 5: End-to-end example (simple scenario)**
 
-        try:
-            return resp.json().get("content", {})
-        except json.JSONDecodeError as exc:
-            raise RuntimeError("Could not decode Horizon response") from exc
+* Step 1 (Agent): Member gets admitted in a hospital → EMR creates an admission record
+* Step 2 (Algorithm): Clinical Data Exchange converts it to FHIR → ADT Broadcaster flags it as an admission event
+* Step 3 (Application):
 
-    # ----------------------- TOKEN HANDLING (PRIVATE) ------------------ #
-    async def _get_token(self) -> str:
-        if self._token_payload is None:
-            self._token_payload = self._token_store.load()
+  * Coordination Hub gets an alert → care team starts follow-up workflow
+  * Total Member View updates member status and recent encounter details
+  * Registration & Self-Service can update demographics/coverage, which flows back into the exchange
 
-        if not is_token_valid(self._token_payload):
-            self._token_payload = await self._request_new_token()
-            self._token_store.save(self._token_payload)
+**Slide 6: Why this design helps (value points)**
 
-        return self._token_payload["access_token"]
+* Standardizes data across many sources using FHIR
+* Enables faster decisions using events (ADT) and insights (care gaps)
+* Multiple apps can reuse the same processed data instead of building separate integrations
+* Supports scalable onboarding of new sources and new use cases with minimal change
 
-    async def get_token(self) -> str:
-        """Public accessor for a cached or freshly requested OAuth token."""
-        return await self._get_token()
-
-    async def _request_new_token(self) -> Dict[str, Any]:
-        headers = {"Content-Type": "application/json"}
-        payload = {
-            "client_id": self._creds.client_id,
-            "client_secret": self._creds.client_secret,
-            "grant_type": "client_credentials",
-        }
-
-        async with httpx.AsyncClient(timeout=self._timeout, verify=False) as client:
-            resp = await client.post(
-                f"{self._proto}://{self._creds.gateway}{self._TOKEN_EP}",
-                json=payload,
-                headers=headers,
-            )
-            resp.raise_for_status()
-
-        data = resp.json()
-        import datetime as dt
-
-        data["access_token_created_at"] = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-        return data
+If you want, I can rewrite these as shorter 1-line bullets (more PPT-friendly) or align the algorithm names exactly to the ones you want from the image (e.g., Prior Auth, ER Redirection, Chart Chase Hub).
