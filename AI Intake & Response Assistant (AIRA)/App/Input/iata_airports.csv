@@ -1,0 +1,534 @@
+city,airport,country,iata
+Aberdeen,,United Kingdom,ABZ
+Aberdeen (SD),,USA,ABR
+Abidjan,,Cote d'Ivoire,ABJ
+Abilene (TX),,USA,ABI
+Abu Dhabi,Abu Dhabi International,United Arab Emirates,AUH
+Akron (OH),,USA,CAK
+Al Ain,,United Arab Emirates,AAN
+Albany (GA),,USA,ABY
+Albany (NY),Albany International Airport,USA,ALB
+Albuquerque (NM),,USA,ABQ
+Alfujairah (Fujairah),,United Arab Emirates,FJR
+Allentown (PA),,USA,ABE
+Altoona (PA),,USA,AOO
+Altus,,USA,AXS
+Amarillo (TX),,USA,AMA
+Anchorage (AK),Ted Stevens Anchorage International,USA,ANC
+Ann Arbor (MI),,USA,ARB
+Anniston (AL),,USA,ANB
+Appelton/Neenah/Menasha (WI),,USA,ATW
+Asheville (NC),,USA,AVL
+"Aspen, (CO)",Aspen-Pitkin County Airport,USA,ASE
+Athens (GA),,USA,AHN
+Athens (OH),,USA,ATO
+Atlanta (GA),Hartsfield Atlanta International Airport,USA,ATL
+Atlantic City (NJ),Atlantic City International,USA,ACY
+Augusta (GA),,USA,AGS
+Augusta (ME),Augusta State Airport,USA,AUG
+Austin (TX),Austin-Bergstrom Airport,USA,AUS
+Bakersfield (CA),,USA,BFL
+Baltimore (MD),Washington International Airport,USA,BWI
+Bangor (ME),,USA,BGR
+Barra (the famous tidal beach landing),,United Kingdom,BRR
+Baton Rouge (LA),Baton Rouge Metropolitan Airport,USA,BTR
+Beaumont/Pt. Arthur (TX),,USA,BPT
+Beckley (WV),,USA,BKW
+Belfast,Belfast International Airport,United Kingdom,BFS
+Belfast,George Best Belfast City Airport,United Kingdom,BHD
+Bellingham (WA),,USA,BLI
+Bemidji (MN),,USA,BJI
+Benbecula,,United Kingdom,BEB
+Benton Harbour (MI),,USA,BEH
+Bethel (AK),,USA,BET
+Billings (MT),,USA,BIL
+Birmingham (AL),,USA,BHM
+Birmingham,Birmingham International Airport,United Kingdom,BHX
+Bismarck (ND),Bismarck Municipal Airport,USA,BIS
+Blackpool,,United Kingdom,BLK
+Bloomington (IL),,USA,BMI
+Bloomington (IN),,USA,BMG
+Bluefield (WV),,USA,BLF
+Boise (ID),Boise Air Terminal,USA,BOI
+Borrego Springs (CA),,USA,BXS
+Boston (MA),General Edward Lawrence Logan,USA,BOS
+Bouake,,Cote d'Ivoire,BYK
+Bournemouth,,United Kingdom,BOH
+Bozeman (MT),,USA,BZN
+Bradford/Warren (PA) /Olean (NY),,USA,BFD
+Brainerd (MN),,USA,BRD
+Bridgeport (CT),,USA,BDR
+Bristol,,United Kingdom,BRS
+Brookings (SD),,USA,BKX
+Brunswick (GA),,USA,BQK
+Buffalo/Niagara Falls (NY),,USA,BUF
+Bullhead City (NV),,USA,BHC
+Burbank (CA),,USA,BUR
+Burlington (VT),,USA,BTV
+Burlington IA,,USA,BRL
+Butte (MT),,USA,BTM
+Cambrigde,,United Kingdom,CBG
+Campbeltown,,United Kingdom,CAL
+Cardiff,Cardiff Airport,United Kingdom,CWL
+Carlsbad (CA),,USA,CLD
+Carson City (NV),,USA,CSN
+Casper (WY),,USA,CPR
+Cedar City (UT),,USA,CDC
+Cedar Rapids IA,,USA,CID
+Champaign (IL),,USA,CMI
+Charleston (SC),,USA,CHS
+Charleston (WV),Yeager Airport,USA,CRW
+Charlotte (NC),,USA,CLT
+Charlottesville (VA),,USA,CHO
+Chattanooga (TN),,USA,CHA
+Cheyenne (WY),Cheyenne Regional Airport,USA,CYS
+Chicago (IL),,USA,CHI
+"Chicago (IL), Midway",,USA,MDW
+"Chicago (IL), O'Hare International Airport",,USA,ORD
+Chico (CA),,USA,CIC
+Cincinnati (OH),Cincinnati/Northern Kentucky Int'l,USA,CVG
+Clarksburg (WV),,USA,CKB
+Cleveland (OH),Cleveland Hopkins International,USA,CLE
+"Cleveland (OH) , Burke Lakefront",,USA,BKL
+Cody/Powell/Yellowstone (WY),,USA,COD
+Coffmann Cove (AK),,USA,KCC
+College Station/Bryan (TX),,USA,CLL
+Colorado Springs (CO),,USA,COS
+Columbia (SC),Columbia Metropolitan Airport,USA,CAE
+Columbus (GA),,USA,CSG
+Columbus (OH),Port Columbus International,USA,CMH
+Concord (CA),Buchanan Field,USA,CCR
+Concord (NH),Concord Municipal Airport,USA,CON
+Cordova (AK),,USA,CDV
+Corpus Christi (TX),,USA,CRP
+Coventry,Baginton,United Kingdom,CVT
+Craig (AK),,USA,CGA
+Crescent City (CA),,USA,CEC
+"Dallas (TX) , Love Field",,USA,DAL
+Dallas/Ft. Worth (TX),Dallas/Fort Worth International,USA,DFW
+Daloa,,Cote d'Ivoire,DJO
+Danville (VA),,USA,DAN
+Dayton (OH),,USA,DAY
+Daytona Beach (FL),,USA,DAB
+Decatur (IL),,USA,DEC
+Denver (CO),Denver International Airport,USA,DEN
+Derry (Londonderry),,United Kingdom,LDY
+Des Moines (IA),Des Moines International Airport,USA,DSM
+"Detroit (MI) , Coleman A. Young Municipal",,USA,DET
+"Detroit (MI) , Metropolitan Area",,USA,DTT
+"Detroit (MI) , Wayne County Airport",,USA,DTW
+Devils Lake (ND),,USA,DVL
+Dillingham (AK),,USA,DLG
+"Doncaster/Sheffield, Robin Hood International Airport",,United Kingdom,DSA
+Dothan (AL),,USA,DHN
+Dubai,Dubai International Airport,United Arab Emirates,DXB
+Dubois (PA),,USA,DUJ
+Dubuque IA,,USA,DBQ
+Duluth (MN) /Superior (WI),,USA,DLH
+Dundee,,United Kingdom,DND
+Durango (CO),,USA,DRO
+Dutch Harbor (AK),,USA,DUT
+Eau Clarie (WI),,USA,EAU
+Edinburgh,"Edinburgh Airport Scotland,",UK,EDI
+El Paso (TX),El Paso International Airport,USA,ELP
+Elkhart (IN),,USA,EKI
+Elko (NV),,USA,EKO
+Elmira (NY),,USA,ELM
+Ely (NV),,USA,ELY
+Erie (PA),,USA,ERI
+Escanaba (MI),,USA,ESC
+Eugene (OR),,USA,EUG
+Eureka (CA),,USA,ACV
+Evansville (IN),,USA,EVV
+Exeter,,United Kingdom,EXT
+Fair Isle (Shetland),,United Kingdom,FIE
+Fairbanks (AK),,USA,FAI
+Fargo (ND) (MN),,USA,FAR
+Farmington (NM),,USA,FMN
+Fayetteville (AR),,USA,FYV
+Fayetteville/Ft. Bragg (NC),,USA,FAY
+Flagstaff (AZ),,USA,FLG
+Flint (MI),,USA,FNT
+Florence (SC),,USA,FLO
+Fort Dodge IA,,USA,FOD
+Fort Huachuca/Sierra Vista (AZ),,USA,FHU
+Fort Lauderdale/Hollywood (FL),,USA,FLL
+"Fort Myers, Metropolitan Area (FL)",,USA,FMY
+"Fort Myers, Southwest Florida Reg (FL)",,USA,RSW
+Fort Riley (KS),Marshall AAF,USA,FRI
+Fort Smith (AR),,USA,FSM
+Fort Walton Beach (FL),,USA,VPS
+Fort Wayne (IN),,USA,FWA
+Fort Worth (TX),Dallas/Fort Worth International Airport,USA,DFW
+Foula (Shetland),,United Kingdom,FOU
+Franklin/Oil City (PA),,USA,FKL
+Fresno (CA),,USA,FAT
+"Fujairah, International Airport",,United Arab Emirates,FJR
+Gadsden (AL),,USA,GAD
+Gainesville (FL),,USA,GNV
+Gilette (WY),,USA,GCC
+Glasgow,,United Kingdom,GLA
+Glasgow (MT),,USA,GGW
+"Glasgow, Prestwick",,United Kingdom,PIK
+Glendive (MT),,USA,GDV
+Grand Canyon (AZ),,USA,GCN
+Grand Forks (ND),,USA,GFK
+Grand Junction (CO),,USA,GJT
+Grand Rapids (MI),,USA,GRR
+Grand Rapids (MN),,USA,GPZ
+Great Falls (MT),,USA,GTF
+Green Bay (WI),,USA,GRB
+Greenbrier/Lewisburg (WV),,USA,LWB
+Greensboro/Winston Salem (NC),,USA,GSO
+Greenville (MS),,USA,GLH
+Greenville (NC),,USA,PGV
+Greenville/Spartanburg (SC),,USA,GSP
+Groton/New London (CT),,USA,GON
+Gulfport/Biloxi (MS),,USA,GPT
+Gunnison/Crested Butte (CO),,USA,GUC
+Haines (AK),,USA,HNS
+Hancock (MI),,USA,CMX
+Harlingen/South Padre Island (TX),,USA,HRL
+Harrisburg (PA),Harrisburg International,USA,MDT
+Harrisburg (PA),Harrisburg Skyport,USA,HAR
+Hartford (CT) /Springfield (MA),,USA,BDL
+Havre (MT),,USA,HVR
+Helena (MT),,USA,HLN
+Hibbing (MN),,USA,HIB
+Hickory (NC),,USA,HKY
+Hilo (HI),,USA,ITO
+Hilton Head Island (SC),,USA,HHH
+Homer (AK),,USA,HOM
+Honolulu (HI),Honolulu International Airport,USA,HNL
+Hoonah (AK),,USA,HNH
+"Houston (TX) , Hobby",,USA,HOU
+"Houston, TX",George Bush Intercontinental Airport,USA,IAH
+Humberside,,United Kingdom,HUY
+Huntington (WV),,USA,HTS
+Huntsville (AL),,USA,HSV
+Huron (SD),,USA,HON
+Hyannis (MA),,USA,HYA
+Hydaburg (AK),,USA,HYG
+Idaho Falls (ID),,USA,IDA
+Iliamna (AK),,USA,ILI
+Imperial (CA),,USA,IPL
+Indianapolis (IN) International,,USA,IND
+International Falls (MN),,USA,INL
+Inverness,,United Kingdom,INV
+Inykern (CA),,USA,IYK
+Islay,,United Kingdom,ILY
+Ithaca/Cortland (NY),,USA,ITH
+Jackson (MI),Reynolds Municipal,USA,JXN
+Jackson (TN),Mckellar,USA,MKL
+Jackson Hole (WY),,USA,JAC
+Jackson Hole (WY),,USA,JAC
+Jackson (MS),Hawkins Field,USA,HKS
+Jackson (MS),Jackson Internationall,USA,JAN
+"Jackson, MN",,USA,MJQ
+Jacksonville (AR) Little Rock AFB,,USA,LRF
+Jacksonville (IL),Municipal Airport,USA,IJX
+Jacksonville (NC),,USA,OAJ
+Jacksonville (TX),,USA,JKV
+Jacksonville (FL),Cecil Field NAS,USA,NZC
+Jacksonville (FL),Craig Municipal,USA,CRG
+Jacksonville (FL),International,USA,JAX
+Jacksonville (FL) Jacksonville NAS,,USA,NIP
+Jamestown (ND),,USA,JMS
+Jamestown (NY),,USA,JHW
+Janesville (WI),Rock County,USA,JVL
+Jefferson City (MO),Jefferson Memorial,USA,JEF
+Johnson City (NY),Binghamton/Endicott/Johnson,USA,BGM
+Johnston Island,,USA,JON
+Johnstown (PA),,USA,JST
+Jonesboro (AR) Jonesboro Airport,,USA,JBR
+Joplin (MO),,USA,JLN
+Juneau (AK),Juneau International Airport,USA,JNU
+Kahului (HI),,USA,OGG
+Kalamazoo/Battle Creek (MI),,USA,AZO
+Kalispell (MT),,USA,FCA
+Kamuela (HI),,USA,MUE
+Kansas City (MO),Kansas City International Airport,USA,MCI
+Kapalua West (HI),,USA,JHM
+Kaunakakai (HI),,USA,MKK
+Kenai (AK),,USA,ENA
+Kent (Manston) Kent International,,United Kingdom,MSE
+Ketchikan (AK),,USA,KTN
+Key West (FL),,USA,EYW
+Killeem (TX),,USA,ILE
+King Salomon (AK),,USA,AKN
+Kingston (NC),,USA,ISO
+Kirkwall (Orkney),,United Kingdom,KOI
+Klamath Fall (OR),,USA,LMT
+Klawock (AK),,USA,KLW
+Knoxville (TN),,USA,TYS
+Kodiak (AK),,USA,ADQ
+Kona (HI),,USA,KOA
+Korhogo,,Cote d'Ivoire,HGO
+Kotzbue (AK),,USA,OTZ
+La Crosse (WI),,USA,LSE
+Labouchere Bay (AK),,USA,WLB
+Lafayette (IN),,USA,LAF
+"Lafayette, La",,USA,LFT
+Lake Charles (LA),,USA,LCH
+Lake Havasu City (AZ),,USA,HII
+Lake Tahoe (CA),,USA,TVL
+Lanai City (HI),,USA,LNY
+Lancaster (PA),,USA,LNS
+Land's End,,United Kingdom,LEQ
+Lansing (MI),,USA,LAN
+Laramie (WY),,USA,LAR
+Laredo (TX),,USA,LRD
+Las Vegas (NV),,USA,LAS
+Latrobe (PA),,USA,LBE
+Laurel/Hattisburg (MS),,USA,PIB
+Lawton (OK),,USA,LAW
+Lebanon (NH),,USA,LEB
+Leeds/Bradford,,United Kingdom,LBA
+Lerwick/Tingwall (Shetland Islands),,United Kingdom,LWK
+Lewiston (ID),,USA,LWS
+Lewistown (MT),,USA,LWT
+Lexington (KY),,USA,LEX
+Lihue (HI),,USA,LIH
+Lincoln (NE),,USA,LNK
+Little Rock (AR),,USA,LIT
+Liverpool,,United Kingdom,LPL
+London,City Airport,United Kingdom,LCY
+London,Gatwick,United Kingdom,LGW
+London,Heathrow,United Kingdom,LHR
+London,Luton,United Kingdom,LTN
+London,Stansted,United Kingdom,STN
+London Metropolitan Area,,United Kingdom,LON
+Londonderry,Eglinton,United Kingdom,LDY
+Long Beach (CA),,USA,LGB
+Long Island (AK),,USA,LIJ
+"Long Island, Islip (NY)",Mac Arthur,USA,ISP
+Longview/Kilgore (TX),,USA,GGG
+Los Angeles (CA),International,USA,LAX
+Louisville (KY),,USA,SDF
+Lubbock (TX),,USA,LBB
+Lydd,Lydd International Airport,United Kingdom,LYX
+Lynchburg (VA),,USA,LYH
+Lyons (KS),Rice County Municipal,USA,LYO
+Macon (GA),,USA,MCN
+Madison (WI),Dane County Regional Airport,USA,MSN
+Man,,Cote d'Ivoire,MJC
+Manchester,,United Kingdom,MAN
+Manchester (NH),,USA,MHT
+Marathon (FL),,USA,MTH
+Marquette (MI),,USA,MQT
+Martha's Vineyard (MA),,USA,MVY
+Martinsburg (WV),,USA,MRB
+Mason City IA,,USA,MCW
+Mattoon (IL),,USA,MTO
+McAllen (TX),,USA,MFE
+Medford (OR),,USA,MFR
+Melbourne (FL),,USA,MLB
+Memphis (TN),,USA,MEM
+Merced (CA),,USA,MCE
+Meridian (MS),,USA,MEI
+Metlakatla (AK),,USA,MTM
+Miami (FL),,USA,MIA
+Midland/Odessa (TX),,USA,MAF
+Miles City (MT),,USA,MLS
+Milwaukee (WI),,USA,MKE
+Minneapolis,St. Paul International Airport (MN),USA,MSP
+Minot (ND),,USA,MOT
+Missula (MT),,USA,MSO
+Mitchell (SD),,USA,MHE
+Mobile (AL),Pascagoula (MS),USA,MOB
+Modesto (CA),,USA,MOD
+Moline/Quad Cities (IL),,USA,MLI
+Monroe (LA),,USA,MLU
+Monterey (CA),,USA,MRY
+Montgomery (AL),Montgomery Regional Airport,USA,MGM
+Montrose/Tellruide (CO),,USA,MTJ
+Morgantown (WV),,USA,MGW
+Moses Lake (WA),,USA,MWH
+Mt. McKinley (AK),,USA,MCL
+Muscle Shoals (AL),,USA,MSL
+Muskegon (MI),,USA,MKG
+Myrtle Beach (SC),Grand Strand Airport,USA,CRE
+Myrtle Beach (SC),Myrtle Beach AFB,USA,MYR
+Nantucket (MA),,USA,ACK
+Naples (FL),,USA,APF
+Nashville (TN),,USA,BNA
+New Bern (NC),,USA,EWN
+New Haven (CT),,USA,HVN
+"New Orleans, La",,USA,MSY
+New York,John F. Kennedy (NY),USA,JFK
+New York,LaGuardia (NY),USA,LGA
+New York,Newark (NJ),USA,EWR
+New York (NY),,USA,NYC
+Newburgh (NY),,USA,SWF
+Newcastle,,United Kingdom,NCL
+Newport News/Williamsburg (VA),,USA,PHF
+Newquay,,United Kingdom,NQY
+Niagara Falls International,,USA,IAG
+Nome (AK),,USA,OME
+Norfolk/Virginia Beach (VA),,USA,ORF
+North Bend (OR),,USA,OTH
+Norwich,,United Kingdom,NWI
+Nottingham,East Midlands,United Kingdom,EMA
+Oakland (CA),,USA,OAK
+Oklahoma City (OK),Will Rogers World,USA,OKC
+Omaha (NE),,USA,OMA
+Ontario (CA),,USA,ONT
+Orange County (Santa Ana) (CA),,USA,SNA
+Orkney,Kirkwall,United Kingdom,KOI
+Orlando,International Airport (FL),USA,MCO
+Orlando Metropolitan Area (FL),,USA,ORL
+Oshkosh (WI),,USA,OSH
+Out Skerries (Shetland),,United Kingdom,OUK
+Owensboro (KY),,USA,OWB
+Oxnard (CA),,USA,OXR
+Paducah (KY),,USA,PAH
+Page/Lake Powell (AZ),,USA,PGA
+Pakersburg (WV) /Marietta (OH),,USA,PKB
+Palm Springs (CA),,USA,PSP
+Palmdale/Lancaster (CA),,USA,PMD
+Panama City (FL),,USA,PFN
+Pasco (WA),,USA,PSC
+Pellston (MI),,USA,PLN
+Pendelton (OR),,USA,PDT
+Pensacola (FL),,USA,PNS
+Peoria/Bloomington (IL),,USA,PIA
+Petersburg (AK),,USA,PSG
+Philadelphia (PA),International,USA,PHL
+Phoenix (AZ),Sky Harbor International,USA,PHX
+Pierre (SD),,USA,PIR
+Pittsburgh International Airport (PA),,USA,PIT
+Plattsburgh (NY),,USA,PLB
+Pocatello (ID),,USA,PIH
+Port Angeles (WA),,USA,CLM
+Portland (ME),,USA,PWM
+Portland International (OR),,USA,PDX
+Poughkeepsie (NY),,USA,POU
+Presque Island (ME),,USA,PQI
+Providence (RI),,USA,PVD
+Prudhoe Bay (AK),,USA,SCC
+Pueblo (CO),,USA,PUB
+Pullman (WA),,USA,PUW
+Quincy (IL),,USA,UIN
+Raleigh/Durham (NC),,USA,RDU
+Rapid City (SD),,USA,RAP
+Ras al Khaymah (Ras al Khaimah),,United Arab Emirates,RKT
+Reading (PA),,USA,RDG
+Redding (CA),,USA,RDD
+Redmond (OR),,USA,RDM
+Reno (NV),,USA,RNO
+Rhinelander (WI),,USA,RHI
+Richmond (VA),,USA,RIC
+Roanoke (VA),,USA,ROA
+Rochester (MN),,USA,RST
+Rochester (NY),,USA,ROC
+Rock Springs (WY),,USA,RKS
+Rockford (IL),,USA,RFD
+Rockland (ME),,USA,RKD
+Rocky Mount,Wilson (NC),USA,RWI
+Sacramento (CA),,USA,SMF
+Saginaw/Bay City/Midland (MI),,USA,MBS
+Salem (OR),,USA,SLE
+Salinas (CA),,USA,SNS
+Salisbury (MD),,USA,SBY
+Salt Lake City (UT),,USA,SLC
+San Angelo (TX),,USA,SJT
+San Antonio (TX),,USA,SAT
+San Diego,Lindberg Field International (CA),USA,SAN
+San Francisco,"International Airport, SA",USA,SFO
+San Jose (CA),,USA,SJC
+San Luis Obisco (CA),,USA,SBP
+San Pedro,,Cote d'Ivoire,SPY
+Santa Ana,John Wayne Airport (CA),USA,SNA
+Santa Barbara (CA),,USA,SBA
+Santa Maria (CA),,USA,SMX
+Santa Rosa (CA),,USA,STS
+Sarasota/Bradenton (FL),,USA,SRQ
+Sassandra,,Cote d'Ivoire,ZSS
+Savannah (GA),,USA,SAV
+Scottsdale (AZ),,USA,SCF
+Seattle/Tacoma (WA),,USA,SEA
+Sharjah,,United Arab Emirates,SHJ
+"Sheffield, City Airport",,United Kingdom,SZD
+"Sheffield, Doncaster, Robin Hood International Airport",,United Kingdom,DSA
+Shenandoah Valley/Stauton (VA),,USA,SHD
+Sheridan (WY),,USA,SHR
+"Shreveport, La",,USA,SHV
+Sidney (MT),,USA,SDY
+Sioux City IA,,USA,SUX
+Sioux Falls (SD),,USA,FSD
+Sitka (AK),,USA,SIT
+Skagway (AK),,USA,SGY
+South Bend (IN),,USA,SBN
+Southampton,Eastleigh,United Kingdom,SOU
+Southend (London),,United Kingdom,SEN
+Spokane (WA),,USA,GEG
+Springfield (MO),,USA,SGF
+Springfield (IL),,USA,SPI
+St. George (UT),,USA,SGU
+St. Louis (MO) Lambert–St. Louis International Airport,,USA,STL
+Stansted (London),,United Kingdom,STN
+State College/Belefonte (PA),,USA,SCE
+Steamboat Springs (CO),,USA,HDN
+Stockton (CA),,USA,SCK
+Stornway,,United Kingdom,SYY
+Sumburgh (Shetland),,United Kingdom,LSI
+Sun Valley (ID),,USA,SUN
+Syracuse (NY),,USA,SYR
+Talkeetna (AK),,USA,TKA
+Tallahassee (FL),,USA,TLH
+Tampa,International (FL),USA,TPA
+"Teesside, Durham Tees Valley",,United Kingdom,MME
+Telluride (CO),,USA,TEX
+Terre Haute (IN),,USA,HUF
+Texarkana (AR),,USA,TXK
+Thief River Falls (MN),,USA,TVF
+Thorne Bay (AK),,USA,KTB
+Toledo (OH),,USA,TOL
+Traverse City (MI),,USA,TVC
+Trenton/Princeton (NJ),,USA,TTN
+Tri-Cities Regional (TN) /VA,,USA,TRI
+Tucson (AZ),,USA,TUS
+Tulepo (MS),,USA,TUP
+Tulsa (OK),,USA,TUL
+Tuscaloosa (AL),,USA,TCL
+Twin Falls (ID),,USA,TWF
+Tyler (TX),,USA,TYR
+Ukiah (CA),,USA,UKI
+Unalakleet (AK),,USA,UNK
+Unst (Shetland Island),Baltasound Airport,United Kingdom,UNT
+Upolu Point (HI),,USA,UPP
+Utica (NY),Oneida County Airport,USA,UCA
+Vail (CO),,USA,EGE
+Valdez (AK),,USA,VDZ
+Valdosta (GA),,USA,VLD
+Vernal (UT),,USA,VEL
+Vero Beach/Ft. Pierce (FL),,USA,VRB
+Visalia (CA),,USA,VIS
+Waco (TX),,USA,ACT
+Walla Walla (WA),,USA,ALW
+Washington DC,,USA,WAS
+Washington DC,Dulles International,USA,IAD
+Washington DC,Ronald Reagan National,USA,DCA
+Washington DC,Baltimore Washington International,USA,BWI
+Waterloo IA,,USA,ALO
+Watertown (SD),,USA,ATY
+Wausau/Stevens Point (WI),,USA,CWA
+Wenatchee (WA),,USA,EAT
+West Palm Beach (FL),,USA,PBI
+West Yellowstone (MT),,USA,WYS
+White Plains (NY),,USA,HPN
+Wichita (KS),,USA,ICT
+Wichita Falls (TX),,USA,SPS
+Wick,,United Kingdom,WIC
+Wilkes Barre/Scranton (PA),,USA,AVP
+Williamsport (PA),,USA,IPT
+Williston (ND),,USA,ISL
+Wilmington (NC),,USA,ILM
+Wolf Point (MT),,USA,OLF
+Worcester (MA),,USA,ORH
+Worland (WY),,USA,WRL
+Wrangell (AK),,USA,WRG
+Yakima (WA),,USA,YKM
+Yakutat (AK),,USA,YAK
+Yamoussoukro,,Côte d'Ivoire,ASK
+Yuma (AZ),,USA,YUM
