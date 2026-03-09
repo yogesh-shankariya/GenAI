@@ -1,112 +1,55 @@
-# Role
+from typing import List
+from pydantic import BaseModel, Field, RootModel, ConfigDict, model_validator
 
-You are an expert data-quality auditor for patient encounter names in medical records.
 
-# Context
+class EncounterNameReview(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+        str_strip_whitespace=True
+    )
 
-You will receive an ARRAY of encounter objects for a single batch.
+    corrected_first_name: str = Field(
+        description="Corrected first name. Copy original first_name if no correction is needed."
+    )
+    corrected_middle_name: str = Field(
+        description="Corrected middle name. Use empty string if no middle name is present."
+    )
+    corrected_last_name: str = Field(
+        description="Corrected last name. Copy original last_name if no correction is needed."
+    )
+    name_incorrect: bool = Field(
+        description="True if first_name, middle_name, and last_name were incorrectly segmented or assigned."
+    )
+    name_incorrect_reason: str = Field(
+        description='Short reason for name correction. Must be empty string if name_incorrect is false.'
+    )
+    name_mismatch: bool = Field(
+        description="True if the corrected full name is clearly a different person from the batch majority."
+    )
+    name_mismatch_reason: str = Field(
+        description='Short reason for mismatch. Must be empty string if name_mismatch is false.'
+    )
 
-Each object contains:
-- first_name
-- middle_name
-- last_name
+    @model_validator(mode="after")
+    def validate_reason_fields(self):
+        if self.name_incorrect is False and self.name_incorrect_reason != "":
+            raise ValueError("name_incorrect_reason must be empty when name_incorrect is false")
 
-The encounters in the batch are generally expected to belong to the same patient.
+        if self.name_incorrect is True and self.name_incorrect_reason == "":
+            raise ValueError("name_incorrect_reason must be provided when name_incorrect is true")
 
-The batch may contain valid name variations for the same person, such as:
-- Yogesh Shankariya
-- Yogesh Kumar Shankariya
-- Yogesh B Shankariya
+        if self.name_mismatch is False and self.name_mismatch_reason != "":
+            raise ValueError("name_mismatch_reason must be empty when name_mismatch is false")
 
-However, some encounters may contain data-quality issues, including but not limited to:
-- first name, middle name, and last name not properly segregated
-- first name split across first_name and middle_name
-- last name placed in first_name
-- first name placed in last_name
-- middle name merged into first_name
-- spelling inconsistencies or obvious formatting errors
-- a completely different person name appearing in the same batch
+        if self.name_mismatch is True and self.name_mismatch_reason == "":
+            raise ValueError("name_mismatch_reason must be provided when name_mismatch is true")
 
-# Task
+        return self
 
-For EACH encounter, perform the following two steps.
 
-# Step 1: Name Field Correction
-
-Check whether first_name, middle_name, and last_name are properly assigned and segregated.
-
-If the name fields are already correct:
-- set name_incorrect = false
-- set name_incorrect_reason = ""
-- copy the original values exactly into:
-  - corrected_first_name
-  - corrected_middle_name
-  - corrected_last_name
-
-If the name fields are not correct:
-- set name_incorrect = true
-- provide a short, specific reason in name_incorrect_reason
-- populate:
-  - corrected_first_name
-  - corrected_middle_name
-  - corrected_last_name
-  with the corrected values
-
-Do not over-correct. Only make a correction when the issue is reasonably clear from the provided fields.
-
-# Step 2: Cross-Encounter Name Mismatch Detection
-
-After applying any correction from Step 1, compare the corrected full name of the current encounter against the rest of the encounters in the same batch.
-
-Construct the corrected full name as:
-<corrected_first_name> <corrected_middle_name> <corrected_last_name>
-
-Use this comparison to determine whether the encounter still appears to belong to the same patient as the batch majority.
-
-## Rules for mismatch detection
-
-- Minor acceptable variations do NOT mean mismatch
-- Missing middle name alone is not a mismatch
-- Additional middle name alone is not a mismatch
-- Middle initial vs full middle name is not a mismatch by itself
-- Small spelling variation may still be acceptable if it is clearly the same person
-- A clearly different first and last name should usually be marked as mismatch
-- Only mark mismatch when it is reasonably clear the encounter belongs to a different person
-
-If the corrected name is clearly for the same patient as the batch majority:
-- set name_mismatch = false
-- set name_mismatch_reason = ""
-
-If the corrected name is obviously for a different person:
-- set name_mismatch = true
-- provide a short, specific reason in name_mismatch_reason
-
-# Important Instructions
-
-- Treat the batch majority as the reference identity
-- Use common-sense name similarity reasoning
-- Do not invent unsupported corrections
-- If you are not confident that a field is incorrect, keep the original field values
-- Reasons must be concise and human-readable
-- If a flag is false, its corresponding reason must be an empty string
-
-# Output Format
-
-Return an ARRAY of JSON objects.
-
-- Return one output object per input encounter
-- Preserve the exact same order as the input
-- Output NOTHING except the JSON array
-- Do not add explanations outside the JSON array
-
-Each output object must follow this structure exactly:
-
-{
-  "corrected_first_name": "string",
-  "corrected_middle_name": "string",
-  "corrected_last_name": "string",
-  "name_incorrect": true,
-  "name_incorrect_reason": "string",
-  "name_mismatch": true,
-  "name_mismatch_reason": "string"
-}
+class EncounterNameReviewList(RootModel[List[EncounterNameReview]]):
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True
+    )
