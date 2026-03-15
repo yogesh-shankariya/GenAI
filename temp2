@@ -1,55 +1,36 @@
-from typing import List
-from pydantic import BaseModel, Field, RootModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr, Field, model_validator
 
 
-class EncounterNameReview(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-        strict=True,
-        str_strip_whitespace=True
-    )
+class NameCorrectionOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
-    corrected_first_name: str = Field(
-        description="Corrected first name. Copy original first_name if no correction is needed."
+    flag: StrictBool = Field(
+        ...,
+        description="True if the input name fields are incorrect and need correction, otherwise False."
     )
-    corrected_middle_name: str = Field(
-        description="Corrected middle name. Use empty string if no middle name is present."
+    reason: StrictStr = Field(
+        ...,
+        description='If flag is False, this must be an empty string "". If flag is True, this must contain a brief reason.'
     )
-    corrected_last_name: str = Field(
-        description="Corrected last name. Copy original last_name if no correction is needed."
+    corrected_first_name: StrictStr = Field(
+        ...,
+        description="Corrected first name. If flag is False, this should match the input first_name exactly."
     )
-    name_incorrect: bool = Field(
-        description="True if first_name, middle_name, and last_name were incorrectly segmented or assigned."
+    corrected_middle_name: StrictStr = Field(
+        ...,
+        description="Corrected middle name. If flag is False, this should match the input middle_name exactly."
     )
-    name_incorrect_reason: str = Field(
-        description='Short reason for name correction. Must be empty string if name_incorrect is false.'
-    )
-    name_mismatch: bool = Field(
-        description="True if the corrected full name is clearly a different person from the batch majority."
-    )
-    name_mismatch_reason: str = Field(
-        description='Short reason for mismatch. Must be empty string if name_mismatch is false.'
+    corrected_last_name: StrictStr = Field(
+        ...,
+        description="Corrected last name. If flag is False, this should match the input last_name exactly."
     )
 
     @model_validator(mode="after")
-    def validate_reason_fields(self):
-        if self.name_incorrect is False and self.name_incorrect_reason != "":
-            raise ValueError("name_incorrect_reason must be empty when name_incorrect is false")
+    def validate_reason_rules(self):
+        if self.flag is False and self.reason != "":
+            raise ValueError('reason must be an empty string when flag is False')
 
-        if self.name_incorrect is True and self.name_incorrect_reason == "":
-            raise ValueError("name_incorrect_reason must be provided when name_incorrect is true")
-
-        if self.name_mismatch is False and self.name_mismatch_reason != "":
-            raise ValueError("name_mismatch_reason must be empty when name_mismatch is false")
-
-        if self.name_mismatch is True and self.name_mismatch_reason == "":
-            raise ValueError("name_mismatch_reason must be provided when name_mismatch is true")
+        if self.flag is True and self.reason.strip() == "":
+            raise ValueError('reason must be a non-empty brief explanation when flag is True')
 
         return self
-
-
-class EncounterNameReviewList(RootModel[List[EncounterNameReview]]):
-    model_config = ConfigDict(
-        extra="forbid",
-        strict=True
-    )
