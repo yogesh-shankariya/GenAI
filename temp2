@@ -35,3 +35,139 @@ class BatchNameCorrectionOutput(BaseModel):
         ...,
         description="One result per input encounter."
     )
+
+
+
+
+
+import asyncio
+import json
+import pandas as pd
+from tqdm.auto import tqdm
+
+
+BATCH_SIZE = 10
+MAX_CONCURRENT_REQUESTS = 5
+
+
+def _safe_str(value):
+    if pd.isna(value):
+        return ""
+    return str(value)
+
+
+def _chunk_records(records, batch_size):
+    for i in range(0, len(records), batch_size):
+        yield records[i:i + batch_size]
+
+
+def _to_dict(response):
+    if hasattr(response, "model_dump"):
+        return response.model_dump()
+    return response
+
+
+def build_batch_prompt(rows):
+    payload = {
+        "records": [
+            {
+                "encounter": int(row["encounter"]),
+                "first_name": _safe_str(row["first_name"]),
+                "middle_name": _safe_str(row["middle_name"]),
+                "last_name": _safe_str(row["last_name"]),
+            }
+            for row in rows
+        ]
+    }
+
+    return PROMPT_TMPL_BATCH.replace(
+        "{Input}",
+        json.dumps(payload, ensure_ascii=False, indent=2)
+    )
+
+
+async def review_batch(rows):
+    prompt = build_batch_prompt(rows)
+
+    response = await _call_llm_with_retry(
+        hclient=hclient,
+        schema=BatchNameCorrectionOutput,
+        prompt=prompt,
+        params={"qos": "accurate", "reasoning": "true"},
+    )
+
+    response = _to_dict(response)
+
+    if "results" not in response:
+        raise ValueError("LLM response does not contain 'results'")
+
+    result_by_encounter = {}
+    for item in response["results"]:
+        encounter = int(item["encounter"])
+        result_by_encounter[encounter] = item
+
+    ordered_results = []
+    for row in rows:
+        encounter = int(row["encounter"])
+        if encounter not in result_by_encounter:
+            raise ValueError(f"Missing encounter {encounter} in batch response")
+        ordered_results.append(result_by_encounter[encounter])
+
+    return ordered_results
+
+
+async def process_all_files_in_batches_parallel(df, batch_size=10, max_concurrent_requests=5):
+    working_df = df.copy().reset_index(drop=False).rename(columns={"index": "__row_id"})
+
+    duplicate_check = (
+        working_df.groupby(["file", "encounter"])
+        .size()
+        .reset_index(name="cnt")
+    )
+
+    duplicates = duplicate_check[duplicate_check["cnt"] > 1]
+    if not duplicates.empty:
+        raise ValueError(
+            "Duplicate encounter values found within the same file. "
+            "Each encounter must be unique within a file."
+        )
+
+    all_outputs = []
+
+    grouped = working_df.groupby("file", sort=False, dropna=False)
+    total_files = working_df["file"].nunique(dropna=False)
+
+    for file_id, file_df in tqdm(grouped, total=total_files, desc="Files"):
+        file_records = file_df.to_dict("records")
+        file_batches = list(_chunk_records(file_records, batch_size))
+
+        for i in range(0, len(file_batches), max_concurrent_requests):
+            batch_group = file_batches[i:i + max_concurrent_requests]
+
+            batch_results_group = await asyncio.gather(
+                *(review_batch(batch_rows) for batch_rows in batch_group)
+            )
+
+            for batch_rows, batch_results in zip(batch_group, batch_results_group):
+                for input_row, output_row in zip(batch_rows, batch_results):
+                    all_outputs.append(
+                        {
+                            "__row_id": input_row["__row_id"],
+                            "flag": output_row["flag"],
+                            "reason": output_row["reason"],
+                            "corrected_first_name": output_row["corrected_first_name"],
+                            "corrected_middle_name": output_row["corrected_middle_name"],
+                            "corrected_last_name": output_row["corrected_last_name"],
+                        }
+                    )
+
+    output_df = pd.DataFrame(all_outputs)
+
+    final_df = (
+        working_df.merge(output_df, on="__row_id", how="left")
+        .sort_values("__row_id")
+        .drop(columns="__row_id")
+        .reset_index(drop=True)
+    )
+
+    return final_df
