@@ -171,3 +171,10 @@ async def process_all_files_in_batches_parallel(df, batch_size=10, max_concurren
     )
 
     return final_df
+
+
+final_df = await process_all_files_in_batches_parallel(
+    df,
+    batch_size=10,
+    max_concurrent_requests=5
+)
