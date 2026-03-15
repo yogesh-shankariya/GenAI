@@ -1,36 +1,37 @@
-from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr, Field, model_validator
+from typing import List
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
 
 
-class NameCorrectionOutput(BaseModel):
+class EncounterNameResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    encounter: StrictInt = Field(..., description="Encounter identifier from the input record.")
     flag: StrictBool = Field(
         ...,
         description="True if the input name fields are incorrect and need correction, otherwise False."
     )
     reason: StrictStr = Field(
         ...,
-        description='If flag is False, this must be an empty string "". If flag is True, this must contain a brief reason.'
+        description='Brief reason. Expected to be "" when flag is False.'
     )
     corrected_first_name: StrictStr = Field(
         ...,
-        description="Corrected first name. If flag is False, this should match the input first_name exactly."
+        description="Corrected first name for this encounter."
     )
     corrected_middle_name: StrictStr = Field(
         ...,
-        description="Corrected middle name. If flag is False, this should match the input middle_name exactly."
+        description="Corrected middle name for this encounter."
     )
     corrected_last_name: StrictStr = Field(
         ...,
-        description="Corrected last name. If flag is False, this should match the input last_name exactly."
+        description="Corrected last name for this encounter."
     )
 
-    @model_validator(mode="after")
-    def validate_reason_rules(self):
-        if self.flag is False and self.reason != "":
-            raise ValueError('reason must be an empty string when flag is False')
 
-        if self.flag is True and self.reason.strip() == "":
-            raise ValueError('reason must be a non-empty brief explanation when flag is True')
+class BatchNameCorrectionOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
-        return self
+    results: List[EncounterNameResult] = Field(
+        ...,
+        description="One result per input encounter."
+    )
