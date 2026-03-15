@@ -1,47 +1,6 @@
-from typing import List
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
-
-
-class EncounterNameResult(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    encounter: StrictInt = Field(..., description="Encounter identifier from the input record.")
-    flag: StrictBool = Field(
-        ...,
-        description="True if the input name fields are incorrect and need correction, otherwise False."
-    )
-    reason: StrictStr = Field(
-        ...,
-        description='Brief reason. Expected to be "" when flag is False.'
-    )
-    corrected_first_name: StrictStr = Field(
-        ...,
-        description="Corrected first name for this encounter."
-    )
-    corrected_middle_name: StrictStr = Field(
-        ...,
-        description="Corrected middle name for this encounter."
-    )
-    corrected_last_name: StrictStr = Field(
-        ...,
-        description="Corrected last name for this encounter."
-    )
-
-
-class BatchNameCorrectionOutput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    results: List[EncounterNameResult] = Field(
-        ...,
-        description="One result per input encounter."
-    )
-
-
-
-
-
-import asyncio
+import os
 import json
+import asyncio
 import pandas as pd
 from tqdm.auto import tqdm
 
@@ -65,6 +24,51 @@ def _to_dict(response):
     if hasattr(response, "model_dump"):
         return response.model_dump()
     return response
+
+
+def _append_jsonl(path, records):
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        for record in records:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def _load_jsonl(path):
+    if not os.path.exists(path):
+        return []
+
+    rows = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    return rows
+
+
+def _load_checkpoint_df(path):
+    rows = _load_jsonl(path)
+    if not rows:
+        return pd.DataFrame(
+            columns=[
+                "record_key",
+                "flag",
+                "reason",
+                "corrected_first_name",
+                "corrected_middle_name",
+                "corrected_last_name",
+            ]
+        )
+
+    checkpoint_df = pd.DataFrame(rows)
+
+    if "record_key" not in checkpoint_df.columns:
+        raise ValueError("Checkpoint file is missing 'record_key' column")
+
+    checkpoint_df = checkpoint_df.drop_duplicates(subset=["record_key"], keep="last")
+    return checkpoint_df
 
 
 def build_batch_prompt(rows):
@@ -116,26 +120,73 @@ async def review_batch(rows):
     return ordered_results
 
 
-async def process_all_files_in_batches_parallel(df, batch_size=10, max_concurrent_requests=5):
-    working_df = df.copy().reset_index(drop=False).rename(columns={"index": "__row_id"})
+async def review_batch_safe(rows):
+    try:
+        batch_results = await review_batch(rows)
+        return {
+            "ok": True,
+            "rows": rows,
+            "batch_results": batch_results,
+            "error": None,
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "rows": rows,
+            "batch_results": None,
+            "error": str(e),
+        }
 
-    duplicate_check = (
-        working_df.groupby(["file", "encounter"])
-        .size()
-        .reset_index(name="cnt")
+
+async def process_all_files_in_batches_resume(
+    df,
+    batch_size=10,
+    max_concurrent_requests=5,
+    checkpoint_path="name_audit_checkpoint.jsonl",
+    failed_batches_path="name_audit_failed_batches.jsonl",
+):
+    working_df = df.copy().reset_index(drop=True)
+
+    required_cols = ["file", "encounter", "first_name", "middle_name", "last_name"]
+    missing_cols = [c for c in required_cols if c not in working_df.columns]
+    if missing_cols:
+        raise ValueError(f"Missing required columns: {missing_cols}")
+
+    working_df["record_key"] = (
+        working_df["file"].astype(str) + "|" + working_df["encounter"].astype(int).astype(str)
     )
 
-    duplicates = duplicate_check[duplicate_check["cnt"] > 1]
-    if not duplicates.empty:
+    if working_df["record_key"].duplicated().any():
+        dupes = working_df.loc[working_df["record_key"].duplicated(), ["file", "encounter"]]
         raise ValueError(
-            "Duplicate encounter values found within the same file. "
-            "Each encounter must be unique within a file."
+            "Duplicate file+encounter combinations found. "
+            "Each encounter must be unique within a file.\n"
+            f"Sample duplicates:\n{dupes.head()}"
         )
 
-    all_outputs = []
+    checkpoint_df = _load_checkpoint_df(checkpoint_path)
+    completed_keys = set(checkpoint_df["record_key"].tolist())
 
-    grouped = working_df.groupby("file", sort=False, dropna=False)
-    total_files = working_df["file"].nunique(dropna=False)
+    pending_df = working_df[~working_df["record_key"].isin(completed_keys)].copy()
+
+    print(f"Total rows in input: {len(working_df)}")
+    print(f"Already completed from checkpoint: {len(completed_keys)}")
+    print(f"Pending rows to process: {len(pending_df)}")
+
+    if pending_df.empty:
+        final_df = (
+            working_df.merge(
+                checkpoint_df,
+                on="record_key",
+                how="left",
+            )
+            .drop(columns=["record_key"])
+            .reset_index(drop=True)
+        )
+        return final_df
+
+    grouped = pending_df.groupby("file", sort=False, dropna=False)
+    total_files = pending_df["file"].nunique(dropna=False)
 
     for file_id, file_df in tqdm(grouped, total=total_files, desc="Files"):
         file_records = file_df.to_dict("records")
@@ -144,37 +195,65 @@ async def process_all_files_in_batches_parallel(df, batch_size=10, max_concurren
         for i in range(0, len(file_batches), max_concurrent_requests):
             batch_group = file_batches[i:i + max_concurrent_requests]
 
-            batch_results_group = await asyncio.gather(
-                *(review_batch(batch_rows) for batch_rows in batch_group)
+            batch_group_results = await asyncio.gather(
+                *(review_batch_safe(batch_rows) for batch_rows in batch_group)
             )
 
-            for batch_rows, batch_results in zip(batch_group, batch_results_group):
-                for input_row, output_row in zip(batch_rows, batch_results):
-                    all_outputs.append(
+            success_records = []
+            failed_records = []
+
+            for result in batch_group_results:
+                if result["ok"]:
+                    batch_rows = result["rows"]
+                    batch_results = result["batch_results"]
+
+                    for input_row, output_row in zip(batch_rows, batch_results):
+                        success_records.append(
+                            {
+                                "record_key": input_row["record_key"],
+                                "flag": output_row["flag"],
+                                "reason": output_row["reason"],
+                                "corrected_first_name": output_row["corrected_first_name"],
+                                "corrected_middle_name": output_row["corrected_middle_name"],
+                                "corrected_last_name": output_row["corrected_last_name"],
+                            }
+                        )
+                else:
+                    batch_rows = result["rows"]
+                    failed_records.append(
                         {
-                            "__row_id": input_row["__row_id"],
-                            "flag": output_row["flag"],
-                            "reason": output_row["reason"],
-                            "corrected_first_name": output_row["corrected_first_name"],
-                            "corrected_middle_name": output_row["corrected_middle_name"],
-                            "corrected_last_name": output_row["corrected_last_name"],
+                            "file": str(file_id),
+                            "encounters": [int(r["encounter"]) for r in batch_rows],
+                            "record_keys": [r["record_key"] for r in batch_rows],
+                            "error": result["error"],
                         }
                     )
 
-    output_df = pd.DataFrame(all_outputs)
+            if success_records:
+                _append_jsonl(checkpoint_path, success_records)
+
+            if failed_records:
+                _append_jsonl(failed_batches_path, failed_records)
+
+    checkpoint_df = _load_checkpoint_df(checkpoint_path)
 
     final_df = (
-        working_df.merge(output_df, on="__row_id", how="left")
-        .sort_values("__row_id")
-        .drop(columns="__row_id")
+        working_df.merge(
+            checkpoint_df,
+            on="record_key",
+            how="left",
+        )
+        .drop(columns=["record_key"])
         .reset_index(drop=True)
     )
 
     return final_df
 
 
-final_df = await process_all_files_in_batches_parallel(
+final_df = await process_all_files_in_batches_resume(
     df,
     batch_size=10,
-    max_concurrent_requests=5
+    max_concurrent_requests=5,
+    checkpoint_path="name_audit_checkpoint.jsonl",
+    failed_batches_path="name_audit_failed_batches.jsonl",
 )
