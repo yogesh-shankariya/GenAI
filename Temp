@@ -1,277 +1,236 @@
 """
-spacy_name_utils
------------------
+name_normalization_utils
+------------------------
 
-This module provides helper functions for extracting and normalizing human
-names using spaCy. It addresses a common problem in entity extraction
-pipelines: splitting a single string that may contain a personʼs first,
-middle and last name into its individual parts, even when the order is
-ambiguous. For instance, strings like "Doe John" (last name first) or
-"John A. Doe" (with a middle initial) should both resolve to the
-expected components.
+This module provides helper functions for normalizing human names when
+you already have predicted first, middle and last name values, but those
+components may sometimes be jumbled or interchanged.
 
-The module builds on top of spaCyʼs state‑of‑the‑art transformer model
-(`en_core_web_trf`)【819145321372200†L23-L25】 to locate PERSON entities in text. Once a name is
-identified, it uses two dedicated name parsers to break the entity into
-components:
+Examples:
+- "Doe John" may need to become first="John", last="Doe"
+- "John A. Doe" should become first="John", middle="A.", last="Doe"
 
-* **probablepeople** – a probabilistic parser that uses conditional
-  random fields to label tokens as GivenName, Surname, etc. This
-  library is trained on real names and can handle tricky cases where
-  simple pattern matching fails【474111881845666†L275-L333】. It works best for western
-  names but often generalizes well to other romanized names.
-* **nameparser** – a lightweight rule‑based parser that splits names
-  based on commas, spaces and a small gazetteer of titles and suffixes.
-  It supports comma‑separated formats ("Last, First") and returns
-  attributes such as `first`, `middle` and `last`【70818842931863†L96-L140】. It makes a
-  best‑effort guess for ambiguous inputs but does not attempt to
-  validate names.
+The module uses two dedicated name parsers:
 
-By combining spaCy with these parsers, you can normalize names from
-unstructured text and rectify jumbled components. The functions
-provided here are designed to be composable: if `probablepeople` can
-label a name, its output is used; otherwise, `nameparser` provides a
-fallback. You can also supply your own list of predicted name tokens
-(`first_guess`, `middle_guess`, `last_guess`) and let the parser
-reconstruct the proper order.
+* probablepeople
+  A probabilistic parser that labels tokens such as GivenName and
+  Surname. It is useful for tricky or less structured name strings.
 
-Usage example:
+* nameparser
+  A rule-based parser that supports patterns like:
+  - "Title First Middle Last"
+  - "Last, First"
 
->>> import spacy
->>> from spacy_name_utils import load_spacy_model, extract_person_entities, normalize_name, correct_name_components
->>> nlp = load_spacy_model()
->>> text = "Today we met Doe John and Alice M. Smith, PHD."
->>> for span in extract_person_entities(text, nlp):
-...     print(span.text, normalize_name(span.text))
-Doe John {'first': 'John', 'middle': '', 'last': 'Doe'}
-Alice M. Smith {'first': 'Alice', 'middle': 'M.', 'last': 'Smith'}
+The functions are designed to work as follows:
 
-If you already have separate columns for first, middle and last name but
-suspect they may be interchanged, call `correct_name_components(first,
-middle, last)` to obtain the corrected arrangement.
+1. If you already have a full name string, call `normalize_name(name)`.
+2. If you already have predicted first/middle/last fields and want to
+   fix possible swaps, call:
+   `correct_name_components(first_guess, middle_guess, last_guess)`.
 
-Note: To use the transformer model you must install the optional
-dependency `spacy[transformers]` and download the `en_core_web_trf`
-model. See the README of spaCy for details.
-
+If `probablepeople` is available, it is tried first.
+If that does not work, `nameparser` is used.
+If both are unavailable or fail, a simple heuristic fallback is used.
 """
 
 from __future__ import annotations
 
-import warnings
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, List
 
-try:
-    import spacy  # type: ignore
-except ImportError:
-    raise ImportError(
-        "spaCy is not installed. Please install spaCy and the appropriate "
-        "language model before using this module."
-    )
-
-# Attempt to import optional parsers. They are not strict dependencies;
-# if unavailable, the module will still work with limited functionality.
 try:
     import probablepeople  # type: ignore
 except ImportError:
     probablepeople = None  # type: ignore
+
 try:
     from nameparser import HumanName  # type: ignore
 except ImportError:
     HumanName = None  # type: ignore
 
 
-def load_spacy_model(model_name: str = "en_core_web_trf") -> "spacy.Language":
-    """Load a spaCy model.
-
-    By default this loads the transformer‑based English pipeline
-    ``en_core_web_trf``, which generally offers more accurate entity
-    recognition, especially on multilingual or noisy data【819145321372200†L23-L25】. If you
-    prefer a faster model or do not need the accuracy boost, you can
-    pass ``en_core_web_sm`` or another pipeline name.
-
-    Parameters
-    ----------
-    model_name : str, optional
-        Name of the spaCy language model to load. Defaults to
-        ``"en_core_web_trf"``.
-
-    Returns
-    -------
-    spacy.Language
-        The loaded spaCy NLP pipeline.
-    """
-    try:
-        return spacy.load(model_name)
-    except OSError as err:
-        raise OSError(
-            f"Could not load spaCy model '{model_name}'. Make sure it is installed "
-            "(python -m spacy download {model_name}) and that you have the "
-            "necessary optional dependencies for transformer models."
-        ) from err
-
-
-def extract_person_entities(text: str, nlp: "spacy.Language") -> List["spacy.tokens.Span"]:
-    """Extract PERSON entities from a text using spaCy.
-
-    Parameters
-    ----------
-    text : str
-        The input document.
-    nlp : spacy.Language
-        The loaded spaCy pipeline.
-
-    Returns
-    -------
-    list of spacy.tokens.Span
-        A list of entity spans labelled as PERSON.
-    """
-    doc = nlp(text)
-    return [ent for ent in doc.ents if ent.label_ == "PERSON"]
+def _clean_text(value: str) -> str:
+    return " ".join(str(value).replace("\n", " ").strip().split())
 
 
 def _parse_with_probablepeople(name: str) -> Dict[str, str]:
-    """Attempt to parse a name using probablepeople.
+    """
+    Attempt to parse a name using probablepeople.
 
-    Returns a dictionary with keys ``first``, ``middle`` and ``last`` if
-    successful; otherwise returns an empty dict.
+    Returns a dictionary with keys `first`, `middle`, and `last` if
+    successful. Otherwise returns an empty dict.
     """
     if probablepeople is None:
         return {}
+
     try:
         parsed = probablepeople.parse(name)
     except Exception:
         return {}
+
     parts: Dict[str, List[str]] = {}
+
     for token, tag in parsed:
-        # GivenName covers both first and middle names; we separate them
-        # heuristically: subsequent GivenName tokens beyond the first are
-        # considered middle names.
+        token = _clean_text(token)
+        if not token:
+            continue
+
         if tag == "GivenName":
             if "first" not in parts:
                 parts.setdefault("first", []).append(token)
             else:
                 parts.setdefault("middle", []).append(token)
+
         elif tag in {"MiddleName", "MiddleInitial", "SecondGivenName"}:
             parts.setdefault("middle", []).append(token)
+
         elif tag == "Surname":
             parts.setdefault("last", []).append(token)
-        # ignore other tags (prefixes, suffixes, nicknames)
 
-    # Construct results only if we have at least a first or last name
     if parts.get("first") or parts.get("last"):
         return {
             "first": " ".join(parts.get("first", [])),
             "middle": " ".join(parts.get("middle", [])),
             "last": " ".join(parts.get("last", [])),
         }
+
     return {}
 
 
 def _parse_with_nameparser(name: str) -> Dict[str, str]:
-    """Parse a name using nameparser.HumanName.
+    """
+    Parse a name using nameparser.HumanName.
 
-    Returns a dict with keys ``first``, ``middle``, ``last``. The
-    nameparser library supports both "Title First Middle Last Suffix" and
-    comma‑separated "Last, First" formats and attempts to correct
-    capitalization【70818842931863†L115-L140】. If nameparser is not installed, returns an
-    empty dict.
+    Returns a dict with keys `first`, `middle`, and `last`.
+    If nameparser is not installed or parsing fails, returns an empty dict.
     """
     if HumanName is None:
         return {}
+
     try:
         hn = HumanName(name)
     except Exception:
         return {}
-    return {"first": hn.first, "middle": hn.middle, "last": hn.last}
+
+    first = _clean_text(hn.first)
+    middle = _clean_text(hn.middle)
+    last = _clean_text(hn.last)
+
+    if first or last:
+        return {
+            "first": first,
+            "middle": middle,
+            "last": last,
+        }
+
+    return {}
+
+
+def _heuristic_parse(name: str) -> Dict[str, str]:
+    """
+    Very simple fallback parser.
+
+    Rules:
+    - If format is "Last, First Middle", split on comma
+    - If 1 token: treat as first
+    - If 2 tokens: treat as first last
+    - If 3+ tokens: first / middle / last
+    """
+    name = _clean_text(name)
+    if not name:
+        return {"first": "", "middle": "", "last": ""}
+
+    if "," in name:
+        left, right = name.split(",", 1)
+        left = _clean_text(left)
+        right = _clean_text(right)
+
+        right_tokens = right.split()
+        if len(right_tokens) == 0:
+            return {"first": "", "middle": "", "last": left}
+        if len(right_tokens) == 1:
+            return {"first": right_tokens[0], "middle": "", "last": left}
+
+        return {
+            "first": right_tokens[0],
+            "middle": " ".join(right_tokens[1:]),
+            "last": left,
+        }
+
+    tokens = name.split()
+
+    if len(tokens) == 1:
+        return {"first": tokens[0], "middle": "", "last": ""}
+
+    if len(tokens) == 2:
+        return {"first": tokens[0], "middle": "", "last": tokens[1]}
+
+    return {
+        "first": tokens[0],
+        "middle": " ".join(tokens[1:-1]),
+        "last": tokens[-1],
+    }
 
 
 def normalize_name(name: str) -> Dict[str, str]:
-    """Split a full name string into its first, middle and last parts.
-
-    The function first attempts to use probablepeople, a CRF‑based model
-    that can handle tricky input cases【474111881845666†L275-L333】. If this fails (due to the
-    library not being available or the parse returning no result), it
-    falls back to the rule‑based nameparser library【70818842931863†L115-L140】. If both
-    fail, it returns an empty dict.
-
-    Parameters
-    ----------
-    name : str
-        The raw name string as extracted from text.
-
-    Returns
-    -------
-    dict
-        A dictionary with keys ``first``, ``middle`` and ``last``. Missing
-        parts are represented as empty strings.
     """
-    name = name.strip().replace("\n", " ")
-    # Try probablepeople first
+    Split a full name string into first, middle, and last parts.
+
+    Parsing order:
+    1. probablepeople
+    2. nameparser
+    3. simple heuristic fallback
+    """
+    name = _clean_text(name)
+    if not name:
+        return {"first": "", "middle": "", "last": ""}
+
     result = _parse_with_probablepeople(name)
     if result:
         return result
-    # Fallback to nameparser
+
     result = _parse_with_nameparser(name)
     if result:
         return result
-    return {"first": "", "middle": "", "last": ""}
+
+    return _heuristic_parse(name)
 
 
 def correct_name_components(
-    first_guess: str, middle_guess: str, last_guess: str
+    first_guess: str,
+    middle_guess: str,
+    last_guess: str,
 ) -> Dict[str, str]:
-    """Correct potentially jumbled name components.
-
-    Sometimes separate fields for first, middle and last name are
-    mis‑ordered (e.g. a database might have stored "Doe" as the first
-    name and "John" as the last name). This helper concatenates the
-    provided parts into a single string, then normalizes the name using
-    ``normalize_name``. Any missing input pieces are ignored.
-
-    Parameters
-    ----------
-    first_guess : str
-        The value currently believed to be the first name.
-    middle_guess : str
-        The value currently believed to be the middle name.
-    last_guess : str
-        The value currently believed to be the last name.
-
-    Returns
-    -------
-    dict
-        A dictionary with keys ``first``, ``middle`` and ``last``
-        representing the corrected components. If none of the parsers can
-        make sense of the input, the concatenated string is returned as
-        the ``last`` name.
     """
-    # Join non‑empty parts with spaces. This covers cases where the
-    # components are in the wrong order or there are extra spaces.
-    parts = [p for p in (first_guess, middle_guess, last_guess) if p]
-    candidate = " ".join(parts)
-    if not candidate:
+    Correct potentially jumbled name components.
+
+    This function joins the provided first/middle/last guesses into one
+    candidate string and re-parses it using `normalize_name()`.
+
+    Example:
+    - first_guess="Doe", middle_guess="", last_guess="John"
+      -> candidate="Doe John"
+      -> result may become first="John", last="Doe"
+    """
+    parts = [
+        _clean_text(first_guess),
+        _clean_text(middle_guess),
+        _clean_text(last_guess),
+    ]
+    parts = [p for p in parts if p]
+
+    if not parts:
         return {"first": "", "middle": "", "last": ""}
+
+    candidate = " ".join(parts)
     result = normalize_name(candidate)
-    # If parsing fails completely, assume entire candidate is the last name.
+
     if not result or (not result.get("first") and not result.get("last")):
         return {"first": "", "middle": "", "last": candidate}
+
     return result
 
 
 __all__ = [
-    "load_spacy_model",
-    "extract_person_entities",
     "normalize_name",
     "correct_name_components",
 ]
-
-
-from spacy_name_utils import load_spacy_model, extract_person_entities, normalize_name, correct_name_components
-
-nlp = load_spacy_model()  # loads en_core_web_trf
-text = "Mr DOE, JOHN A. met Alice Q. Smith"
-for span in extract_person_entities(text, nlp):
-    print(span.text, normalize_name(span.text))
-# Correct jumbled components
-print(correct_name_components(first_guess="DOE", middle_guess="", last_guess="JOHN A."))
