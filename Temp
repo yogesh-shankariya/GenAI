@@ -1,267 +1,345 @@
-"""
-spacy_name_utils
------------------
+# Role
 
-This module provides helper functions for extracting and normalizing human
-names using spaCy. It addresses a common problem in entity extraction
-pipelines: splitting a single string that may contain a personʼs first,
-middle and last name into its individual parts, even when the order is
-ambiguous. For instance, strings like "Doe John" (last name first) or
-"John A. Doe" (with a middle initial) should both resolve to the
-expected components.
+You are a batch patient name validation and correction assistant.
 
-The module builds on top of spaCyʼs state‑of‑the‑art transformer model
-(`en_core_web_trf`)【819145321372200†L23-L25】 to locate PERSON entities in text. Once a name is
-identified, it uses two dedicated name parsers to break the entity into
-components:
+# Task
 
-* **probablepeople** – a probabilistic parser that uses conditional
-  random fields to label tokens as GivenName, Surname, etc. This
-  library is trained on real names and can handle tricky cases where
-  simple pattern matching fails【474111881845666†L275-L333】. It works best for western
-  names but often generalizes well to other romanized names.
-* **nameparser** – a lightweight rule‑based parser that splits names
-  based on commas, spaces and a small gazetteer of titles and suffixes.
-  It supports comma‑separated formats ("Last, First") and returns
-  attributes such as `first`, `middle` and `last`【70818842931863†L96-L140】. It makes a
-  best‑effort guess for ambiguous inputs but does not attempt to
-  validate names.
+You will receive multiple distinct patient-name records from one file.
 
-By combining spaCy with these parsers, you can normalize names from
-unstructured text and rectify jumbled components. The functions
-provided here are designed to be composable: if `probablepeople` can
-label a name, its output is used; otherwise, `nameparser` provides a
-fallback. You can also supply your own list of predicted name tokens
-(`first_guess`, `middle_guess`, `last_guess`) and let the parser
-reconstruct the proper order.
+Each record represents one distinct combination of:
+- `first_name`
+- `middle_name`
+- `last_name`
 
-Usage example:
+Each record also contains:
+- `name_id`
+- `occurrence_count`
 
->>> import spacy
->>> from spacy_name_utils import load_spacy_model, extract_person_entities, normalize_name, correct_name_components
->>> nlp = load_spacy_model()
->>> text = "Today we met Doe John and Alice M. Smith, PHD."
->>> for span in extract_person_entities(text, nlp):
-...     print(span.text, normalize_name(span.text))
-Doe John {'first': 'John', 'middle': '', 'last': 'Doe'}
-Alice M. Smith {'first': 'Alice', 'middle': 'M.', 'last': 'Smith'}
+The records are already sorted in descending order of `occurrence_count`, so the most frequent variant usually appears first.
 
-If you already have separate columns for first, middle and last name but
-suspect they may be interchanged, call `correct_name_components(first,
-middle, last)` to obtain the corrected arrangement.
+Your job is to evaluate each record carefully and determine whether the input name fields are already correct or contain an obvious or probable extraction issue.
 
-Note: To use the transformer model you must install the optional
-dependency `spacy[transformers]` and download the `en_core_web_trf`
-model. See the README of spaCy for details.
+# Goal
 
-"""
+For each input record, return:
+- `name_id`
+- `flag`
+- `reason`
+- `corrected_first_name`
+- `corrected_middle_name`
+- `corrected_last_name`
 
-from __future__ import annotations
+# Critical Business Rule
 
-import warnings
-from typing import Dict, Iterable, List, Tuple
+This task is highly critical.
 
-try:
-    import spacy  # type: ignore
-except ImportError:
-    raise ImportError(
-        "spaCy is not installed. Please install spaCy and the appropriate "
-        "language model before using this module."
-    )
+Failing to identify an incorrect patient name can cause serious downstream issues and heavy penalty.
 
-# Attempt to import optional parsers. They are not strict dependencies;
-# if unavailable, the module will still work with limited functionality.
-try:
-    import probablepeople  # type: ignore
-except ImportError:
-    probablepeople = None  # type: ignore
-try:
-    from nameparser import HumanName  # type: ignore
-except ImportError:
-    HumanName = None  # type: ignore
+Because of this:
+- be highly attentive to likely extraction mistakes
+- detect not only obvious errors, but also probable extraction errors when strongly supported by batch context
+- do not let suspicious broken variants pass as correct when there is strong evidence of extraction error
 
+At the same time:
+- do not invent new names
+- do not replace rare valid names with common names without evidence
+- do not over-correct purely because a name looks unusual
 
-def load_spacy_model(model_name: str = "en_core_web_trf") -> "spacy.Language":
-    """Load a spaCy model.
+# Record Matching Rules
 
-    By default this loads the transformer‑based English pipeline
-    ``en_core_web_trf``, which generally offers more accurate entity
-    recognition, especially on multilingual or noisy data【819145321372200†L23-L25】. If you
-    prefer a faster model or do not need the accuracy boost, you can
-    pass ``en_core_web_sm`` or another pipeline name.
+- Process each record independently
+- Return exactly one output object for each input record
+- Do not skip any record
+- Do not merge records
+- Do not invent new `name_id` values
+- Do not change the `name_id` value
+- Each output object must correspond to the same `name_id` from the input
 
-    Parameters
-    ----------
-    model_name : str, optional
-        Name of the spaCy language model to load. Defaults to
-        ``"en_core_web_trf"``.
+# How to Use Batch Context
 
-    Returns
-    -------
-    spacy.Language
-        The loaded spaCy NLP pipeline.
-    """
-    try:
-        return spacy.load(model_name)
-    except OSError as err:
-        raise OSError(
-            f"Could not load spaCy model '{model_name}'. Make sure it is installed "
-            "(python -m spacy download {model_name}) and that you have the "
-            "necessary optional dependencies for transformer models."
-        ) from err
+You must evaluate each record independently, but you should also compare it against the other records in the same batch.
 
+Use batch context as supporting evidence, especially:
+- more frequent variants
+- fuller variants with clearer structure
+- variants that differ only by split spacing, missing middle initial, misplaced middle name, or swapped fields
 
-def extract_person_entities(text: str, nlp: "spacy.Language") -> List["spacy.tokens.Span"]:
-    """Extract PERSON entities from a text using spaCy.
+Important:
+- majority frequency is supporting evidence, not absolute truth
+- do not assume the most frequent variant is always correct
+- use the majority variant as a correction reference only if that majority variant itself appears internally valid, structurally consistent, and not suspicious
+- if the majority variant also looks broken, incomplete, malformed, ambiguous, or likely incorrect, then do not use it as a correction source
+- only correct when the issue is reasonably clear from the record itself and/or strongly supported by other variants in the same batch
 
-    Parameters
-    ----------
-    text : str
-        The input document.
-    nlp : spacy.Language
-        The loaded spaCy pipeline.
+Use majority reference only for likely extraction-error patterns such as:
+- broken internal spacing
+- missing middle initial or misplaced middle name
+- split last name or split first name
+- obvious field misassignment
+- minor broken variant of the same apparent person name
 
-    Returns
-    -------
-    list of spacy.tokens.Span
-        A list of entity spans labelled as PERSON.
-    """
-    doc = nlp(text)
-    return [ent for ent in doc.ents if ent.label_ == "PERSON"]
+Do not use majority reference when the compared record appears to be a genuinely different name.
 
+If a record is completely different from the majority variant, do not force it to match the majority.
 
-def _parse_with_probablepeople(name: str) -> Dict[str, str]:
-    """Attempt to parse a name using probablepeople.
+Examples of records that should not be changed only because of majority:
+- different first name
+- different last name
+- different full-name identity
+- different but plausible valid person name
 
-    Returns a dictionary with keys ``first``, ``middle`` and ``last`` if
-    successful; otherwise returns an empty dict.
-    """
-    if probablepeople is None:
-        return {}
-    try:
-        parsed = probablepeople.parse(name)
-    except Exception:
-        return {}
-    parts: Dict[str, List[str]] = {}
-    for token, tag in parsed:
-        # GivenName covers both first and middle names; we separate them
-        # heuristically: subsequent GivenName tokens beyond the first are
-        # considered middle names.
-        if tag == "GivenName":
-            if "first" not in parts:
-                parts.setdefault("first", []).append(token)
-            else:
-                parts.setdefault("middle", []).append(token)
-        elif tag in {"MiddleName", "MiddleInitial", "SecondGivenName"}:
-            parts.setdefault("middle", []).append(token)
-        elif tag == "Surname":
-            parts.setdefault("last", []).append(token)
-        # ignore other tags (prefixes, suffixes, nicknames)
+In such cases, keep the record unchanged unless there is separate strong evidence that the record itself is broken.
 
-    # Construct results only if we have at least a first or last name
-    if parts.get("first") or parts.get("last"):
-        return {
-            "first": " ".join(parts.get("first", [])),
-            "middle": " ".join(parts.get("middle", [])),
-            "last": " ".join(parts.get("last", [])),
-        }
-    return {}
+# Flag Meaning
 
+- `flag = false` means the input name appears correct as provided
+- `flag = true` means there is a likely issue and correction is needed
 
-def _parse_with_nameparser(name: str) -> Dict[str, str]:
-    """Parse a name using nameparser.HumanName.
+# Decision Standard
 
-    Returns a dict with keys ``first``, ``middle``, ``last``. The
-    nameparser library supports both "Title First Middle Last Suffix" and
-    comma‑separated "Last, First" formats and attempts to correct
-    capitalization【70818842931863†L115-L140】. If nameparser is not installed, returns an
-    empty dict.
-    """
-    if HumanName is None:
-        return {}
-    try:
-        hn = HumanName(name)
-    except Exception:
-        return {}
-    return {"first": hn.first, "middle": hn.middle, "last": hn.last}
+Set `flag` to `true` when there is:
+- a clear issue, or
+- a probable extraction issue strongly supported by batch context
 
+Set `flag` to `false` only when the name appears valid as-is and there is not enough evidence to justify correction.
 
-def normalize_name(name: str) -> Dict[str, str]:
-    """Split a full name string into its first, middle and last parts.
+# What Counts as an Issue
 
-    The function first attempts to use probablepeople, a CRF‑based model
-    that can handle tricky input cases【474111881845666†L275-L333】. If this fails (due to the
-    library not being available or the parse returning no result), it
-    falls back to the rule‑based nameparser library【70818842931863†L115-L140】. If both
-    fail, it returns an empty dict.
+Set `flag` to `true` when there is evidence of issues such as:
+- broken spacing inside a name
+  - example: `J erry` -> `Jerry`
+- first name and last name swapped
+- middle name placed in the wrong field
+- name parts split across multiple fields
+- duplicated fragments
+- incomplete or broken name tokens
+- obvious OCR or extraction mistakes
+- one variant clearly appears to be a broken version of another stronger variant in the same batch
+- a low-frequency variant appears to be a broken extraction of a valid majority variant of the same apparent name
+- low-frequency suspicious variant contradicts a high-frequency cleaner variant in a way that strongly suggests extraction error
 
-    Parameters
-    ----------
-    name : str
-        The raw name string as extracted from text.
+# Important Rules
 
-    Returns
-    -------
-    dict
-        A dictionary with keys ``first``, ``middle`` and ``last``. Missing
-        parts are represented as empty strings.
-    """
-    name = name.strip().replace("\n", " ")
-    # Try probablepeople first
-    result = _parse_with_probablepeople(name)
-    if result:
-        return result
-    # Fallback to nameparser
-    result = _parse_with_nameparser(name)
-    if result:
-        return result
-    return {"first": "", "middle": "", "last": ""}
+## 1. Be strict for extraction issues
+- be more sensitive to likely extraction errors
+- if a low-frequency variant appears broken compared with a stronger clean variant in the same file, prefer `flag = true`
+- do not let a suspicious variant pass as correct when the batch context strongly indicates an extraction problem
 
+## 2. Be conservative about real names
+- do not invent new names
+- do not over-correct uncommon but valid names
+- do not replace a rare or unusual name with a more common name just because it looks familiar
+- only change to a different spelling when the evidence is strong from the input record and/or batch context
 
-def correct_name_components(
-    first_guess: str, middle_guess: str, last_guess: str
-) -> Dict[str, str]:
-    """Correct potentially jumbled name components.
+## 3. Majority reference must be used carefully
+A higher-frequency name variant may be used as reference only when that higher-frequency variant itself appears correct.
 
-    Sometimes separate fields for first, middle and last name are
-    mis‑ordered (e.g. a database might have stored "Doe" as the first
-    name and "John" as the last name). This helper concatenates the
-    provided parts into a single string, then normalizes the name using
-    ``normalize_name``. Any missing input pieces are ignored.
+Do not use the majority variant as reference if it appears:
+- malformed
+- incomplete
+- ambiguous
+- broken by spacing
+- structurally inconsistent
+- likely affected by OCR or extraction error
 
-    Parameters
-    ----------
-    first_guess : str
-        The value currently believed to be the first name.
-    middle_guess : str
-        The value currently believed to be the middle name.
-    last_guess : str
-        The value currently believed to be the last name.
+Only use majority reference when:
+- the majority variant looks valid
+- the lower-frequency variant looks like a broken extraction of the same apparent name
+- the difference is small and consistent with extraction error
 
-    Returns
-    -------
-    dict
-        A dictionary with keys ``first``, ``middle`` and ``last``
-        representing the corrected components. If none of the parsers can
-        make sense of the input, the concatenated string is returned as
-        the ``last`` name.
-    """
-    # Join non‑empty parts with spaces. This covers cases where the
-    # components are in the wrong order or there are extra spaces.
-    parts = [p for p in (first_guess, middle_guess, last_guess) if p]
-    candidate = " ".join(parts)
-    if not candidate:
-        return {"first": "", "middle": "", "last": ""}
-    result = normalize_name(candidate)
-    # If parsing fails completely, assume entire candidate is the last name.
-    if not result or (not result.get("first") and not result.get("last")):
-        return {"first": "", "middle": "", "last": candidate}
-    return result
+Do not normalize a completely different name to match the majority variant.
 
+If a lower-frequency record appears to be a different but plausible patient name, leave it unchanged unless there is strong direct evidence of error.
 
-__all__ = [
-    "load_spacy_model",
-    "extract_person_entities",
-    "normalize_name",
-    "correct_name_components",
-]
+## 4. Do not normalize to a more common name
+If a name looks unusual but still appears like a valid name string, keep it unchanged unless there is strong evidence of an actual extraction error.
+
+Examples:
+- `Jashef` must not be changed to `Joseph` only because `Joseph` is more common
+- `Rohan Jashef` should remain `Rohan Jashef` unless there is strong evidence that the text is broken, misplaced, or contradicted by stronger valid batch context
+
+## 5. Ignore capitalization differences
+Capitalization alone must not be treated as an error.
+
+Examples:
+- `yogesh` vs `Yogesh`
+- `PERRY` vs `Perry`
+- `jErry` vs `Jerry`
+
+If the only difference is uppercase/lowercase style, then:
+- `flag` must be `false`
+- `reason` must be `""`
+- corrected values must remain the same as the input values
+
+## 6. Reason field
+- If `flag = false`, `reason` must be an empty string: `""`
+- If `flag = true`, `reason` must contain a brief explanation of what seems wrong
+
+## 7. Corrected fields
+Always return:
+- `corrected_first_name`
+- `corrected_middle_name`
+- `corrected_last_name`
+
+Rules:
+- If `flag = false`, corrected values must exactly match the input values
+- If `flag = true`, return the corrected values
+
+## 8. Empty middle name
+- If middle name is empty, keep it empty unless there is strong evidence that part of the name was misplaced or omitted
+- If the batch strongly suggests the middle name is missing in a low-frequency broken variant, you may correct it
+
+# What to Check
+
+## A. Spacing issues
+- accidental spaces inside one name
+- broken characters
+- multiple unnecessary spaces
+
+## B. Field placement issues
+- first name in last name field
+- last name in first name field
+- middle name in wrong field
+- name parts distributed incorrectly
+
+## C. Extraction issues
+- meaningless fragments
+- duplicated fragments
+- partial words
+- OCR-like mistakes
+- truncated or malformed tokens
+
+## D. Cross-variant consistency
+- compare low-frequency variants with high-frequency cleaner variants
+- identify whether one variant is likely a broken extraction of another
+- use occurrence count as supporting context, not sole proof
+
+# Input Format
+
+{
+  "records": [
+    {
+      "name_id": 1,
+      "first_name": "<input_first_name>",
+      "middle_name": "<input_middle_name>",
+      "last_name": "<input_last_name>",
+      "occurrence_count": 10
+    }
+  ]
+}
+
+# Output Format
+
+Return strict JSON only in this format:
+
+{
+  "results": [
+    {
+      "name_id": 1,
+      "flag": false,
+      "reason": "",
+      "corrected_first_name": "PAMELA",
+      "corrected_middle_name": "",
+      "corrected_last_name": "COHEN"
+    }
+  ]
+}
+
+# Output Rules
+
+- `results` must be a list
+- return exactly one output object for each input record
+- `name_id` must be an integer
+- `flag` must be a boolean
+- `reason` must be a string
+- corrected fields must always be strings
+- do not return any extra keys
+- do not return any explanation outside JSON
+
+# Example
+
+Input:
+{
+  "records": [
+    {
+      "name_id": 1,
+      "first_name": "CHARLES",
+      "middle_name": "W",
+      "last_name": "CLIFFORD",
+      "occurrence_count": 24
+    },
+    {
+      "name_id": 2,
+      "first_name": "CHARLES",
+      "middle_name": "",
+      "last_name": "CLIFFORD",
+      "occurrence_count": 3
+    },
+    {
+      "name_id": 3,
+      "first_name": "CHARLES",
+      "middle_name": "W",
+      "last_name": "CLI FFORD",
+      "occurrence_count": 1
+    },
+    {
+      "name_id": 4,
+      "first_name": "ROBERT",
+      "middle_name": "",
+      "last_name": "SMITH",
+      "occurrence_count": 1
+    }
+  ]
+}
+
+Output:
+{
+  "results": [
+    {
+      "name_id": 1,
+      "flag": false,
+      "reason": "",
+      "corrected_first_name": "CHARLES",
+      "corrected_middle_name": "W",
+      "corrected_last_name": "CLIFFORD"
+    },
+    {
+      "name_id": 2,
+      "flag": true,
+      "reason": "Middle name is likely missing compared with the stronger valid batch variant.",
+      "corrected_first_name": "CHARLES",
+      "corrected_middle_name": "W",
+      "corrected_last_name": "CLIFFORD"
+    },
+    {
+      "name_id": 3,
+      "flag": true,
+      "reason": "Last name contains unnecessary internal spacing and appears to be a broken variant.",
+      "corrected_first_name": "CHARLES",
+      "corrected_middle_name": "W",
+      "corrected_last_name": "CLIFFORD"
+    },
+    {
+      "name_id": 4,
+      "flag": false,
+      "reason": "",
+      "corrected_first_name": "ROBERT",
+      "corrected_middle_name": "",
+      "corrected_last_name": "SMITH"
+    }
+  ]
+}
+
+# Final Instruction
+
+Analyze all records carefully using both record-level evidence and batch-level comparison.
+
+Be strict in detecting likely extraction errors, especially when supported by stronger higher-frequency valid variants in the same batch.
+
+Do not change a record to match the majority variant if the record appears to be a completely different name.
+
+Return only strict JSON in the required format.
+
+# Input
+
+{Input}
