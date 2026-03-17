@@ -1,345 +1,449 @@
-# Role
+import os
+import re
+import json
+import asyncio
+import unicodedata
+import pandas as pd
+from tqdm.auto import tqdm
 
-You are a batch patient name validation and correction assistant.
 
-# Task
+BATCH_SIZE = 10
+MAX_CONCURRENT_REQUESTS = 5
 
-You will receive multiple distinct patient-name records from one file.
 
-Each record represents one distinct combination of:
-- `first_name`
-- `middle_name`
-- `last_name`
+def _safe_str(value):
+    if pd.isna(value):
+        return ""
+    return str(value)
 
-Each record also contains:
-- `name_id`
-- `occurrence_count`
 
-The records are already sorted in descending order of `occurrence_count`, so the most frequent variant usually appears first.
+def _normalize_name_for_grouping(value):
+    value = _safe_str(value)
+    value = unicodedata.normalize("NFKC", value)
+    value = value.strip()
+    value = re.sub(r"\s+", " ", value)
+    value = value.casefold()
+    return value
 
-Your job is to evaluate each record carefully and determine whether the input name fields are already correct or contain an obvious or probable extraction issue.
 
-# Goal
+def _to_clean_prompt_value(value):
+    value = _safe_str(value)
+    value = unicodedata.normalize("NFKC", value)
+    value = value.strip()
+    value = re.sub(r"\s+", " ", value)
+    return value
 
-For each input record, return:
-- `name_id`
-- `flag`
-- `reason`
-- `corrected_first_name`
-- `corrected_middle_name`
-- `corrected_last_name`
 
-# Critical Business Rule
+def _to_dict(response):
+    if hasattr(response, "model_dump"):
+        return response.model_dump()
+    return response
 
-This task is highly critical.
 
-Failing to identify an incorrect patient name can cause serious downstream issues and heavy penalty.
+def _chunk_records(records, chunk_size):
+    for i in range(0, len(records), chunk_size):
+        yield records[i:i + chunk_size]
 
-Because of this:
-- be highly attentive to likely extraction mistakes
-- detect not only obvious errors, but also probable extraction errors when strongly supported by batch context
-- do not let suspicious broken variants pass as correct when there is strong evidence of extraction error
 
-At the same time:
-- do not invent new names
-- do not replace rare valid names with common names without evidence
-- do not over-correct purely because a name looks unusual
+def _append_jsonl(path, records):
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        for record in records:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
 
-# Record Matching Rules
 
-- Process each record independently
-- Return exactly one output object for each input record
-- Do not skip any record
-- Do not merge records
-- Do not invent new `name_id` values
-- Do not change the `name_id` value
-- Each output object must correspond to the same `name_id` from the input
+def _load_jsonl(path):
+    if not os.path.exists(path):
+        return []
 
-# How to Use Batch Context
+    rows = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    return rows
 
-You must evaluate each record independently, but you should also compare it against the other records in the same batch.
 
-Use batch context as supporting evidence, especially:
-- more frequent variants
-- fuller variants with clearer structure
-- variants that differ only by split spacing, missing middle initial, misplaced middle name, or swapped fields
+def _load_checkpoint_df(path):
+    rows = _load_jsonl(path)
+    if not rows:
+        return pd.DataFrame(
+            columns=[
+                "record_key",
+                "file",
+                "name_id",
+                "flag",
+                "reason",
+                "corrected_first_name",
+                "corrected_middle_name",
+                "corrected_last_name",
+            ]
+        )
 
-Important:
-- majority frequency is supporting evidence, not absolute truth
-- do not assume the most frequent variant is always correct
-- use the majority variant as a correction reference only if that majority variant itself appears internally valid, structurally consistent, and not suspicious
-- if the majority variant also looks broken, incomplete, malformed, ambiguous, or likely incorrect, then do not use it as a correction source
-- only correct when the issue is reasonably clear from the record itself and/or strongly supported by other variants in the same batch
+    checkpoint_df = pd.DataFrame(rows)
 
-Use majority reference only for likely extraction-error patterns such as:
-- broken internal spacing
-- missing middle initial or misplaced middle name
-- split last name or split first name
-- obvious field misassignment
-- minor broken variant of the same apparent person name
+    if "record_key" not in checkpoint_df.columns:
+        raise ValueError("Checkpoint file is missing 'record_key' column")
 
-Do not use majority reference when the compared record appears to be a genuinely different name.
+    checkpoint_df = checkpoint_df.drop_duplicates(subset=["record_key"], keep="last")
+    return checkpoint_df
 
-If a record is completely different from the majority variant, do not force it to match the majority.
 
-Examples of records that should not be changed only because of majority:
-- different first name
-- different last name
-- different full-name identity
-- different but plausible valid person name
+def build_distinct_name_df(df: pd.DataFrame) -> pd.DataFrame:
+    required_cols = ["file", "encounter", "first_name", "middle_name", "last_name"]
+    missing_cols = [c for c in required_cols if c not in df.columns]
+    if missing_cols:
+        raise ValueError(f"Missing required columns: {missing_cols}")
 
-In such cases, keep the record unchanged unless there is separate strong evidence that the record itself is broken.
+    working_df = df.copy().reset_index(drop=False).rename(columns={"index": "_source_row"})
+    working_df["file"] = working_df["file"].astype(str)
 
-# Flag Meaning
+    working_df["first_name"] = working_df["first_name"].map(_to_clean_prompt_value)
+    working_df["middle_name"] = working_df["middle_name"].map(_to_clean_prompt_value)
+    working_df["last_name"] = working_df["last_name"].map(_to_clean_prompt_value)
 
-- `flag = false` means the input name appears correct as provided
-- `flag = true` means there is a likely issue and correction is needed
+    working_df["first_name_norm"] = working_df["first_name"].map(_normalize_name_for_grouping)
+    working_df["middle_name_norm"] = working_df["middle_name"].map(_normalize_name_for_grouping)
+    working_df["last_name_norm"] = working_df["last_name"].map(_normalize_name_for_grouping)
 
-# Decision Standard
+    grouped_counts = (
+        working_df.groupby(
+            ["file", "first_name_norm", "middle_name_norm", "last_name_norm"],
+            dropna=False,
+            as_index=False,
+        )
+        .agg(
+            occurrence_count=("encounter", "size"),
+            first_seen_row=("_source_row", "min"),
+        )
+    )
 
-Set `flag` to `true` when there is:
-- a clear issue, or
-- a probable extraction issue strongly supported by batch context
+    representative_rows = (
+        working_df.sort_values("_source_row")
+        .drop_duplicates(
+            subset=["file", "first_name_norm", "middle_name_norm", "last_name_norm"],
+            keep="first",
+        )[
+            [
+                "file",
+                "first_name_norm",
+                "middle_name_norm",
+                "last_name_norm",
+                "first_name",
+                "middle_name",
+                "last_name",
+            ]
+        ]
+    )
 
-Set `flag` to `false` only when the name appears valid as-is and there is not enough evidence to justify correction.
+    distinct_df = (
+        grouped_counts.merge(
+            representative_rows,
+            on=["file", "first_name_norm", "middle_name_norm", "last_name_norm"],
+            how="left",
+        )
+        .sort_values(
+            ["file", "occurrence_count", "first_seen_row"],
+            ascending=[True, False, True],
+        )
+        .reset_index(drop=True)
+    )
 
-# What Counts as an Issue
+    distinct_df["name_id"] = distinct_df.groupby("file").cumcount() + 1
+    distinct_df["record_key"] = (
+        distinct_df["file"].astype(str) + "|" + distinct_df["name_id"].astype(int).astype(str)
+    )
 
-Set `flag` to `true` when there is evidence of issues such as:
-- broken spacing inside a name
-  - example: `J erry` -> `Jerry`
-- first name and last name swapped
-- middle name placed in the wrong field
-- name parts split across multiple fields
-- duplicated fragments
-- incomplete or broken name tokens
-- obvious OCR or extraction mistakes
-- one variant clearly appears to be a broken version of another stronger variant in the same batch
-- a low-frequency variant appears to be a broken extraction of a valid majority variant of the same apparent name
-- low-frequency suspicious variant contradicts a high-frequency cleaner variant in a way that strongly suggests extraction error
+    return distinct_df[
+        [
+            "record_key",
+            "file",
+            "name_id",
+            "first_name",
+            "middle_name",
+            "last_name",
+            "occurrence_count",
+            "first_name_norm",
+            "middle_name_norm",
+            "last_name_norm",
+        ]
+    ].copy()
 
-# Important Rules
 
-## 1. Be strict for extraction issues
-- be more sensitive to likely extraction errors
-- if a low-frequency variant appears broken compared with a stronger clean variant in the same file, prefer `flag = true`
-- do not let a suspicious variant pass as correct when the batch context strongly indicates an extraction problem
-
-## 2. Be conservative about real names
-- do not invent new names
-- do not over-correct uncommon but valid names
-- do not replace a rare or unusual name with a more common name just because it looks familiar
-- only change to a different spelling when the evidence is strong from the input record and/or batch context
-
-## 3. Majority reference must be used carefully
-A higher-frequency name variant may be used as reference only when that higher-frequency variant itself appears correct.
-
-Do not use the majority variant as reference if it appears:
-- malformed
-- incomplete
-- ambiguous
-- broken by spacing
-- structurally inconsistent
-- likely affected by OCR or extraction error
-
-Only use majority reference when:
-- the majority variant looks valid
-- the lower-frequency variant looks like a broken extraction of the same apparent name
-- the difference is small and consistent with extraction error
-
-Do not normalize a completely different name to match the majority variant.
-
-If a lower-frequency record appears to be a different but plausible patient name, leave it unchanged unless there is strong direct evidence of error.
-
-## 4. Do not normalize to a more common name
-If a name looks unusual but still appears like a valid name string, keep it unchanged unless there is strong evidence of an actual extraction error.
-
-Examples:
-- `Jashef` must not be changed to `Joseph` only because `Joseph` is more common
-- `Rohan Jashef` should remain `Rohan Jashef` unless there is strong evidence that the text is broken, misplaced, or contradicted by stronger valid batch context
-
-## 5. Ignore capitalization differences
-Capitalization alone must not be treated as an error.
-
-Examples:
-- `yogesh` vs `Yogesh`
-- `PERRY` vs `Perry`
-- `jErry` vs `Jerry`
-
-If the only difference is uppercase/lowercase style, then:
-- `flag` must be `false`
-- `reason` must be `""`
-- corrected values must remain the same as the input values
-
-## 6. Reason field
-- If `flag = false`, `reason` must be an empty string: `""`
-- If `flag = true`, `reason` must contain a brief explanation of what seems wrong
-
-## 7. Corrected fields
-Always return:
-- `corrected_first_name`
-- `corrected_middle_name`
-- `corrected_last_name`
-
-Rules:
-- If `flag = false`, corrected values must exactly match the input values
-- If `flag = true`, return the corrected values
-
-## 8. Empty middle name
-- If middle name is empty, keep it empty unless there is strong evidence that part of the name was misplaced or omitted
-- If the batch strongly suggests the middle name is missing in a low-frequency broken variant, you may correct it
-
-# What to Check
-
-## A. Spacing issues
-- accidental spaces inside one name
-- broken characters
-- multiple unnecessary spaces
-
-## B. Field placement issues
-- first name in last name field
-- last name in first name field
-- middle name in wrong field
-- name parts distributed incorrectly
-
-## C. Extraction issues
-- meaningless fragments
-- duplicated fragments
-- partial words
-- OCR-like mistakes
-- truncated or malformed tokens
-
-## D. Cross-variant consistency
-- compare low-frequency variants with high-frequency cleaner variants
-- identify whether one variant is likely a broken extraction of another
-- use occurrence count as supporting context, not sole proof
-
-# Input Format
-
-{
-  "records": [
-    {
-      "name_id": 1,
-      "first_name": "<input_first_name>",
-      "middle_name": "<input_middle_name>",
-      "last_name": "<input_last_name>",
-      "occurrence_count": 10
+def build_batch_prompt(rows, prompt_template: str):
+    payload = {
+        "records": [
+            {
+                "name_id": int(row["name_id"]),
+                "first_name": _to_clean_prompt_value(row["first_name"]),
+                "middle_name": _to_clean_prompt_value(row["middle_name"]),
+                "last_name": _to_clean_prompt_value(row["last_name"]),
+                "occurrence_count": int(row["occurrence_count"]),
+            }
+            for row in rows
+        ]
     }
-  ]
-}
 
-# Output Format
+    return prompt_template.replace(
+        "{Input}",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+    )
 
-Return strict JSON only in this format:
 
-{
-  "results": [
-    {
-      "name_id": 1,
-      "flag": false,
-      "reason": "",
-      "corrected_first_name": "PAMELA",
-      "corrected_middle_name": "",
-      "corrected_last_name": "COHEN"
-    }
-  ]
-}
+async def review_distinct_batch(
+    rows,
+    *,
+    prompt_template: str,
+    hclient,
+    schema,
+    call_llm_with_retry,
+):
+    prompt = build_batch_prompt(rows, prompt_template=prompt_template)
 
-# Output Rules
+    response = await call_llm_with_retry(
+        hclient=hclient,
+        schema=schema,
+        prompt=prompt,
+        params={"qos": "accurate", "reasoning": "true"},
+    )
 
-- `results` must be a list
-- return exactly one output object for each input record
-- `name_id` must be an integer
-- `flag` must be a boolean
-- `reason` must be a string
-- corrected fields must always be strings
-- do not return any extra keys
-- do not return any explanation outside JSON
+    response = _to_dict(response)
 
-# Example
+    if "results" not in response:
+        raise ValueError("LLM response does not contain 'results'")
 
-Input:
-{
-  "records": [
-    {
-      "name_id": 1,
-      "first_name": "CHARLES",
-      "middle_name": "W",
-      "last_name": "CLIFFORD",
-      "occurrence_count": 24
-    },
-    {
-      "name_id": 2,
-      "first_name": "CHARLES",
-      "middle_name": "",
-      "last_name": "CLIFFORD",
-      "occurrence_count": 3
-    },
-    {
-      "name_id": 3,
-      "first_name": "CHARLES",
-      "middle_name": "W",
-      "last_name": "CLI FFORD",
-      "occurrence_count": 1
-    },
-    {
-      "name_id": 4,
-      "first_name": "ROBERT",
-      "middle_name": "",
-      "last_name": "SMITH",
-      "occurrence_count": 1
-    }
-  ]
-}
+    result_by_name_id = {}
+    for item in response["results"]:
+        name_id = int(item["name_id"])
+        result_by_name_id[name_id] = item
 
-Output:
-{
-  "results": [
-    {
-      "name_id": 1,
-      "flag": false,
-      "reason": "",
-      "corrected_first_name": "CHARLES",
-      "corrected_middle_name": "W",
-      "corrected_last_name": "CLIFFORD"
-    },
-    {
-      "name_id": 2,
-      "flag": true,
-      "reason": "Middle name is likely missing compared with the stronger valid batch variant.",
-      "corrected_first_name": "CHARLES",
-      "corrected_middle_name": "W",
-      "corrected_last_name": "CLIFFORD"
-    },
-    {
-      "name_id": 3,
-      "flag": true,
-      "reason": "Last name contains unnecessary internal spacing and appears to be a broken variant.",
-      "corrected_first_name": "CHARLES",
-      "corrected_middle_name": "W",
-      "corrected_last_name": "CLIFFORD"
-    },
-    {
-      "name_id": 4,
-      "flag": false,
-      "reason": "",
-      "corrected_first_name": "ROBERT",
-      "corrected_middle_name": "",
-      "corrected_last_name": "SMITH"
-    }
-  ]
-}
+    ordered_results = []
+    for row in rows:
+        name_id = int(row["name_id"])
+        if name_id not in result_by_name_id:
+            raise ValueError(f"Missing name_id {name_id} in batch response")
+        ordered_results.append(result_by_name_id[name_id])
 
-# Final Instruction
+    return ordered_results
 
-Analyze all records carefully using both record-level evidence and batch-level comparison.
 
-Be strict in detecting likely extraction errors, especially when supported by stronger higher-frequency valid variants in the same batch.
+async def review_distinct_batch_safe(
+    rows,
+    *,
+    prompt_template: str,
+    hclient,
+    schema,
+    call_llm_with_retry,
+):
+    try:
+        batch_results = await review_distinct_batch(
+            rows,
+            prompt_template=prompt_template,
+            hclient=hclient,
+            schema=schema,
+            call_llm_with_retry=call_llm_with_retry,
+        )
+        return {
+            "ok": True,
+            "rows": rows,
+            "batch_results": batch_results,
+            "error": None,
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "rows": rows,
+            "batch_results": None,
+            "error": str(e),
+        }
 
-Do not change a record to match the majority variant if the record appears to be a completely different name.
 
-Return only strict JSON in the required format.
+def create_anchor_batches_for_file_with_resume(
+    file_full_df: pd.DataFrame,
+    completed_keys: set,
+    batch_size: int = 10,
+):
+    records = file_full_df.to_dict("records")
+    if not records:
+        return []
 
-# Input
+    if batch_size < 2:
+        raise ValueError("batch_size must be at least 2 for anchor batching")
 
-{Input}
+    anchor = records[0]
+    anchor_key = anchor["record_key"]
+
+    pending_records = [r for r in records if r["record_key"] not in completed_keys]
+    if not pending_records:
+        return []
+
+    batches = []
+
+    pending_key_set = {r["record_key"] for r in pending_records}
+
+    if anchor_key in pending_key_set:
+        first_batch = pending_records[:batch_size]
+        batches.append(first_batch)
+        remaining = pending_records[batch_size:]
+
+        for chunk in _chunk_records(remaining, batch_size - 1):
+            batches.append([anchor] + chunk)
+    else:
+        for chunk in _chunk_records(pending_records, batch_size - 1):
+            batches.append([anchor] + chunk)
+
+    return batches
+
+
+async def process_distinct_names_with_majority_anchor_resume(
+    df: pd.DataFrame,
+    *,
+    prompt_template: str,
+    hclient,
+    schema,
+    call_llm_with_retry,
+    batch_size: int = 10,
+    max_concurrent_requests: int = 5,
+    checkpoint_path: str = "distinct_name_audit_checkpoint.jsonl",
+    failed_batches_path: str = "distinct_name_audit_failed_batches.jsonl",
+):
+    distinct_df = build_distinct_name_df(df)
+
+    checkpoint_df = _load_checkpoint_df(checkpoint_path)
+    completed_keys = set(checkpoint_df["record_key"].tolist())
+
+    print(f"Total distinct rows: {len(distinct_df)}")
+    print(f"Already completed from checkpoint: {len(completed_keys)}")
+    print(f"Pending distinct rows: {len(distinct_df[~distinct_df['record_key'].isin(completed_keys)])}")
+
+    grouped = distinct_df.groupby("file", sort=False, dropna=False)
+    total_files = distinct_df["file"].nunique(dropna=False)
+
+    for file_id, file_df in tqdm(grouped, total=total_files, desc="Files"):
+        file_batches = create_anchor_batches_for_file_with_resume(
+            file_full_df=file_df,
+            completed_keys=completed_keys,
+            batch_size=batch_size,
+        )
+
+        if not file_batches:
+            continue
+
+        for i in range(0, len(file_batches), max_concurrent_requests):
+            batch_group = file_batches[i:i + max_concurrent_requests]
+
+            batch_group_results = await asyncio.gather(
+                *(
+                    review_distinct_batch_safe(
+                        batch_rows,
+                        prompt_template=prompt_template,
+                        hclient=hclient,
+                        schema=schema,
+                        call_llm_with_retry=call_llm_with_retry,
+                    )
+                    for batch_rows in batch_group
+                )
+            )
+
+            success_records = []
+            failed_records = []
+
+            for result in batch_group_results:
+                if result["ok"]:
+                    batch_rows = result["rows"]
+                    batch_results = result["batch_results"]
+
+                    for input_row, output_row in zip(batch_rows, batch_results):
+                        record_key = input_row["record_key"]
+
+                        if record_key in completed_keys:
+                            continue
+
+                        success_record = {
+                            "record_key": record_key,
+                            "file": str(input_row["file"]),
+                            "name_id": int(output_row["name_id"]),
+                            "flag": output_row["flag"],
+                            "reason": output_row["reason"],
+                            "corrected_first_name": output_row["corrected_first_name"],
+                            "corrected_middle_name": output_row["corrected_middle_name"],
+                            "corrected_last_name": output_row["corrected_last_name"],
+                        }
+                        success_records.append(success_record)
+                        completed_keys.add(record_key)
+                else:
+                    batch_rows = result["rows"]
+                    failed_records.append(
+                        {
+                            "file": str(file_id),
+                            "record_keys": [r["record_key"] for r in batch_rows],
+                            "name_ids": [int(r["name_id"]) for r in batch_rows],
+                            "occurrence_counts": [int(r["occurrence_count"]) for r in batch_rows],
+                            "error": result["error"],
+                        }
+                    )
+
+            if success_records:
+                _append_jsonl(checkpoint_path, success_records)
+
+            if failed_records:
+                _append_jsonl(failed_batches_path, failed_records)
+
+    checkpoint_df = _load_checkpoint_df(checkpoint_path)
+
+    reviewed_distinct_df = distinct_df.merge(
+        checkpoint_df[
+            [
+                "record_key",
+                "flag",
+                "reason",
+                "corrected_first_name",
+                "corrected_middle_name",
+                "corrected_last_name",
+            ]
+        ],
+        on="record_key",
+        how="left",
+    )
+
+    failed_batches_df = pd.DataFrame(_load_jsonl(failed_batches_path))
+
+    return reviewed_distinct_df, failed_batches_df
+
+
+def merge_distinct_results_back_to_original(
+    original_df: pd.DataFrame,
+    reviewed_distinct_df: pd.DataFrame,
+) -> pd.DataFrame:
+    working_df = original_df.copy()
+
+    working_df["file"] = working_df["file"].astype(str)
+    working_df["first_name"] = working_df["first_name"].map(_to_clean_prompt_value)
+    working_df["middle_name"] = working_df["middle_name"].map(_to_clean_prompt_value)
+    working_df["last_name"] = working_df["last_name"].map(_to_clean_prompt_value)
+
+    working_df["first_name_norm"] = working_df["first_name"].map(_normalize_name_for_grouping)
+    working_df["middle_name_norm"] = working_df["middle_name"].map(_normalize_name_for_grouping)
+    working_df["last_name_norm"] = working_df["last_name"].map(_normalize_name_for_grouping)
+
+    merge_cols = ["file", "first_name_norm", "middle_name_norm", "last_name_norm"]
+    result_cols = [
+        "name_id",
+        "occurrence_count",
+        "flag",
+        "reason",
+        "corrected_first_name",
+        "corrected_middle_name",
+        "corrected_last_name",
+    ]
+
+    final_df = working_df.merge(
+        reviewed_distinct_df[merge_cols + result_cols],
+        on=merge_cols,
+        how="left",
+    )
+
+    return final_df
