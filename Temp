@@ -447,3 +447,23 @@ def merge_distinct_results_back_to_original(
     )
 
     return final_df
+
+
+from pathlib import Path
+
+with open("batch_name_validation_prompt.txt", "r", encoding="utf-8") as f:
+    PROMPT_TMPL_BATCH = f.read()
+
+reviewed_distinct_df, failed_batches_df = await process_distinct_names_with_majority_anchor_resume(
+    df,
+    prompt_template=PROMPT_TMPL_BATCH,
+    hclient=hclient,
+    schema=DistinctNameBatchOutput,
+    call_llm_with_retry=_call_llm_with_retry,
+    batch_size=10,
+    max_concurrent_requests=5,
+    checkpoint_path="distinct_name_audit_checkpoint.jsonl",
+    failed_batches_path="distinct_name_audit_failed_batches.jsonl",
+)
+
+final_df = merge_distinct_results_back_to_original(df, reviewed_distinct_df)
