@@ -1,469 +1,149 @@
-import os
-import re
-import json
-import asyncio
-import unicodedata
 import pandas as pd
-from tqdm.auto import tqdm
 
-
-BATCH_SIZE = 10
-MAX_CONCURRENT_REQUESTS = 5
-
-
-def _safe_str(value):
-    if pd.isna(value):
-        return ""
-    return str(value)
-
-
-def _normalize_name_for_grouping(value):
-    value = _safe_str(value)
-    value = unicodedata.normalize("NFKC", value)
-    value = value.strip()
-    value = re.sub(r"\s+", " ", value)
-    value = value.casefold()
-    return value
-
-
-def _to_clean_prompt_value(value):
-    value = _safe_str(value)
-    value = unicodedata.normalize("NFKC", value)
-    value = value.strip()
-    value = re.sub(r"\s+", " ", value)
-    return value
-
-
-def _to_dict(response):
-    if hasattr(response, "model_dump"):
-        return response.model_dump()
-    return response
-
-
-def _chunk_records(records, chunk_size):
-    for i in range(0, len(records), chunk_size):
-        yield records[i:i + chunk_size]
-
-
-def _append_jsonl(path, records):
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
-        for record in records:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
-        f.flush()
-        os.fsync(f.fileno())
-
-
-def _load_jsonl(path):
-    if not os.path.exists(path):
-        return []
-
-    rows = []
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                rows.append(json.loads(line))
-    return rows
-
-
-def _load_checkpoint_df(path):
-    rows = _load_jsonl(path)
-    if not rows:
-        return pd.DataFrame(
-            columns=[
-                "record_key",
-                "file",
-                "name_id",
-                "flag",
-                "reason",
-                "corrected_first_name",
-                "corrected_middle_name",
-                "corrected_last_name",
-            ]
-        )
-
-    checkpoint_df = pd.DataFrame(rows)
-
-    if "record_key" not in checkpoint_df.columns:
-        raise ValueError("Checkpoint file is missing 'record_key' column")
-
-    checkpoint_df = checkpoint_df.drop_duplicates(subset=["record_key"], keep="last")
-    return checkpoint_df
-
-
-def build_distinct_name_df(df: pd.DataFrame) -> pd.DataFrame:
-    required_cols = ["file", "encounter", "first_name", "middle_name", "last_name"]
-    missing_cols = [c for c in required_cols if c not in df.columns]
-    if missing_cols:
-        raise ValueError(f"Missing required columns: {missing_cols}")
-
-    working_df = df.copy().reset_index(drop=False).rename(columns={"index": "_source_row"})
-    working_df["file"] = working_df["file"].astype(str)
-
-    working_df["first_name"] = working_df["first_name"].map(_to_clean_prompt_value)
-    working_df["middle_name"] = working_df["middle_name"].map(_to_clean_prompt_value)
-    working_df["last_name"] = working_df["last_name"].map(_to_clean_prompt_value)
-
-    working_df["first_name_norm"] = working_df["first_name"].map(_normalize_name_for_grouping)
-    working_df["middle_name_norm"] = working_df["middle_name"].map(_normalize_name_for_grouping)
-    working_df["last_name_norm"] = working_df["last_name"].map(_normalize_name_for_grouping)
-
-    grouped_counts = (
-        working_df.groupby(
-            ["file", "first_name_norm", "middle_name_norm", "last_name_norm"],
-            dropna=False,
-            as_index=False,
-        )
-        .agg(
-            occurrence_count=("encounter", "size"),
-            first_seen_row=("_source_row", "min"),
-        )
-    )
-
-    representative_rows = (
-        working_df.sort_values("_source_row")
-        .drop_duplicates(
-            subset=["file", "first_name_norm", "middle_name_norm", "last_name_norm"],
-            keep="first",
-        )[
-            [
-                "file",
-                "first_name_norm",
-                "middle_name_norm",
-                "last_name_norm",
-                "first_name",
-                "middle_name",
-                "last_name",
-            ]
-        ]
-    )
-
-    distinct_df = (
-        grouped_counts.merge(
-            representative_rows,
-            on=["file", "first_name_norm", "middle_name_norm", "last_name_norm"],
-            how="left",
-        )
-        .sort_values(
-            ["file", "occurrence_count", "first_seen_row"],
-            ascending=[True, False, True],
-        )
-        .reset_index(drop=True)
-    )
-
-    distinct_df["name_id"] = distinct_df.groupby("file").cumcount() + 1
-    distinct_df["record_key"] = (
-        distinct_df["file"].astype(str) + "|" + distinct_df["name_id"].astype(int).astype(str)
-    )
-
-    return distinct_df[
-        [
-            "record_key",
-            "file",
-            "name_id",
-            "first_name",
-            "middle_name",
-            "last_name",
-            "occurrence_count",
-            "first_name_norm",
-            "middle_name_norm",
-            "last_name_norm",
-        ]
-    ].copy()
-
-
-def build_batch_prompt(rows, prompt_template: str):
-    payload = {
-        "records": [
-            {
-                "name_id": int(row["name_id"]),
-                "first_name": _to_clean_prompt_value(row["first_name"]),
-                "middle_name": _to_clean_prompt_value(row["middle_name"]),
-                "last_name": _to_clean_prompt_value(row["last_name"]),
-                "occurrence_count": int(row["occurrence_count"]),
-            }
-            for row in rows
-        ]
-    }
-
-    return prompt_template.replace(
-        "{Input}",
-        json.dumps(payload, ensure_ascii=False, indent=2),
-    )
-
-
-async def review_distinct_batch(
-    rows,
-    *,
-    prompt_template: str,
-    hclient,
-    schema,
-    call_llm_with_retry,
-):
-    prompt = build_batch_prompt(rows, prompt_template=prompt_template)
-
-    response = await call_llm_with_retry(
-        hclient=hclient,
-        schema=schema,
-        prompt=prompt,
-        params={"qos": "accurate", "reasoning": "true"},
-    )
-
-    response = _to_dict(response)
-
-    if "results" not in response:
-        raise ValueError("LLM response does not contain 'results'")
-
-    result_by_name_id = {}
-    for item in response["results"]:
-        name_id = int(item["name_id"])
-        result_by_name_id[name_id] = item
-
-    ordered_results = []
-    for row in rows:
-        name_id = int(row["name_id"])
-        if name_id not in result_by_name_id:
-            raise ValueError(f"Missing name_id {name_id} in batch response")
-        ordered_results.append(result_by_name_id[name_id])
-
-    return ordered_results
-
-
-async def review_distinct_batch_safe(
-    rows,
-    *,
-    prompt_template: str,
-    hclient,
-    schema,
-    call_llm_with_retry,
-):
-    try:
-        batch_results = await review_distinct_batch(
-            rows,
-            prompt_template=prompt_template,
-            hclient=hclient,
-            schema=schema,
-            call_llm_with_retry=call_llm_with_retry,
-        )
-        return {
-            "ok": True,
-            "rows": rows,
-            "batch_results": batch_results,
-            "error": None,
-        }
-    except Exception as e:
-        return {
-            "ok": False,
-            "rows": rows,
-            "batch_results": None,
-            "error": str(e),
-        }
-
-
-def create_anchor_batches_for_file_with_resume(
-    file_full_df: pd.DataFrame,
-    completed_keys: set,
-    batch_size: int = 10,
-):
-    records = file_full_df.to_dict("records")
-    if not records:
-        return []
-
-    if batch_size < 2:
-        raise ValueError("batch_size must be at least 2 for anchor batching")
-
-    anchor = records[0]
-    anchor_key = anchor["record_key"]
-
-    pending_records = [r for r in records if r["record_key"] not in completed_keys]
-    if not pending_records:
-        return []
-
-    batches = []
-
-    pending_key_set = {r["record_key"] for r in pending_records}
-
-    if anchor_key in pending_key_set:
-        first_batch = pending_records[:batch_size]
-        batches.append(first_batch)
-        remaining = pending_records[batch_size:]
-
-        for chunk in _chunk_records(remaining, batch_size - 1):
-            batches.append([anchor] + chunk)
-    else:
-        for chunk in _chunk_records(pending_records, batch_size - 1):
-            batches.append([anchor] + chunk)
-
-    return batches
-
-
-async def process_distinct_names_with_majority_anchor_resume(
-    df: pd.DataFrame,
-    *,
-    prompt_template: str,
-    hclient,
-    schema,
-    call_llm_with_retry,
-    batch_size: int = 10,
-    max_concurrent_requests: int = 5,
-    checkpoint_path: str = "distinct_name_audit_checkpoint.jsonl",
-    failed_batches_path: str = "distinct_name_audit_failed_batches.jsonl",
-):
-    distinct_df = build_distinct_name_df(df)
-
-    checkpoint_df = _load_checkpoint_df(checkpoint_path)
-    completed_keys = set(checkpoint_df["record_key"].tolist())
-
-    print(f"Total distinct rows: {len(distinct_df)}")
-    print(f"Already completed from checkpoint: {len(completed_keys)}")
-    print(f"Pending distinct rows: {len(distinct_df[~distinct_df['record_key'].isin(completed_keys)])}")
-
-    grouped = distinct_df.groupby("file", sort=False, dropna=False)
-    total_files = distinct_df["file"].nunique(dropna=False)
-
-    for file_id, file_df in tqdm(grouped, total=total_files, desc="Files"):
-        file_batches = create_anchor_batches_for_file_with_resume(
-            file_full_df=file_df,
-            completed_keys=completed_keys,
-            batch_size=batch_size,
-        )
-
-        if not file_batches:
-            continue
-
-        for i in range(0, len(file_batches), max_concurrent_requests):
-            batch_group = file_batches[i:i + max_concurrent_requests]
-
-            batch_group_results = await asyncio.gather(
-                *(
-                    review_distinct_batch_safe(
-                        batch_rows,
-                        prompt_template=prompt_template,
-                        hclient=hclient,
-                        schema=schema,
-                        call_llm_with_retry=call_llm_with_retry,
-                    )
-                    for batch_rows in batch_group
-                )
-            )
-
-            success_records = []
-            failed_records = []
-
-            for result in batch_group_results:
-                if result["ok"]:
-                    batch_rows = result["rows"]
-                    batch_results = result["batch_results"]
-
-                    for input_row, output_row in zip(batch_rows, batch_results):
-                        record_key = input_row["record_key"]
-
-                        if record_key in completed_keys:
-                            continue
-
-                        success_record = {
-                            "record_key": record_key,
-                            "file": str(input_row["file"]),
-                            "name_id": int(output_row["name_id"]),
-                            "flag": output_row["flag"],
-                            "reason": output_row["reason"],
-                            "corrected_first_name": output_row["corrected_first_name"],
-                            "corrected_middle_name": output_row["corrected_middle_name"],
-                            "corrected_last_name": output_row["corrected_last_name"],
-                        }
-                        success_records.append(success_record)
-                        completed_keys.add(record_key)
-                else:
-                    batch_rows = result["rows"]
-                    failed_records.append(
-                        {
-                            "file": str(file_id),
-                            "record_keys": [r["record_key"] for r in batch_rows],
-                            "name_ids": [int(r["name_id"]) for r in batch_rows],
-                            "occurrence_counts": [int(r["occurrence_count"]) for r in batch_rows],
-                            "error": result["error"],
-                        }
-                    )
-
-            if success_records:
-                _append_jsonl(checkpoint_path, success_records)
-
-            if failed_records:
-                _append_jsonl(failed_batches_path, failed_records)
-
-    checkpoint_df = _load_checkpoint_df(checkpoint_path)
-
-    reviewed_distinct_df = distinct_df.merge(
-        checkpoint_df[
-            [
-                "record_key",
-                "flag",
-                "reason",
-                "corrected_first_name",
-                "corrected_middle_name",
-                "corrected_last_name",
-            ]
-        ],
-        on="record_key",
-        how="left",
-    )
-
-    failed_batches_df = pd.DataFrame(_load_jsonl(failed_batches_path))
-
-    return reviewed_distinct_df, failed_batches_df
-
-
-def merge_distinct_results_back_to_original(
-    original_df: pd.DataFrame,
-    reviewed_distinct_df: pd.DataFrame,
-) -> pd.DataFrame:
-    working_df = original_df.copy()
-
-    working_df["file"] = working_df["file"].astype(str)
-    working_df["first_name"] = working_df["first_name"].map(_to_clean_prompt_value)
-    working_df["middle_name"] = working_df["middle_name"].map(_to_clean_prompt_value)
-    working_df["last_name"] = working_df["last_name"].map(_to_clean_prompt_value)
-
-    working_df["first_name_norm"] = working_df["first_name"].map(_normalize_name_for_grouping)
-    working_df["middle_name_norm"] = working_df["middle_name"].map(_normalize_name_for_grouping)
-    working_df["last_name_norm"] = working_df["last_name"].map(_normalize_name_for_grouping)
-
-    merge_cols = ["file", "first_name_norm", "middle_name_norm", "last_name_norm"]
-    result_cols = [
-        "name_id",
-        "occurrence_count",
-        "flag",
-        "reason",
-        "corrected_first_name",
-        "corrected_middle_name",
-        "corrected_last_name",
-    ]
-
-    final_df = working_df.merge(
-        reviewed_distinct_df[merge_cols + result_cols],
-        on=merge_cols,
-        how="left",
-    )
-
-    return final_df
-
-
-from pathlib import Path
-
-with open("batch_name_validation_prompt.txt", "r", encoding="utf-8") as f:
-    PROMPT_TMPL_BATCH = f.read()
-
-reviewed_distinct_df, failed_batches_df = await process_distinct_names_with_majority_anchor_resume(
-    df,
-    prompt_template=PROMPT_TMPL_BATCH,
-    hclient=hclient,
-    schema=DistinctNameBatchOutput,
-    call_llm_with_retry=_call_llm_with_retry,
-    batch_size=10,
-    max_concurrent_requests=5,
-    checkpoint_path="distinct_name_audit_checkpoint.jsonl",
-    failed_batches_path="distinct_name_audit_failed_batches.jsonl",
-)
-
-final_df = merge_distinct_results_back_to_original(df, reviewed_distinct_df)
+df = pd.DataFrame([
+    # scenario_01
+    {"file": "scenario_01", "encounter": 1, "first_name": "John",    "middle_name": "Andrew", "last_name": "Miller",       "scenario": "Baseline - all encounters correct and identical"},
+    {"file": "scenario_01", "encounter": 2, "first_name": "John",    "middle_name": "Andrew", "last_name": "Miller",       "scenario": "Baseline - all encounters correct and identical"},
+    {"file": "scenario_01", "encounter": 3, "first_name": "John",    "middle_name": "Andrew", "last_name": "Miller",       "scenario": "Baseline - all encounters correct and identical"},
+    {"file": "scenario_01", "encounter": 4, "first_name": "John",    "middle_name": "Andrew", "last_name": "Miller",       "scenario": "Baseline - all encounters correct and identical"},
+
+    # scenario_02
+    {"file": "scenario_02", "encounter": 1, "first_name": "Mary",    "middle_name": "Ann",    "last_name": "Carter",       "scenario": "Case and whitespace variations only"},
+    {"file": "scenario_02", "encounter": 2, "first_name": " mary ",  "middle_name": "Ann ",   "last_name": "CARTER",       "scenario": "Case and whitespace variations only"},
+    {"file": "scenario_02", "encounter": 3, "first_name": "MARY",    "middle_name": "ANN",    "last_name": " carter ",     "scenario": "Case and whitespace variations only"},
+    {"file": "scenario_02", "encounter": 4, "first_name": "MaRy",    "middle_name": "aNn",    "last_name": "Carter",       "scenario": "Case and whitespace variations only"},
+
+    # scenario_03
+    {"file": "scenario_03", "encounter": 1, "first_name": "Peter",   "middle_name": "Alan",   "last_name": "Brooks",       "scenario": "Minority incorrect - first and last name swapped"},
+    {"file": "scenario_03", "encounter": 2, "first_name": "Peter",   "middle_name": "Alan",   "last_name": "Brooks",       "scenario": "Minority incorrect - first and last name swapped"},
+    {"file": "scenario_03", "encounter": 3, "first_name": "Peter",   "middle_name": "Alan",   "last_name": "Brooks",       "scenario": "Minority incorrect - first and last name swapped"},
+    {"file": "scenario_03", "encounter": 4, "first_name": "Brooks",  "middle_name": "Alan",   "last_name": "Peter",        "scenario": "Minority incorrect - first and last name swapped"},
+
+    # scenario_04
+    {"file": "scenario_04", "encounter": 1, "first_name": "Clark",   "middle_name": "Marie",  "last_name": "Susan",        "scenario": "Majority incorrect - first and last name swapped"},
+    {"file": "scenario_04", "encounter": 2, "first_name": "Clark",   "middle_name": "Marie",  "last_name": "Susan",        "scenario": "Majority incorrect - first and last name swapped"},
+    {"file": "scenario_04", "encounter": 3, "first_name": "Clark",   "middle_name": "Marie",  "last_name": "Susan",        "scenario": "Majority incorrect - first and last name swapped"},
+    {"file": "scenario_04", "encounter": 4, "first_name": "Susan",   "middle_name": "Marie",  "last_name": "Clark",        "scenario": "Majority incorrect - first and last name swapped"},
+
+    # scenario_05
+    {"file": "scenario_05", "encounter": 1, "first_name": "Robert",  "middle_name": "J",      "last_name": "Hayes",        "scenario": "Minority incorrect - middle name merged into last name"},
+    {"file": "scenario_05", "encounter": 2, "first_name": "Robert",  "middle_name": "J",      "last_name": "Hayes",        "scenario": "Minority incorrect - middle name merged into last name"},
+    {"file": "scenario_05", "encounter": 3, "first_name": "Robert",  "middle_name": "J",      "last_name": "Hayes",        "scenario": "Minority incorrect - middle name merged into last name"},
+    {"file": "scenario_05", "encounter": 4, "first_name": "Robert",  "middle_name": "",       "last_name": "J Hayes",      "scenario": "Minority incorrect - middle name merged into last name"},
+
+    # scenario_06
+    {"file": "scenario_06", "encounter": 1, "first_name": "Laura",   "middle_name": "",       "last_name": "M Stone",      "scenario": "Majority incorrect - middle name merged into last name"},
+    {"file": "scenario_06", "encounter": 2, "first_name": "Laura",   "middle_name": "",       "last_name": "M Stone",      "scenario": "Majority incorrect - middle name merged into last name"},
+    {"file": "scenario_06", "encounter": 3, "first_name": "Laura",   "middle_name": "",       "last_name": "M Stone",      "scenario": "Majority incorrect - middle name merged into last name"},
+    {"file": "scenario_06", "encounter": 4, "first_name": "Laura",   "middle_name": "M",      "last_name": "Stone",        "scenario": "Majority incorrect - middle name merged into last name"},
+
+    # scenario_07
+    {"file": "scenario_07", "encounter": 1, "first_name": "Daniel",  "middle_name": "P",      "last_name": "Reed",         "scenario": "Minority incorrect - middle name merged into first name"},
+    {"file": "scenario_07", "encounter": 2, "first_name": "Daniel",  "middle_name": "P",      "last_name": "Reed",         "scenario": "Minority incorrect - middle name merged into first name"},
+    {"file": "scenario_07", "encounter": 3, "first_name": "Daniel",  "middle_name": "P",      "last_name": "Reed",         "scenario": "Minority incorrect - middle name merged into first name"},
+    {"file": "scenario_07", "encounter": 4, "first_name": "Daniel P","middle_name": "",       "last_name": "Reed",         "scenario": "Minority incorrect - middle name merged into first name"},
+
+    # scenario_08
+    {"file": "scenario_08", "encounter": 1, "first_name": "Emily Rose", "middle_name": "",     "last_name": "Turner",       "scenario": "Majority incorrect - middle name merged into first name"},
+    {"file": "scenario_08", "encounter": 2, "first_name": "Emily Rose", "middle_name": "",     "last_name": "Turner",       "scenario": "Majority incorrect - middle name merged into first name"},
+    {"file": "scenario_08", "encounter": 3, "first_name": "Emily Rose", "middle_name": "",     "last_name": "Turner",       "scenario": "Majority incorrect - middle name merged into first name"},
+    {"file": "scenario_08", "encounter": 4, "first_name": "Emily",      "middle_name": "Rose", "last_name": "Turner",       "scenario": "Majority incorrect - middle name merged into first name"},
+
+    # scenario_09
+    {"file": "scenario_09", "encounter": 1, "first_name": "Michael", "middle_name": "",        "last_name": "Adams",        "scenario": "Minority incorrect - first name has broken internal spacing"},
+    {"file": "scenario_09", "encounter": 2, "first_name": "Michael", "middle_name": "",        "last_name": "Adams",        "scenario": "Minority incorrect - first name has broken internal spacing"},
+    {"file": "scenario_09", "encounter": 3, "first_name": "Michael", "middle_name": "",        "last_name": "Adams",        "scenario": "Minority incorrect - first name has broken internal spacing"},
+    {"file": "scenario_09", "encounter": 4, "first_name": "Mi chael","middle_name": "",        "last_name": "Adams",        "scenario": "Minority incorrect - first name has broken internal spacing"},
+
+    # scenario_10
+    {"file": "scenario_10", "encounter": 1, "first_name": "Olivia",  "middle_name": "",        "last_name": "Bennett",      "scenario": "Minority incorrect - last name has broken internal spacing"},
+    {"file": "scenario_10", "encounter": 2, "first_name": "Olivia",  "middle_name": "",        "last_name": "Bennett",      "scenario": "Minority incorrect - last name has broken internal spacing"},
+    {"file": "scenario_10", "encounter": 3, "first_name": "Olivia",  "middle_name": "",        "last_name": "Bennett",      "scenario": "Minority incorrect - last name has broken internal spacing"},
+    {"file": "scenario_10", "encounter": 4, "first_name": "Olivia",  "middle_name": "",        "last_name": "Ben nett",     "scenario": "Minority incorrect - last name has broken internal spacing"},
+
+    # scenario_11
+    {"file": "scenario_11", "encounter": 1, "first_name": "Henry",   "middle_name": "James",   "last_name": "Cooper",       "scenario": "Minority incorrect - middle name has broken internal spacing"},
+    {"file": "scenario_11", "encounter": 2, "first_name": "Henry",   "middle_name": "James",   "last_name": "Cooper",       "scenario": "Minority incorrect - middle name has broken internal spacing"},
+    {"file": "scenario_11", "encounter": 3, "first_name": "Henry",   "middle_name": "James",   "last_name": "Cooper",       "scenario": "Minority incorrect - middle name has broken internal spacing"},
+    {"file": "scenario_11", "encounter": 4, "first_name": "Henry",   "middle_name": "Ja mes",  "last_name": "Cooper",       "scenario": "Minority incorrect - middle name has broken internal spacing"},
+
+    # scenario_12
+    {"file": "scenario_12", "encounter": 1, "first_name": "Arthur",  "middle_name": "Lee",     "last_name": "Walker",       "scenario": "Minority incorrect - middle name split across middle and last name"},
+    {"file": "scenario_12", "encounter": 2, "first_name": "Arthur",  "middle_name": "Lee",     "last_name": "Walker",       "scenario": "Minority incorrect - middle name split across middle and last name"},
+    {"file": "scenario_12", "encounter": 3, "first_name": "Arthur",  "middle_name": "Lee",     "last_name": "Walker",       "scenario": "Minority incorrect - middle name split across middle and last name"},
+    {"file": "scenario_12", "encounter": 4, "first_name": "Arthur",  "middle_name": "Le",      "last_name": "e Walker",     "scenario": "Minority incorrect - middle name split across middle and last name"},
+
+    # scenario_13
+    {"file": "scenario_13", "encounter": 1, "first_name": "Brian",   "middle_name": "C",       "last_name": "Foster",       "scenario": "Minority incorrect - last name duplicates middle name"},
+    {"file": "scenario_13", "encounter": 2, "first_name": "Brian",   "middle_name": "C",       "last_name": "Foster",       "scenario": "Minority incorrect - last name duplicates middle name"},
+    {"file": "scenario_13", "encounter": 3, "first_name": "Brian",   "middle_name": "C",       "last_name": "Foster",       "scenario": "Minority incorrect - last name duplicates middle name"},
+    {"file": "scenario_13", "encounter": 4, "first_name": "Brian",   "middle_name": "C",       "last_name": "C Foster",     "scenario": "Minority incorrect - last name duplicates middle name"},
+
+    # scenario_14
+    {"file": "scenario_14", "encounter": 1, "first_name": "John",    "middle_name": "Andrew",  "last_name": "Miller",       "scenario": "Middle-name variants - full, initial, and blank in same file"},
+    {"file": "scenario_14", "encounter": 2, "first_name": "John",    "middle_name": "Andrew",  "last_name": "Miller",       "scenario": "Middle-name variants - full, initial, and blank in same file"},
+    {"file": "scenario_14", "encounter": 3, "first_name": "John",    "middle_name": "A",       "last_name": "Miller",       "scenario": "Middle-name variants - full, initial, and blank in same file"},
+    {"file": "scenario_14", "encounter": 4, "first_name": "John",    "middle_name": "",        "last_name": "Miller",       "scenario": "Middle-name variants - full, initial, and blank in same file"},
+
+    # scenario_15
+    {"file": "scenario_15", "encounter": 1, "first_name": "Charles", "middle_name": "W",       "last_name": "Clifford",     "scenario": "Different valid first name should not be forced to majority"},
+    {"file": "scenario_15", "encounter": 2, "first_name": "Charles", "middle_name": "W",       "last_name": "Clifford",     "scenario": "Different valid first name should not be forced to majority"},
+    {"file": "scenario_15", "encounter": 3, "first_name": "Charles", "middle_name": "W",       "last_name": "Clifford",     "scenario": "Different valid first name should not be forced to majority"},
+    {"file": "scenario_15", "encounter": 4, "first_name": "Betty",   "middle_name": "W",       "last_name": "Clifford",     "scenario": "Different valid first name should not be forced to majority"},
+
+    # scenario_16
+    {"file": "scenario_16", "encounter": 1, "first_name": "Alex",    "middle_name": "G",       "last_name": "Norton",       "scenario": "Uncommon but valid first name should not normalize to common majority"},
+    {"file": "scenario_16", "encounter": 2, "first_name": "Alex",    "middle_name": "G",       "last_name": "Norton",       "scenario": "Uncommon but valid first name should not normalize to common majority"},
+    {"file": "scenario_16", "encounter": 3, "first_name": "Alex",    "middle_name": "G",       "last_name": "Norton",       "scenario": "Uncommon but valid first name should not normalize to common majority"},
+    {"file": "scenario_16", "encounter": 4, "first_name": "Alyx",    "middle_name": "G",       "last_name": "Norton",       "scenario": "Uncommon but valid first name should not normalize to common majority"},
+
+    # scenario_17
+    {"file": "scenario_17", "encounter": 1, "first_name": "Julia",   "middle_name": "R",       "last_name": "Miller",       "scenario": "Minority incorrect - probable last-name typo"},
+    {"file": "scenario_17", "encounter": 2, "first_name": "Julia",   "middle_name": "R",       "last_name": "Miller",       "scenario": "Minority incorrect - probable last-name typo"},
+    {"file": "scenario_17", "encounter": 3, "first_name": "Julia",   "middle_name": "R",       "last_name": "Miller",       "scenario": "Minority incorrect - probable last-name typo"},
+    {"file": "scenario_17", "encounter": 4, "first_name": "Julia",   "middle_name": "R",       "last_name": "Miler",        "scenario": "Minority incorrect - probable last-name typo"},
+
+    # scenario_18
+    {"file": "scenario_18", "encounter": 1, "first_name": "Julia",   "middle_name": "R",       "last_name": "Miler",        "scenario": "Majority incorrect - probable last-name typo, minority correct"},
+    {"file": "scenario_18", "encounter": 2, "first_name": "Julia",   "middle_name": "R",       "last_name": "Miler",        "scenario": "Majority incorrect - probable last-name typo, minority correct"},
+    {"file": "scenario_18", "encounter": 3, "first_name": "Julia",   "middle_name": "R",       "last_name": "Miler",        "scenario": "Majority incorrect - probable last-name typo, minority correct"},
+    {"file": "scenario_18", "encounter": 4, "first_name": "Julia",   "middle_name": "R",       "last_name": "Miller",       "scenario": "Majority incorrect - probable last-name typo, minority correct"},
+
+    # scenario_19
+    {"file": "scenario_19", "encounter": 1, "first_name": "Emma",    "middle_name": "Rose",    "last_name": "Hill",         "scenario": "Two different valid people in same file with equal counts"},
+    {"file": "scenario_19", "encounter": 2, "first_name": "Emma",    "middle_name": "Rose",    "last_name": "Hill",         "scenario": "Two different valid people in same file with equal counts"},
+    {"file": "scenario_19", "encounter": 3, "first_name": "Ethan",   "middle_name": "Paul",    "last_name": "Hill",         "scenario": "Two different valid people in same file with equal counts"},
+    {"file": "scenario_19", "encounter": 4, "first_name": "Ethan",   "middle_name": "Paul",    "last_name": "Hill",         "scenario": "Two different valid people in same file with equal counts"},
+
+    # scenario_20
+    {"file": "scenario_20", "encounter": 1, "first_name": "Nelson",  "middle_name": "R",       "last_name": "David",        "scenario": "Majority incorrect - full name swapped, minority correct"},
+    {"file": "scenario_20", "encounter": 2, "first_name": "Nelson",  "middle_name": "R",       "last_name": "David",        "scenario": "Majority incorrect - full name swapped, minority correct"},
+    {"file": "scenario_20", "encounter": 3, "first_name": "Nelson",  "middle_name": "R",       "last_name": "David",        "scenario": "Majority incorrect - full name swapped, minority correct"},
+    {"file": "scenario_20", "encounter": 4, "first_name": "David",   "middle_name": "R",       "last_name": "Nelson",       "scenario": "Majority incorrect - full name swapped, minority correct"},
+
+    # scenario_21
+    {"file": "scenario_21", "encounter": 1, "first_name": "Miller",  "middle_name": "Andrew",  "last_name": "John",         "scenario": "Single encounter only - full first and last swap"},
+
+    # scenario_22
+    {"file": "scenario_22", "encounter": 1, "first_name": "An na",   "middle_name": "",        "last_name": "Thompson",     "scenario": "Single encounter only - first name has broken internal spacing"},
+
+    # scenario_23
+    {"file": "scenario_23", "encounter": 1, "first_name": "Alice",   "middle_name": "Marie",   "last_name": "Jordan",       "scenario": "Equal-count middle-name variants - full and initial"},
+    {"file": "scenario_23", "encounter": 2, "first_name": "Alice",   "middle_name": "Marie",   "last_name": "Jordan",       "scenario": "Equal-count middle-name variants - full and initial"},
+    {"file": "scenario_23", "encounter": 3, "first_name": "Alice",   "middle_name": "M",       "last_name": "Jordan",       "scenario": "Equal-count middle-name variants - full and initial"},
+    {"file": "scenario_23", "encounter": 4, "first_name": "Alice",   "middle_name": "M",       "last_name": "Jordan",       "scenario": "Equal-count middle-name variants - full and initial"},
+
+    # scenario_24
+    {"file": "scenario_24", "encounter": 1, "first_name": "Marie",   "middle_name": "G",       "last_name": "Britou",       "scenario": "Minority incorrect - middle name merged into last name with valid majority support"},
+    {"file": "scenario_24", "encounter": 2, "first_name": "Marie",   "middle_name": "G",       "last_name": "Britou",       "scenario": "Minority incorrect - middle name merged into last name with valid majority support"},
+    {"file": "scenario_24", "encounter": 3, "first_name": "Marie",   "middle_name": "G",       "last_name": "Britou",       "scenario": "Minority incorrect - middle name merged into last name with valid majority support"},
+    {"file": "scenario_24", "encounter": 4, "first_name": "Marie",   "middle_name": "",        "last_name": "G Britou",     "scenario": "Minority incorrect - middle name merged into last name with valid majority support"},
+
+    # scenario_25
+    {"file": "scenario_25", "encounter": 1, "first_name": "Mark",    "middle_name": "T",       "last_name": "Lewis",        "scenario": "Different valid last name should not be forced to majority"},
+    {"file": "scenario_25", "encounter": 2, "first_name": "Mark",    "middle_name": "T",       "last_name": "Lewis",        "scenario": "Different valid last name should not be forced to majority"},
+    {"file": "scenario_25", "encounter": 3, "first_name": "Mark",    "middle_name": "T",       "last_name": "Lewis",        "scenario": "Different valid last name should not be forced to majority"},
+    {"file": "scenario_25", "encounter": 4, "first_name": "Mark",    "middle_name": "T",       "last_name": "Harris",       "scenario": "Different valid last name should not be forced to majority"},
+])
+
+df
