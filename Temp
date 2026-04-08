@@ -163,3 +163,50 @@ Return one final classification for the candidate person.
   "is_member": "patient" | "not_patient" | "unknown",
   "reason": "Short evidence-based explanation based only on the provided contexts."
 }
+
+
+from __future__ import annotations
+
+from enum import Enum
+
+from pydantic import BaseModel, Field
+from typing_extensions import Annotated
+
+
+class MemberClassification(str, Enum):
+    patient = "patient"
+    not_patient = "not_patient"
+    unknown = "unknown"
+
+
+ReasonText = Annotated[
+    str,
+    Field(
+        min_length=1,
+        description=(
+            "Short evidence-based explanation based only on the provided document contexts. "
+            "Do not invent facts. Explain why the candidate person is classified as "
+            "'patient', 'not_patient', or 'unknown'."
+        ),
+    ),
+]
+
+
+class MemberIdentityVerificationResponse(BaseModel):
+    is_member: MemberClassification = Field(
+        ...,
+        description=(
+            "Final classification for the candidate person. "
+            "Must be exactly one of: 'patient', 'not_patient', 'unknown'."
+        ),
+    )
+    reason: ReasonText = Field(
+        ...,
+        description=(
+            "Short reason derived only from the provided context chunks, mentioning the "
+            "strongest supporting evidence such as patient labels, demographic fields, "
+            "provider/staff markers, or lack/conflict of evidence."
+        ),
+    )
+
+    model_config = {"extra": "forbid"}
