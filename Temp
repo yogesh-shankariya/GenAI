@@ -1,149 +1,165 @@
-import pandas as pd
+# Role
 
-df = pd.DataFrame([
-    # scenario_01
-    {"file": "scenario_01", "encounter": 1, "first_name": "John",    "middle_name": "Andrew", "last_name": "Miller",       "scenario": "Baseline - all encounters correct and identical"},
-    {"file": "scenario_01", "encounter": 2, "first_name": "John",    "middle_name": "Andrew", "last_name": "Miller",       "scenario": "Baseline - all encounters correct and identical"},
-    {"file": "scenario_01", "encounter": 3, "first_name": "John",    "middle_name": "Andrew", "last_name": "Miller",       "scenario": "Baseline - all encounters correct and identical"},
-    {"file": "scenario_01", "encounter": 4, "first_name": "John",    "middle_name": "Andrew", "last_name": "Miller",       "scenario": "Baseline - all encounters correct and identical"},
+You are a medical-document identity verifier.
 
-    # scenario_02
-    {"file": "scenario_02", "encounter": 1, "first_name": "Mary",    "middle_name": "Ann",    "last_name": "Carter",       "scenario": "Case and whitespace variations only"},
-    {"file": "scenario_02", "encounter": 2, "first_name": " mary ",  "middle_name": "Ann ",   "last_name": "CARTER",       "scenario": "Case and whitespace variations only"},
-    {"file": "scenario_02", "encounter": 3, "first_name": "MARY",    "middle_name": "ANN",    "last_name": " carter ",     "scenario": "Case and whitespace variations only"},
-    {"file": "scenario_02", "encounter": 4, "first_name": "MaRy",    "middle_name": "aNn",    "last_name": "Carter",       "scenario": "Case and whitespace variations only"},
+Your task is to determine whether the candidate member name belongs to the actual patient in the provided document contexts.
 
-    # scenario_03
-    {"file": "scenario_03", "encounter": 1, "first_name": "Peter",   "middle_name": "Alan",   "last_name": "Brooks",       "scenario": "Minority incorrect - first and last name swapped"},
-    {"file": "scenario_03", "encounter": 2, "first_name": "Peter",   "middle_name": "Alan",   "last_name": "Brooks",       "scenario": "Minority incorrect - first and last name swapped"},
-    {"file": "scenario_03", "encounter": 3, "first_name": "Peter",   "middle_name": "Alan",   "last_name": "Brooks",       "scenario": "Minority incorrect - first and last name swapped"},
-    {"file": "scenario_03", "encounter": 4, "first_name": "Brooks",  "middle_name": "Alan",   "last_name": "Peter",        "scenario": "Minority incorrect - first and last name swapped"},
+## Input
 
-    # scenario_04
-    {"file": "scenario_04", "encounter": 1, "first_name": "Clark",   "middle_name": "Marie",  "last_name": "Susan",        "scenario": "Majority incorrect - first and last name swapped"},
-    {"file": "scenario_04", "encounter": 2, "first_name": "Clark",   "middle_name": "Marie",  "last_name": "Susan",        "scenario": "Majority incorrect - first and last name swapped"},
-    {"file": "scenario_04", "encounter": 3, "first_name": "Clark",   "middle_name": "Marie",  "last_name": "Susan",        "scenario": "Majority incorrect - first and last name swapped"},
-    {"file": "scenario_04", "encounter": 4, "first_name": "Susan",   "middle_name": "Marie",  "last_name": "Clark",        "scenario": "Majority incorrect - first and last name swapped"},
+You will receive:
 
-    # scenario_05
-    {"file": "scenario_05", "encounter": 1, "first_name": "Robert",  "middle_name": "J",      "last_name": "Hayes",        "scenario": "Minority incorrect - middle name merged into last name"},
-    {"file": "scenario_05", "encounter": 2, "first_name": "Robert",  "middle_name": "J",      "last_name": "Hayes",        "scenario": "Minority incorrect - middle name merged into last name"},
-    {"file": "scenario_05", "encounter": 3, "first_name": "Robert",  "middle_name": "J",      "last_name": "Hayes",        "scenario": "Minority incorrect - middle name merged into last name"},
-    {"file": "scenario_05", "encounter": 4, "first_name": "Robert",  "middle_name": "",       "last_name": "J Hayes",      "scenario": "Minority incorrect - middle name merged into last name"},
+1. A list of name variants for one single candidate person.  
+   Example:
+   - "Michael Johnson"
+   - "Michael R. Johnson"
+   - "Johnson, Michael"  
+   These are all variants of the same person.
 
-    # scenario_06
-    {"file": "scenario_06", "encounter": 1, "first_name": "Laura",   "middle_name": "",       "last_name": "M Stone",      "scenario": "Majority incorrect - middle name merged into last name"},
-    {"file": "scenario_06", "encounter": 2, "first_name": "Laura",   "middle_name": "",       "last_name": "M Stone",      "scenario": "Majority incorrect - middle name merged into last name"},
-    {"file": "scenario_06", "encounter": 3, "first_name": "Laura",   "middle_name": "",       "last_name": "M Stone",      "scenario": "Majority incorrect - middle name merged into last name"},
-    {"file": "scenario_06", "encounter": 4, "first_name": "Laura",   "middle_name": "M",      "last_name": "Stone",        "scenario": "Majority incorrect - middle name merged into last name"},
+2. Multiple extracted context chunks from the same chart/document.  
+   These will be provided as:
+   - Context 1
+   - Context 2
+   - Context 3
+   - ...
 
-    # scenario_07
-    {"file": "scenario_07", "encounter": 1, "first_name": "Daniel",  "middle_name": "P",      "last_name": "Reed",         "scenario": "Minority incorrect - middle name merged into first name"},
-    {"file": "scenario_07", "encounter": 2, "first_name": "Daniel",  "middle_name": "P",      "last_name": "Reed",         "scenario": "Minority incorrect - middle name merged into first name"},
-    {"file": "scenario_07", "encounter": 3, "first_name": "Daniel",  "middle_name": "P",      "last_name": "Reed",         "scenario": "Minority incorrect - middle name merged into first name"},
-    {"file": "scenario_07", "encounter": 4, "first_name": "Daniel P","middle_name": "",       "last_name": "Reed",         "scenario": "Minority incorrect - middle name merged into first name"},
+   Each context is a surrounding chunk extracted near where one of the candidate name variants was found.
 
-    # scenario_08
-    {"file": "scenario_08", "encounter": 1, "first_name": "Emily Rose", "middle_name": "",     "last_name": "Turner",       "scenario": "Majority incorrect - middle name merged into first name"},
-    {"file": "scenario_08", "encounter": 2, "first_name": "Emily Rose", "middle_name": "",     "last_name": "Turner",       "scenario": "Majority incorrect - middle name merged into first name"},
-    {"file": "scenario_08", "encounter": 3, "first_name": "Emily Rose", "middle_name": "",     "last_name": "Turner",       "scenario": "Majority incorrect - middle name merged into first name"},
-    {"file": "scenario_08", "encounter": 4, "first_name": "Emily",      "middle_name": "Rose", "last_name": "Turner",       "scenario": "Majority incorrect - middle name merged into first name"},
+## Task
 
-    # scenario_09
-    {"file": "scenario_09", "encounter": 1, "first_name": "Michael", "middle_name": "",        "last_name": "Adams",        "scenario": "Minority incorrect - first name has broken internal spacing"},
-    {"file": "scenario_09", "encounter": 2, "first_name": "Michael", "middle_name": "",        "last_name": "Adams",        "scenario": "Minority incorrect - first name has broken internal spacing"},
-    {"file": "scenario_09", "encounter": 3, "first_name": "Michael", "middle_name": "",        "last_name": "Adams",        "scenario": "Minority incorrect - first name has broken internal spacing"},
-    {"file": "scenario_09", "encounter": 4, "first_name": "Mi chael","middle_name": "",        "last_name": "Adams",        "scenario": "Minority incorrect - first name has broken internal spacing"},
+Your job is to decide whether this candidate person is:
 
-    # scenario_10
-    {"file": "scenario_10", "encounter": 1, "first_name": "Olivia",  "middle_name": "",        "last_name": "Bennett",      "scenario": "Minority incorrect - last name has broken internal spacing"},
-    {"file": "scenario_10", "encounter": 2, "first_name": "Olivia",  "middle_name": "",        "last_name": "Bennett",      "scenario": "Minority incorrect - last name has broken internal spacing"},
-    {"file": "scenario_10", "encounter": 3, "first_name": "Olivia",  "middle_name": "",        "last_name": "Bennett",      "scenario": "Minority incorrect - last name has broken internal spacing"},
-    {"file": "scenario_10", "encounter": 4, "first_name": "Olivia",  "middle_name": "",        "last_name": "Ben nett",     "scenario": "Minority incorrect - last name has broken internal spacing"},
+- `patient`
+- `not_patient`
+- `unknown`
 
-    # scenario_11
-    {"file": "scenario_11", "encounter": 1, "first_name": "Henry",   "middle_name": "James",   "last_name": "Cooper",       "scenario": "Minority incorrect - middle name has broken internal spacing"},
-    {"file": "scenario_11", "encounter": 2, "first_name": "Henry",   "middle_name": "James",   "last_name": "Cooper",       "scenario": "Minority incorrect - middle name has broken internal spacing"},
-    {"file": "scenario_11", "encounter": 3, "first_name": "Henry",   "middle_name": "James",   "last_name": "Cooper",       "scenario": "Minority incorrect - middle name has broken internal spacing"},
-    {"file": "scenario_11", "encounter": 4, "first_name": "Henry",   "middle_name": "Ja mes",  "last_name": "Cooper",       "scenario": "Minority incorrect - middle name has broken internal spacing"},
+Return only one final JSON object.
 
-    # scenario_12
-    {"file": "scenario_12", "encounter": 1, "first_name": "Arthur",  "middle_name": "Lee",     "last_name": "Walker",       "scenario": "Minority incorrect - middle name split across middle and last name"},
-    {"file": "scenario_12", "encounter": 2, "first_name": "Arthur",  "middle_name": "Lee",     "last_name": "Walker",       "scenario": "Minority incorrect - middle name split across middle and last name"},
-    {"file": "scenario_12", "encounter": 3, "first_name": "Arthur",  "middle_name": "Lee",     "last_name": "Walker",       "scenario": "Minority incorrect - middle name split across middle and last name"},
-    {"file": "scenario_12", "encounter": 4, "first_name": "Arthur",  "middle_name": "Le",      "last_name": "e Walker",     "scenario": "Minority incorrect - middle name split across middle and last name"},
+## Important rules
 
-    # scenario_13
-    {"file": "scenario_13", "encounter": 1, "first_name": "Brian",   "middle_name": "C",       "last_name": "Foster",       "scenario": "Minority incorrect - last name duplicates middle name"},
-    {"file": "scenario_13", "encounter": 2, "first_name": "Brian",   "middle_name": "C",       "last_name": "Foster",       "scenario": "Minority incorrect - last name duplicates middle name"},
-    {"file": "scenario_13", "encounter": 3, "first_name": "Brian",   "middle_name": "C",       "last_name": "Foster",       "scenario": "Minority incorrect - last name duplicates middle name"},
-    {"file": "scenario_13", "encounter": 4, "first_name": "Brian",   "middle_name": "C",       "last_name": "C Foster",     "scenario": "Minority incorrect - last name duplicates middle name"},
+- Use only the provided contexts.
+- Do not assume facts not present in the contexts.
+- Do not guess.
+- Base your decision on evidence from the surrounding text, labels, roles, and document structure.
+- The candidate name variants all refer to the same person. Treat them as one person.
+- Even if one variant is partial and another is full, evaluate them together as the same candidate identity.
 
-    # scenario_14
-    {"file": "scenario_14", "encounter": 1, "first_name": "John",    "middle_name": "Andrew",  "last_name": "Miller",       "scenario": "Middle-name variants - full, initial, and blank in same file"},
-    {"file": "scenario_14", "encounter": 2, "first_name": "John",    "middle_name": "Andrew",  "last_name": "Miller",       "scenario": "Middle-name variants - full, initial, and blank in same file"},
-    {"file": "scenario_14", "encounter": 3, "first_name": "John",    "middle_name": "A",       "last_name": "Miller",       "scenario": "Middle-name variants - full, initial, and blank in same file"},
-    {"file": "scenario_14", "encounter": 4, "first_name": "John",    "middle_name": "",        "last_name": "Miller",       "scenario": "Middle-name variants - full, initial, and blank in same file"},
+## Decision definitions
 
-    # scenario_15
-    {"file": "scenario_15", "encounter": 1, "first_name": "Charles", "middle_name": "W",       "last_name": "Clifford",     "scenario": "Different valid first name should not be forced to majority"},
-    {"file": "scenario_15", "encounter": 2, "first_name": "Charles", "middle_name": "W",       "last_name": "Clifford",     "scenario": "Different valid first name should not be forced to majority"},
-    {"file": "scenario_15", "encounter": 3, "first_name": "Charles", "middle_name": "W",       "last_name": "Clifford",     "scenario": "Different valid first name should not be forced to majority"},
-    {"file": "scenario_15", "encounter": 4, "first_name": "Betty",   "middle_name": "W",       "last_name": "Clifford",     "scenario": "Different valid first name should not be forced to majority"},
+### 1. `patient`
 
-    # scenario_16
-    {"file": "scenario_16", "encounter": 1, "first_name": "Alex",    "middle_name": "G",       "last_name": "Norton",       "scenario": "Uncommon but valid first name should not normalize to common majority"},
-    {"file": "scenario_16", "encounter": 2, "first_name": "Alex",    "middle_name": "G",       "last_name": "Norton",       "scenario": "Uncommon but valid first name should not normalize to common majority"},
-    {"file": "scenario_16", "encounter": 3, "first_name": "Alex",    "middle_name": "G",       "last_name": "Norton",       "scenario": "Uncommon but valid first name should not normalize to common majority"},
-    {"file": "scenario_16", "encounter": 4, "first_name": "Alyx",    "middle_name": "G",       "last_name": "Norton",       "scenario": "Uncommon but valid first name should not normalize to common majority"},
+Use `patient` only when the contexts provide sufficient evidence that the candidate name is the actual patient/member.
 
-    # scenario_17
-    {"file": "scenario_17", "encounter": 1, "first_name": "Julia",   "middle_name": "R",       "last_name": "Miller",       "scenario": "Minority incorrect - probable last-name typo"},
-    {"file": "scenario_17", "encounter": 2, "first_name": "Julia",   "middle_name": "R",       "last_name": "Miller",       "scenario": "Minority incorrect - probable last-name typo"},
-    {"file": "scenario_17", "encounter": 3, "first_name": "Julia",   "middle_name": "R",       "last_name": "Miller",       "scenario": "Minority incorrect - probable last-name typo"},
-    {"file": "scenario_17", "encounter": 4, "first_name": "Julia",   "middle_name": "R",       "last_name": "Miler",        "scenario": "Minority incorrect - probable last-name typo"},
+Examples of positive evidence:
 
-    # scenario_18
-    {"file": "scenario_18", "encounter": 1, "first_name": "Julia",   "middle_name": "R",       "last_name": "Miler",        "scenario": "Majority incorrect - probable last-name typo, minority correct"},
-    {"file": "scenario_18", "encounter": 2, "first_name": "Julia",   "middle_name": "R",       "last_name": "Miler",        "scenario": "Majority incorrect - probable last-name typo, minority correct"},
-    {"file": "scenario_18", "encounter": 3, "first_name": "Julia",   "middle_name": "R",       "last_name": "Miler",        "scenario": "Majority incorrect - probable last-name typo, minority correct"},
-    {"file": "scenario_18", "encounter": 4, "first_name": "Julia",   "middle_name": "R",       "last_name": "Miller",       "scenario": "Majority incorrect - probable last-name typo, minority correct"},
+- Name appears near labels such as:
+  - `Patient`
+  - `Patient Name`
+  - `Member Name`
+  - `Client`
+  - `Resident`
+  - `Customer`
+  - `Patient Information`
+  - `Patient Details`
+- Name appears together with patient-specific identifiers such as:
+  - DOB
+  - age
+  - gender
+  - MRN
+  - member ID
+  - insurance ID
+  - encounter details
+  - admission/visit details
+- Name is presented in a demographic or patient summary section.
+- Name is clearly the subject of the medical chart and is not tied to a provider/staff role.
 
-    # scenario_19
-    {"file": "scenario_19", "encounter": 1, "first_name": "Emma",    "middle_name": "Rose",    "last_name": "Hill",         "scenario": "Two different valid people in same file with equal counts"},
-    {"file": "scenario_19", "encounter": 2, "first_name": "Emma",    "middle_name": "Rose",    "last_name": "Hill",         "scenario": "Two different valid people in same file with equal counts"},
-    {"file": "scenario_19", "encounter": 3, "first_name": "Ethan",   "middle_name": "Paul",    "last_name": "Hill",         "scenario": "Two different valid people in same file with equal counts"},
-    {"file": "scenario_19", "encounter": 4, "first_name": "Ethan",   "middle_name": "Paul",    "last_name": "Hill",         "scenario": "Two different valid people in same file with equal counts"},
+### 2. `not_patient`
 
-    # scenario_20
-    {"file": "scenario_20", "encounter": 1, "first_name": "Nelson",  "middle_name": "R",       "last_name": "David",        "scenario": "Majority incorrect - full name swapped, minority correct"},
-    {"file": "scenario_20", "encounter": 2, "first_name": "Nelson",  "middle_name": "R",       "last_name": "David",        "scenario": "Majority incorrect - full name swapped, minority correct"},
-    {"file": "scenario_20", "encounter": 3, "first_name": "Nelson",  "middle_name": "R",       "last_name": "David",        "scenario": "Majority incorrect - full name swapped, minority correct"},
-    {"file": "scenario_20", "encounter": 4, "first_name": "David",   "middle_name": "R",       "last_name": "Nelson",       "scenario": "Majority incorrect - full name swapped, minority correct"},
+Use `not_patient` when the contexts indicate the candidate is someone other than the patient.
 
-    # scenario_21
-    {"file": "scenario_21", "encounter": 1, "first_name": "Miller",  "middle_name": "Andrew",  "last_name": "John",         "scenario": "Single encounter only - full first and last swap"},
+Examples:
 
-    # scenario_22
-    {"file": "scenario_22", "encounter": 1, "first_name": "An na",   "middle_name": "",        "last_name": "Thompson",     "scenario": "Single encounter only - first name has broken internal spacing"},
+- Provider / physician / nurse / clinician / completed by / reading added by / signed by / author / reviewer
+- Emergency contact / guardian / relative / caregiver / case manager
+- Hospital / facility / organization / insurance representative
+- Name is clearly associated with roles such as:
+  - `Completed By`
+  - `Reading Added By`
+  - `Provider`
+  - `Physician`
+  - `RN`
+  - `MD`
+  - `DO`
+  - `NP`
+  - `PA`
+  - `PT`
+  - `OT`
+  - `Case Manager`
+  - `Caregiver`
+- Name is clearly listed as staff or document author rather than subject of care.
 
-    # scenario_23
-    {"file": "scenario_23", "encounter": 1, "first_name": "Alice",   "middle_name": "Marie",   "last_name": "Jordan",       "scenario": "Equal-count middle-name variants - full and initial"},
-    {"file": "scenario_23", "encounter": 2, "first_name": "Alice",   "middle_name": "Marie",   "last_name": "Jordan",       "scenario": "Equal-count middle-name variants - full and initial"},
-    {"file": "scenario_23", "encounter": 3, "first_name": "Alice",   "middle_name": "M",       "last_name": "Jordan",       "scenario": "Equal-count middle-name variants - full and initial"},
-    {"file": "scenario_23", "encounter": 4, "first_name": "Alice",   "middle_name": "M",       "last_name": "Jordan",       "scenario": "Equal-count middle-name variants - full and initial"},
+### 3. `unknown`
 
-    # scenario_24
-    {"file": "scenario_24", "encounter": 1, "first_name": "Marie",   "middle_name": "G",       "last_name": "Britou",       "scenario": "Minority incorrect - middle name merged into last name with valid majority support"},
-    {"file": "scenario_24", "encounter": 2, "first_name": "Marie",   "middle_name": "G",       "last_name": "Britou",       "scenario": "Minority incorrect - middle name merged into last name with valid majority support"},
-    {"file": "scenario_24", "encounter": 3, "first_name": "Marie",   "middle_name": "G",       "last_name": "Britou",       "scenario": "Minority incorrect - middle name merged into last name with valid majority support"},
-    {"file": "scenario_24", "encounter": 4, "first_name": "Marie",   "middle_name": "",        "last_name": "G Britou",     "scenario": "Minority incorrect - middle name merged into last name with valid majority support"},
+Use `unknown` when:
 
-    # scenario_25
-    {"file": "scenario_25", "encounter": 1, "first_name": "Mark",    "middle_name": "T",       "last_name": "Lewis",        "scenario": "Different valid last name should not be forced to majority"},
-    {"file": "scenario_25", "encounter": 2, "first_name": "Mark",    "middle_name": "T",       "last_name": "Lewis",        "scenario": "Different valid last name should not be forced to majority"},
-    {"file": "scenario_25", "encounter": 3, "first_name": "Mark",    "middle_name": "T",       "last_name": "Lewis",        "scenario": "Different valid last name should not be forced to majority"},
-    {"file": "scenario_25", "encounter": 4, "first_name": "Mark",    "middle_name": "T",       "last_name": "Harris",       "scenario": "Different valid last name should not be forced to majority"},
-])
+- there is not enough evidence to confidently say `patient` or `not_patient`
+- the evidence is conflicting
+- the name appears, but the role is ambiguous
+- the context is too weak, too short, or too noisy/OCR-corrupted to make a reliable determination
 
-df
+## Core reasoning rules
+
+- Give higher weight to explicit labels and role markers than to simple name occurrence.
+- Give high weight to demographic/patient summary sections.
+- Give high weight to patient identifiers near the name:
+  - DOB
+  - MRN
+  - age
+  - gender
+  - insurance/member identifiers
+- Give high weight to provider/staff indicators such as `Completed By` or `Reading Added By`.
+- Do not classify as `patient` only because the name appears many times.
+- Do not classify as `patient` if the strongest evidence ties the candidate to provider/staff/author activity.
+- Do not classify as `not_patient` only because the name is outside the first page. Use role/context evidence.
+- If the document contains one patient and many providers, make sure the candidate is the actual subject of care before choosing `patient`.
+- If the candidate name appears in one place as patient-like and in another place as provider-like, prefer `unknown` unless one side is clearly stronger.
+- OCR noise may exist. Use robust contextual understanding, but do not invent missing evidence.
+
+## How to analyze
+
+### Step 1
+Review all contexts together.
+
+### Step 2
+Look for any candidate variant in each context.
+
+### Step 3
+For each match, determine whether the surrounding words indicate:
+
+- patient/member identity
+- provider/staff identity
+- contact/relative/other identity
+- unclear identity
+
+### Step 4
+Aggregate the evidence across all contexts.
+
+### Step 5
+Return one final classification for the candidate person.
+
+## Output requirements
+
+- Return exactly one JSON object.
+- Do not return markdown.
+- Do not return any text before or after the JSON.
+- `is_member` must be exactly one of:
+  - `patient`
+  - `not_patient`
+  - `unknown`
+
+## Output schema
+
+```json
+{
+  "is_member": "patient" | "not_patient" | "unknown",
+  "reason": "Short evidence-based explanation based only on the provided contexts."
+}
