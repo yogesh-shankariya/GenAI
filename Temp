@@ -210,3 +210,20 @@ class MemberIdentityVerificationResponse(BaseModel):
     )
 
     model_config = {"extra": "forbid"}
+
+
+
+
+- Treat minor name-format variations as the same candidate identity when first name and last name clearly match and there is no contradictory evidence. This includes:
+  - missing middle name
+  - present middle name
+  - missing middle initial
+  - present middle initial
+  - punctuation differences
+  - spacing differences
+  - reversed order of the same name components
+
+- Example: `Charles Clifford`, `Charles W. Clifford`, and `CLIFFORD, CHARLES W` can still refer to the same person unless the contexts provide conflicting evidence that they are different people.
+
+- Do not classify as `unknown` only because one version of the candidate name includes a middle name or middle initial and another version does not, if the first name and last name match and there is no conflicting evidence.
+- If first name and last name match, treat an extra or missing middle name / middle initial as a non-critical variation unless the contexts show conflict such as different DOB, different MRN, different role, or clearly different identities.
