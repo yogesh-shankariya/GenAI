@@ -8,14 +8,14 @@ Your task is to determine whether the candidate member name belongs to the actua
 
 You will receive:
 
-1. A list of name variants for one single candidate person.  
+1. A list of name variants for one single candidate person.
    Example:
    - "Michael Johnson"
    - "Michael R. Johnson"
-   - "Johnson, Michael"  
+   - "Johnson, Michael"
    These are all variants of the same person.
 
-2. Multiple extracted context chunks from the same chart/document.  
+2. Multiple extracted context chunks from the same chart/document.
    These will be provided as:
    - Context 1
    - Context 2
@@ -43,14 +43,46 @@ Return only one final JSON object.
 - The candidate name variants all refer to the same person. Treat them as one person.
 - Even if one variant is partial and another is full, evaluate them together as the same candidate identity.
 
+## Name-variation handling
+
+Treat minor name-format variations as the same candidate identity when first name and last name clearly match and there is no contradictory evidence.
+
+This includes:
+- missing middle name
+- present middle name
+- missing middle initial
+- present middle initial
+- punctuation differences
+- spacing differences
+- capitalization differences
+- reversed order of the same name components
+
+Examples:
+- `Charles Clifford`, `Charles W. Clifford`, and `CLIFFORD, CHARLES W`
+- `Nancy Casey`, `Nancy L Casey`, and `CASEY, NANCY L`
+
+These can still refer to the same person unless the contexts provide conflicting evidence that they are different people.
+
+Do not classify as `unknown` only because:
+- one version includes a middle name or middle initial and another version does not
+- the document uses `LAST, FIRST M` format while the candidate uses `First Last`
+- the candidate omits the patient's middle initial or middle name
+
+If first name and last name match, treat an extra or missing middle name / middle initial as a non-critical variation unless the contexts show conflict such as:
+- different DOB
+- different MRN
+- different role
+- clearly different identities
+
+Exact full-string equality is not required for `patient` classification.
+
 ## Decision definitions
 
 ### 1. `patient`
 
-Use `patient` only when the contexts provide sufficient evidence that the candidate name is the actual patient/member.
+Use `patient` when the contexts provide sufficient evidence that the candidate name is the actual patient/member.
 
 Examples of positive evidence:
-
 - Name appears near labels such as:
   - `Patient`
   - `Patient Name`
@@ -72,12 +104,48 @@ Examples of positive evidence:
 - Name is presented in a demographic or patient summary section.
 - Name is clearly the subject of the medical chart and is not tied to a provider/staff role.
 
+Also classify as `patient` when the document explicitly labels a fuller patient name and the candidate is a reasonable variant of that same patient name, even if the candidate:
+- omits the middle initial
+- omits the middle name
+- uses `First Last` while the document shows `LAST, FIRST M`
+- matches an ordered subset of the explicitly labeled patient name
+
+Examples:
+- Explicit patient name: `CASEY, NANCY L`
+  Candidate: `Nancy Casey`
+  -> `patient`
+
+- Explicit patient name: `Nancy L Casey`
+  Candidate: `Nancy Casey`
+  -> `patient`
+
+- Explicit patient name: `John Andrew Miller`
+  Candidate: `John Miller`
+  -> `patient`, unless another person matches `John Miller` equally well or better
+
+- Explicit patient name: `Joan Rita Lee`
+  Candidate: `Rita Lee`
+  -> `patient`, if the document clearly identifies `Joan Rita Lee` as the patient and there is no stronger conflicting identity for `Rita Lee`
+
+If the candidate full name is explicitly labeled as the patient, classify it as `patient` even if another person with the same last name appears elsewhere in a different role such as:
+- spouse
+- attorney
+- emergency contact
+- guardian
+- durable power of attorney
+- caregiver
+
+Example:
+- Patient: `Dan Yoshimoto`
+- Another person: `Michael Yoshimoto` as durable power of attorney
+- Candidate: `Dan Yoshimoto`
+-> `patient`
+
 ### 2. `not_patient`
 
 Use `not_patient` when the contexts indicate the candidate is someone other than the patient.
 
 Examples:
-
 - Provider / physician / nurse / clinician / completed by / reading added by / signed by / author / reviewer
 - Emergency contact / guardian / relative / caregiver / case manager
 - Hospital / facility / organization / insurance representative
@@ -100,11 +168,21 @@ Examples:
 ### 3. `unknown`
 
 Use `unknown` when:
-
 - there is not enough evidence to confidently say `patient` or `not_patient`
 - the evidence is conflicting
 - the name appears, but the role is ambiguous
 - the context is too weak, too short, or too noisy/OCR-corrupted to make a reliable determination
+- omission of middle name or middle initial creates a real ambiguity with another person in the document
+- the candidate matches multiple people in the document and the contexts do not clearly resolve which one is the patient
+
+Examples of true ambiguity:
+- Explicit patient: `Nancy L Casey`
+- Another person: `Nancy A Casey`
+- Candidate: `Nancy Casey`
+-> `unknown`
+
+- Candidate is only `John`
+-> usually `unknown` unless the context explicitly resolves that shortened name to the patient
 
 ## Core reasoning rules
 
@@ -123,6 +201,8 @@ Use `unknown` when:
 - If the document contains one patient and many providers, make sure the candidate is the actual subject of care before choosing `patient`.
 - If the candidate name appears in one place as patient-like and in another place as provider-like, prefer `unknown` unless one side is clearly stronger.
 - OCR noise may exist. Use robust contextual understanding, but do not invent missing evidence.
+- Do not downgrade a candidate to `unknown` solely because the candidate lacks the patient’s middle initial or middle name, unless that omission creates a real ambiguity with another person in the document.
+- Do not treat the presence of another person with the same surname as automatic ambiguity if the candidate itself is explicitly labeled as the patient.
 
 ## How to analyze
 
@@ -134,16 +214,22 @@ Look for any candidate variant in each context.
 
 ### Step 3
 For each match, determine whether the surrounding words indicate:
-
 - patient/member identity
 - provider/staff identity
 - contact/relative/other identity
 - unclear identity
 
 ### Step 4
-Aggregate the evidence across all contexts.
+Check whether the candidate is:
+- an exact match to an explicitly labeled patient
+- a reasonable patient-name variant of an explicitly labeled patient
+- a provider/staff/contact/other person
+- genuinely ambiguous
 
 ### Step 5
+Aggregate the evidence across all contexts.
+
+### Step 6
 Return one final classification for the candidate person.
 
 ## Output requirements
@@ -158,72 +244,7 @@ Return one final classification for the candidate person.
 
 ## Output schema
 
-```json
 {
   "is_member": "patient" | "not_patient" | "unknown",
   "reason": "Short evidence-based explanation based only on the provided contexts."
 }
-
-
-from __future__ import annotations
-
-from enum import Enum
-
-from pydantic import BaseModel, Field
-from typing_extensions import Annotated
-
-
-class MemberClassification(str, Enum):
-    patient = "patient"
-    not_patient = "not_patient"
-    unknown = "unknown"
-
-
-ReasonText = Annotated[
-    str,
-    Field(
-        min_length=1,
-        description=(
-            "Short evidence-based explanation based only on the provided document contexts. "
-            "Do not invent facts. Explain why the candidate person is classified as "
-            "'patient', 'not_patient', or 'unknown'."
-        ),
-    ),
-]
-
-
-class MemberIdentityVerificationResponse(BaseModel):
-    is_member: MemberClassification = Field(
-        ...,
-        description=(
-            "Final classification for the candidate person. "
-            "Must be exactly one of: 'patient', 'not_patient', 'unknown'."
-        ),
-    )
-    reason: ReasonText = Field(
-        ...,
-        description=(
-            "Short reason derived only from the provided context chunks, mentioning the "
-            "strongest supporting evidence such as patient labels, demographic fields, "
-            "provider/staff markers, or lack/conflict of evidence."
-        ),
-    )
-
-    model_config = {"extra": "forbid"}
-
-
-
-
-- Treat minor name-format variations as the same candidate identity when first name and last name clearly match and there is no contradictory evidence. This includes:
-  - missing middle name
-  - present middle name
-  - missing middle initial
-  - present middle initial
-  - punctuation differences
-  - spacing differences
-  - reversed order of the same name components
-
-- Example: `Charles Clifford`, `Charles W. Clifford`, and `CLIFFORD, CHARLES W` can still refer to the same person unless the contexts provide conflicting evidence that they are different people.
-
-- Do not classify as `unknown` only because one version of the candidate name includes a middle name or middle initial and another version does not, if the first name and last name match and there is no conflicting evidence.
-- If first name and last name match, treat an extra or missing middle name / middle initial as a non-critical variation unless the contexts show conflict such as different DOB, different MRN, different role, or clearly different identities.
