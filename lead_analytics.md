@@ -8,26 +8,28 @@ This skill must generate SQL only. The application will execute the SQL through 
 
 ## When To Use This Skill
 
-Use `lead_analytics` when the user asks questions like:
+Use `lead_analytics` for read-only SQL analytics questions related to leads, lead counts, lead statuses, pipeline roles, lead assignment, setter assignment, lead source fields, next touch points, overdue follow-ups, and stale lead analysis.
 
-- How many leads do we have?
-- How many active leads do we have?
-- How many new leads are there?
-- How many leads are won, lost, follow-up, no-show, appointment booked, or unqualified?
-- What is the lead breakdown by status?
-- What is the lead breakdown by pipeline role?
-- Which leads have no status?
-- Which leads have no owner?
-- Which leads have no setter?
-- Which leads have no next touch point?
-- Which leads need follow-up?
-- Which leads are overdue for follow-up?
-- Which leads are stale or stuck?
-- Which source has the most leads?
-- How many leads came from Calendly, Typeform, landing page, manual, webinar, newsletter, or other?
-- How many leads are assigned to each rep?
-- How many leads are assigned to each setter?
-- How many leads were created today, this week, this month, or during a specific date range?
+Use this skill for:
+
+- Total lead counts and active lead counts.
+- New lead counts based on normalized lead status role.
+- Lead counts by pipeline role, such as won, lost, follow-up, no-show, appointment booked, unqualified, partial payment, cancelled, or rescheduled.
+- Lead breakdowns by exact status name.
+- Lead breakdowns by normalized pipeline role.
+- Leads with no status.
+- Leads with no owner or assignee.
+- Leads with no setter.
+- Leads with no next touch point.
+- Leads that need operational follow-up.
+- Leads with overdue follow-ups.
+- Stale or stuck lead analysis.
+- Lead source distribution using normalized first-touch source by default.
+- Last-touch source distribution when the user explicitly asks for latest source or last source.
+- High-level lead source enum analysis, such as Calendly, Typeform, landing page, manual, webinar, newsletter, or other.
+- Lead assignment breakdown by owner or assignee.
+- Lead setter breakdown by setter.
+- Lead creation counts and trends by today, week, month, or custom date range.
 
 ## When Not To Use This Skill
 
@@ -107,7 +109,7 @@ For aggregate analytics questions, return aggregate columns only.
 
 For list-style questions such as "which leads", select only the fields needed to answer the question, add a deterministic `ORDER BY`, and cap the result with a reasonable `LIMIT` unless the user asks for a specific limit.
 
-Default list limit: `50`.
+Default list limit: `20`.
 
 Do not include lead email or phone fields in list outputs unless the user explicitly asks for contact details.
 
@@ -218,7 +220,7 @@ LEFT JOIN marketing_sources last_ms
  AND last_ms.clerk_org_id = l.clerk_org_id
 ```
 
-Use `leads.first_source_name` and `leads.last_source_name` when a simple source report is enough.
+For source reports, prefer normalized marketing source joins by ID. Use `first_source_name` and `last_source_name` only as fallback display values when the corresponding source ID is missing or unmatched.
 
 Use `marketing_sources` when the user asks for normalized source names, aliases, archived sources, or source descriptions.
 
@@ -285,7 +287,7 @@ Meaning:
 | `PARTIAL_PAYMENT` | Lead partially paid. |
 | `WON` | Converted/won. |
 | `UNQUALIFIED` | Not qualified. |
-| `FOLLOW_UP` | Needs follow-up. |
+| `FOLLOW_UP` | Lead is in the Follow Up status role. This is not the same as operationally needing follow-up action. |
 | `LOST` | Lost lead/deal. |
 
 ## `NextTouchPointType`
@@ -340,6 +342,22 @@ ss.role = 'NO_SHOW'
 If the user asks about appointment no-show rate, no-shows by appointment type, no-shows by call date, no-shows by host, or no-shows by Calendly event, do not use this skill. Use `appointment_analytics`.
 
 ## Operational Follow-Up and Stale Lead Rules
+
+## Follow-Up Meaning
+
+When the user says "need follow-up", "needs follow-up", "needing follow-up", "follow-up needed", "waiting for follow-up", or "need action", use operational follow-up logic:
+
+- exclude terminal statuses: `WON`, `LOST`, `UNQUALIFIED`, `CANCELED`
+- include leads where `l.next_touch_point_at IS NULL OR l.next_touch_point_at < NOW()`
+
+Do not use only `ss.role = 'FOLLOW_UP'` for "need follow-up" questions.
+
+Use `ss.role = 'FOLLOW_UP'` only when the user explicitly asks for "Follow Up status", "Follow Up stage", or "marked as Follow Up".
+
+Example:
+
+- "How many Calendly leads need follow-up?" -> use `next_touch_point_at` logic.
+- "How many Calendly leads are in Follow Up status?" -> use `ss.role = 'FOLLOW_UP'`.
 
 For operational questions such as:
 
@@ -433,6 +451,67 @@ AND l.next_touch_point_at < NOW()
 
 If the user gives a specific stale timeframe, use their timeframe instead of the default stale rule.
 
+## Previous Completed Month Lead Change
+
+Use this when the user asks:
+
+- did leads increase or decrease previous month
+- previous month growth
+- last month compared to the month before
+- did leads go up or down last month
+
+Compare the previous completed month against the month before the previous completed month.
+
+Do not compare the current month against the previous month unless the user explicitly asks for current month or month-to-date.
+
+Ensure both months are returned, even if one month has zero leads.
+
+```sql
+WITH month_range AS (
+  SELECT generate_series(
+    DATE_TRUNC('month', CURRENT_DATE)::date - INTERVAL '2 months',
+    DATE_TRUNC('month', CURRENT_DATE)::date - INTERVAL '1 month',
+    INTERVAL '1 month'
+  )::date AS month_start
+),
+monthly_counts AS (
+  SELECT
+    mr.month_start,
+    COUNT(l.id) AS lead_count
+  FROM month_range mr
+  LEFT JOIN leads l
+    ON DATE_TRUNC('month', l.created_at)::date = mr.month_start
+   AND l.clerk_org_id = :org_id
+   AND l.is_deleted = false
+   AND l.created_at >= DATE_TRUNC('month', CURRENT_DATE)::date - INTERVAL '2 months'
+   AND l.created_at < DATE_TRUNC('month', CURRENT_DATE)::date
+  GROUP BY mr.month_start
+),
+monthly_with_change AS (
+  SELECT
+    month_start,
+    lead_count,
+    LAG(lead_count) OVER (ORDER BY month_start) AS previous_month_count
+  FROM monthly_counts
+)
+SELECT
+  TO_CHAR(month_start, 'Mon YYYY') AS month,
+  lead_count,
+  previous_month_count,
+  CASE
+    WHEN previous_month_count IS NULL OR previous_month_count = 0 THEN NULL
+    ELSE ROUND((lead_count - previous_month_count) * 100.0 / previous_month_count, 2)
+  END AS pct_change,
+  CASE
+    WHEN previous_month_count IS NULL THEN 'N/A'
+    WHEN lead_count > previous_month_count THEN 'Increased'
+    WHEN lead_count < previous_month_count THEN 'Decreased'
+    ELSE 'No Change'
+  END AS trend
+FROM monthly_with_change
+ORDER BY month_start ASC;
+```
+
 ## Default List Output Rules
 
 For list-style lead queries, default output fields are:
@@ -466,7 +545,7 @@ Use `LIMIT :limit` when the application passes a limit.
 If the application does not pass a limit and the user does not request one, use:
 
 ```sql
-LIMIT 50
+LIMIT 20
 ```
 
 Always use deterministic ordering, such as:
@@ -480,6 +559,57 @@ or, for follow-up/stale lists:
 ```sql
 ORDER BY l.next_touch_point_at NULLS FIRST, l.updated_at ASC, l.created_at ASC, l.id ASC
 ```
+
+For list-style queries with `LIMIT`, include the exact total matching row count whenever possible.
+
+Use:
+
+```sql
+COUNT(*) OVER() AS total_matching_rows
+```
+
+## Source Selection and Marketing Source Join Rules
+
+The `leads` table has three different source concepts:
+
+- `l.source` = high-level lead source enum, such as CALENDLY, MANUAL, TYPEFORM, WEBINAR, NEWSLETTER, LANDING_PAGE, OTHER.
+- `l.first_source_id` / `l.first_source_name` = original or first-touch marketing source.
+- `l.last_source_id` / `l.last_source_name` = latest or last-touch marketing source.
+
+Always join marketing sources by ID, not by name.
+
+Correct first source join:
+
+    LEFT JOIN marketing_sources first_ms
+      ON first_ms.id = l.first_source_id
+     AND first_ms.clerk_org_id = l.clerk_org_id
+
+Correct last source join:
+
+    LEFT JOIN marketing_sources last_ms
+      ON last_ms.id = l.last_source_id
+     AND last_ms.clerk_org_id = l.clerk_org_id
+
+Do not join using:
+
+    first_ms.name = l.first_source_name
+    last_ms.name = l.last_source_name
+
+Default source behavior:
+
+- For generic questions like "source distribution", "lead source breakdown", "which source generated the most leads", "top source", or "where are leads coming from", use first-touch source by default:
+  `l.first_source_id -> marketing_sources.id`, display `first_ms.name`.
+
+- For latest source questions like "latest source distribution", "last source breakdown", "last-touch source", "recent source", or "what was the latest source before conversion", use last-touch source:
+  `l.last_source_id -> marketing_sources.id`, display `last_ms.name`.
+
+- Use `l.first_source_name` only as fallback when `l.first_source_id` is NULL or has no matching marketing source row.
+
+- Use `l.last_source_name` only as fallback when `l.last_source_id` is NULL or has no matching marketing source row.
+
+- Use `l.source` only when the user asks for high-level source category or enum source such as Calendly, Manual, Typeform, Webinar, Newsletter, Landing Page, or Other.
+
+- Do not use raw `first_source_name` or `last_source_name` directly for distribution reports unless the user explicitly asks for raw source names.
 
 ## Common Query Patterns
 
@@ -536,7 +666,9 @@ WHERE l.clerk_org_id = :org_id
 ```sql
 SELECT
   COALESCE(ss.name, 'No Status') AS status_name,
-  COUNT(*) AS lead_count
+  COUNT(*) AS lead_count,
+  SUM(COUNT(*)) OVER() AS total_matching_leads,
+  ROUND(COUNT(*) * 100.0 / NULLIF(SUM(COUNT(*)) OVER(), 0), 2) AS percentage_of_total
 FROM leads l
 LEFT JOIN sales_statuses ss
   ON ss.id = l.status_id
@@ -552,7 +684,9 @@ ORDER BY lead_count DESC, status_name ASC;
 ```sql
 SELECT
   COALESCE(CAST(ss.role AS text), 'NO_STATUS') AS status_role,
-  COUNT(*) AS lead_count
+  COUNT(*) AS lead_count,
+  SUM(COUNT(*)) OVER() AS total_matching_leads,
+  ROUND(COUNT(*) * 100.0 / NULLIF(SUM(COUNT(*)) OVER(), 0), 2) AS percentage_of_total
 FROM leads l
 LEFT JOIN sales_statuses ss
   ON ss.id = l.status_id
@@ -580,21 +714,232 @@ WHERE l.clerk_org_id = :org_id
 
 ```sql
 SELECT
-  l.source,
-  COUNT(*) AS lead_count
+  COALESCE(CAST(l.source AS text), 'Unknown') AS source,
+  COUNT(*) AS lead_count,
+  SUM(COUNT(*)) OVER() AS total_matching_leads,
+  ROUND(COUNT(*) * 100.0 / NULLIF(SUM(COUNT(*)) OVER(), 0), 2) AS percentage_of_total
 FROM leads l
 WHERE l.clerk_org_id = :org_id
   AND l.is_deleted = false
-GROUP BY l.source
-ORDER BY lead_count DESC, l.source ASC;
+GROUP BY COALESCE(CAST(l.source AS text), 'Unknown')
+ORDER BY lead_count DESC, source ASC;
 ```
 
-## Leads by First Source Name
+## Default Source Distribution
+
+Use this for generic source questions such as:
+
+- give me all distribution of source
+- source distribution
+- lead source breakdown
+- which source generated the most leads
+- top source
+- where are most leads coming from
+- normalized first source counts
+
+Default interpretation: first-touch normalized marketing source.
+
+This pattern also covers normalized first source count questions.  
+Use `l.first_source_id -> marketing_sources.id` and display `first_ms.name`, with `l.first_source_name` only as fallback when the source ID is missing or unmatched.
+
+```sql
+WITH source_counts AS (
+  SELECT
+    COALESCE(
+      NULLIF(TRIM(first_ms.name), ''),
+      NULLIF(TRIM(l.first_source_name), ''),
+      'Unknown'
+    ) AS source,
+    COUNT(*) AS lead_count
+  FROM leads l
+  LEFT JOIN marketing_sources first_ms
+    ON first_ms.id = l.first_source_id
+   AND first_ms.clerk_org_id = l.clerk_org_id
+  WHERE l.clerk_org_id = :org_id
+    AND l.is_deleted = false
+  GROUP BY COALESCE(
+    NULLIF(TRIM(first_ms.name), ''),
+    NULLIF(TRIM(l.first_source_name), ''),
+    'Unknown'
+  )
+),
+total AS (
+  SELECT SUM(lead_count) AS total_leads
+  FROM source_counts
+)
+SELECT
+  sc.source,
+  sc.lead_count,
+  t.total_leads AS total_matching_leads,
+  ROUND(sc.lead_count * 100.0 / NULLIF(t.total_leads, 0), 2) AS percentage_of_total
+FROM source_counts sc
+CROSS JOIN total t
+ORDER BY sc.lead_count DESC, sc.source ASC;
+```
+
+## Weekly Lead Trend by Source
+
+Use this when the user asks:
+
+- weekly trend by source
+- week-wise lead trend by source
+- weekly source trend
+- source-wise weekly lead trend
+- how leads changed week by week for each source
+
+This is a trend query, not only a weekly distribution query.
+
+For source value, use first-touch normalized marketing source by default:
+
+- `l.first_source_id -> marketing_sources.id`
+- display `first_ms.name`
+- fallback to `l.first_source_name`
+- fallback to `Unknown`
+
+Do not fallback to `l.source` unless the user explicitly asks for high-level source enum reporting.
+
+Use `:start_date` and `:end_date` for weekly trend queries.
+
+Do not ask the user for a date range when they ask a generic weekly trend question.
+
+If the user does not specify a date range, still generate the SQL using `:start_date` and `:end_date`. The application must provide a default 12-week window:
+
+- `:start_date` = start of the week 12 weeks before the current week
+- `:end_date` = start of the next week, or the application-defined reporting cutoff
+
+Only ask the user for a date range if they explicitly request a custom period but the period is ambiguous.
+
+Return `previous_week_count` and `pct_change` so the final answer can show week-over-week movement by source.
+
+For SQL generation:
+
+- Keep the SQL row-based.
+- Return `week_start`, `source`, `lead_count`, `previous_week_count`, `pct_change`, and helper total columns.
+- Do not generate SQL pivot columns with hardcoded week dates.
+- Do not create one SQL column per week.
+- Do not create separate SQL columns like `2026-03-02_count` and `2026-03-02_pct_change` unless the user explicitly asks for pivot SQL.
+
+For final answer formatting:
+
+- Prefer source in rows and weeks in columns when there are 12 or fewer weeks and 20 or fewer sources.
+- Each cell should show `lead_count` and `pct_change` together when `pct_change` is available.
+- Use this cell format: `85 (+142.86%)`
+- For negative change, use this format: `41 (-51.76%)`
+- For zero change, use this format: `1 (0.00%)`
+- For the first week or when `pct_change` is unavailable, show only the count.
+- If there are more than 12 weeks, show only the latest 12 weeks unless the user explicitly asks for all weeks.
+
+```sql
+WITH weeks AS (
+  SELECT generate_series(
+    DATE_TRUNC('week', :start_date::timestamp)::date,
+    DATE_TRUNC('week', (:end_date::timestamp - INTERVAL '1 day'))::date,
+    INTERVAL '1 week'
+  )::date AS week_start
+),
+sources AS (
+  SELECT DISTINCT
+    COALESCE(
+      NULLIF(TRIM(first_ms.name), ''),
+      NULLIF(TRIM(l.first_source_name), ''),
+      'Unknown'
+    ) AS source
+  FROM leads l
+  LEFT JOIN marketing_sources first_ms
+    ON first_ms.id = l.first_source_id
+   AND first_ms.clerk_org_id = l.clerk_org_id
+  WHERE l.clerk_org_id = :org_id
+    AND l.is_deleted = false
+    AND l.created_at >= :start_date
+    AND l.created_at < :end_date
+),
+weekly_source_grid AS (
+  SELECT
+    w.week_start,
+    s.source
+  FROM weeks w
+  CROSS JOIN sources s
+),
+weekly_source_counts AS (
+  SELECT
+    DATE_TRUNC('week', l.created_at)::date AS week_start,
+    COALESCE(
+      NULLIF(TRIM(first_ms.name), ''),
+      NULLIF(TRIM(l.first_source_name), ''),
+      'Unknown'
+    ) AS source,
+    COUNT(*) AS lead_count
+  FROM leads l
+  LEFT JOIN marketing_sources first_ms
+    ON first_ms.id = l.first_source_id
+   AND first_ms.clerk_org_id = l.clerk_org_id
+  WHERE l.clerk_org_id = :org_id
+    AND l.is_deleted = false
+    AND l.created_at >= :start_date
+    AND l.created_at < :end_date
+  GROUP BY
+    DATE_TRUNC('week', l.created_at)::date,
+    COALESCE(
+      NULLIF(TRIM(first_ms.name), ''),
+      NULLIF(TRIM(l.first_source_name), ''),
+      'Unknown'
+    )
+),
+weekly_source_filled AS (
+  SELECT
+    wsg.week_start,
+    wsg.source,
+    COALESCE(wsc.lead_count, 0) AS lead_count
+  FROM weekly_source_grid wsg
+  LEFT JOIN weekly_source_counts wsc
+    ON wsc.week_start = wsg.week_start
+   AND wsc.source = wsg.source
+),
+weekly_source_trend AS (
+  SELECT
+    week_start,
+    source,
+    lead_count,
+    LAG(lead_count) OVER (
+      PARTITION BY source
+      ORDER BY week_start
+    ) AS previous_week_count
+  FROM weekly_source_filled
+),
+total AS (
+  SELECT SUM(lead_count) AS total_leads
+  FROM weekly_source_filled
+)
+SELECT
+  wst.week_start,
+  wst.source,
+  wst.lead_count,
+  wst.previous_week_count,
+  CASE
+    WHEN wst.previous_week_count IS NULL OR wst.previous_week_count = 0 THEN NULL
+    ELSE ROUND(
+      (wst.lead_count - wst.previous_week_count) * 100.0 / wst.previous_week_count,
+      2
+    )
+  END AS pct_change,
+  t.total_leads AS total_matching_leads
+FROM weekly_source_trend wst
+CROSS JOIN total t
+ORDER BY wst.week_start ASC, wst.source ASC;
+```
+
+
+## Raw Leads by First Source Name
+
+Use this only when the user explicitly asks for raw first source names.
+Do not use this for generic source distribution or top source questions.
 
 ```sql
 SELECT
   COALESCE(NULLIF(TRIM(l.first_source_name), ''), 'Unknown') AS first_source_name,
-  COUNT(*) AS lead_count
+  COUNT(*) AS lead_count,
+  SUM(COUNT(*)) OVER() AS total_matching_leads,
+  ROUND(COUNT(*) * 100.0 / NULLIF(SUM(COUNT(*)) OVER(), 0), 2) AS percentage_of_total
 FROM leads l
 WHERE l.clerk_org_id = :org_id
   AND l.is_deleted = false
@@ -602,12 +947,17 @@ GROUP BY COALESCE(NULLIF(TRIM(l.first_source_name), ''), 'Unknown')
 ORDER BY lead_count DESC, first_source_name ASC;
 ```
 
-## Leads by Last Source Name
+## Raw Leads by Last Source Name
+
+Use this only when the user explicitly asks for raw last source names.
+Do not use this for generic source distribution or top source questions.
 
 ```sql
 SELECT
   COALESCE(NULLIF(TRIM(l.last_source_name), ''), 'Unknown') AS last_source_name,
-  COUNT(*) AS lead_count
+  COUNT(*) AS lead_count,
+  SUM(COUNT(*)) OVER() AS total_matching_leads,
+  ROUND(COUNT(*) * 100.0 / NULLIF(SUM(COUNT(*)) OVER(), 0), 2) AS percentage_of_total
 FROM leads l
 WHERE l.clerk_org_id = :org_id
   AND l.is_deleted = false
@@ -615,13 +965,18 @@ GROUP BY COALESCE(NULLIF(TRIM(l.last_source_name), ''), 'Unknown')
 ORDER BY lead_count DESC, last_source_name ASC;
 ```
 
-## Leads by First and Last Source Names
+## Raw Leads by First and Last Source Names
+
+Use this only when the user explicitly asks to compare raw first source name and raw last source name.
+Do not use this for generic source distribution or normalized source reporting.
 
 ```sql
 SELECT
   COALESCE(NULLIF(TRIM(l.first_source_name), ''), 'Unknown') AS first_source_name,
   COALESCE(NULLIF(TRIM(l.last_source_name), ''), 'Unknown') AS last_source_name,
-  COUNT(*) AS lead_count
+  COUNT(*) AS lead_count,
+  SUM(COUNT(*)) OVER() AS total_matching_leads,
+  ROUND(COUNT(*) * 100.0 / NULLIF(SUM(COUNT(*)) OVER(), 0), 2) AS percentage_of_total
 FROM leads l
 WHERE l.clerk_org_id = :org_id
   AND l.is_deleted = false
@@ -629,24 +984,6 @@ GROUP BY
   COALESCE(NULLIF(TRIM(l.first_source_name), ''), 'Unknown'),
   COALESCE(NULLIF(TRIM(l.last_source_name), ''), 'Unknown')
 ORDER BY lead_count DESC, first_source_name ASC, last_source_name ASC;
-```
-
-## Leads by Normalized Marketing Source
-
-Use this when the user asks for normalized source names, source aliases, archived sources, or marketing source metadata.
-
-```sql
-SELECT
-  COALESCE(first_ms.name, NULLIF(TRIM(l.first_source_name), ''), 'Unknown') AS normalized_first_source,
-  COUNT(*) AS lead_count
-FROM leads l
-LEFT JOIN marketing_sources first_ms
-  ON first_ms.id = l.first_source_id
- AND first_ms.clerk_org_id = l.clerk_org_id
-WHERE l.clerk_org_id = :org_id
-  AND l.is_deleted = false
-GROUP BY COALESCE(first_ms.name, NULLIF(TRIM(l.first_source_name), ''), 'Unknown')
-ORDER BY lead_count DESC, normalized_first_source ASC;
 ```
 
 ## Leads with No Status
@@ -727,7 +1064,9 @@ WHERE l.clerk_org_id = :org_id
 ```sql
 SELECT
   COALESCE(NULLIF(TRIM(l.assigned_to), ''), 'Unassigned') AS assigned_to,
-  COUNT(*) AS lead_count
+  COUNT(*) AS lead_count,
+  SUM(COUNT(*)) OVER() AS total_matching_leads,
+  ROUND(COUNT(*) * 100.0 / NULLIF(SUM(COUNT(*)) OVER(), 0), 2) AS percentage_of_total
 FROM leads l
 WHERE l.clerk_org_id = :org_id
   AND l.is_deleted = false
@@ -735,12 +1074,50 @@ GROUP BY COALESCE(NULLIF(TRIM(l.assigned_to), ''), 'Unassigned')
 ORDER BY lead_count DESC, assigned_to ASC;
 ```
 
+## Top Actual Setter by Lead Count
+
+Use this when the user asks:
+
+- which setter has the most leads
+- top setter by lead count
+- best setter by number of leads
+
+Exclude missing setter values. Do not return `No Setter` as the top setter unless the user explicitly asks to include leads without a setter.
+
+This query returns all setters tied for the highest lead count.
+
+```sql
+WITH setter_counts AS (
+  SELECT
+    NULLIF(TRIM(l.setter_id), '') AS setter_id,
+    COUNT(*) AS lead_count
+  FROM leads l
+  WHERE l.clerk_org_id = :org_id
+    AND l.is_deleted = false
+    AND NULLIF(TRIM(l.setter_id), '') IS NOT NULL
+  GROUP BY NULLIF(TRIM(l.setter_id), '')
+),
+max_count AS (
+  SELECT MAX(lead_count) AS max_lead_count
+  FROM setter_counts
+)
+SELECT
+  sc.setter_id,
+  sc.lead_count
+FROM setter_counts sc
+JOIN max_count mc
+  ON sc.lead_count = mc.max_lead_count
+ORDER BY sc.setter_id ASC;
+```
+
 ## Leads by Setter
 
 ```sql
 SELECT
   COALESCE(NULLIF(TRIM(l.setter_id), ''), 'No Setter') AS setter_id,
-  COUNT(*) AS lead_count
+  COUNT(*) AS lead_count,
+  SUM(COUNT(*)) OVER() AS total_matching_leads,
+  ROUND(COUNT(*) * 100.0 / NULLIF(SUM(COUNT(*)) OVER(), 0), 2) AS percentage_of_total
 FROM leads l
 WHERE l.clerk_org_id = :org_id
   AND l.is_deleted = false
@@ -753,7 +1130,8 @@ ORDER BY lead_count DESC, setter_id ASC;
 ```sql
 SELECT
   DATE_TRUNC('day', l.created_at)::date AS lead_created_date,
-  COUNT(*) AS lead_count
+  COUNT(*) AS lead_count,
+  SUM(COUNT(*)) OVER() AS total_matching_leads
 FROM leads l
 WHERE l.clerk_org_id = :org_id
   AND l.is_deleted = false
@@ -766,7 +1144,8 @@ ORDER BY lead_created_date ASC;
 ```sql
 SELECT
   DATE_TRUNC('day', l.created_at)::date AS lead_created_date,
-  COUNT(*) AS lead_count
+  COUNT(*) AS lead_count,
+  SUM(COUNT(*)) OVER() AS total_matching_leads
 FROM leads l
 WHERE l.clerk_org_id = :org_id
   AND l.is_deleted = false
@@ -786,7 +1165,9 @@ Default stale rule: lead is non-terminal and either has no `next_touch_point_at`
 SELECT
   COALESCE(ss.name, 'No Status') AS status_name,
   COALESCE(CAST(ss.role AS text), 'NO_STATUS') AS status_role,
-  COUNT(*) AS stale_lead_count
+  COUNT(*) AS stale_lead_count,
+  SUM(COUNT(*)) OVER() AS total_matching_leads,
+  ROUND(COUNT(*) * 100.0 / NULLIF(SUM(COUNT(*)) OVER(), 0), 2) AS percentage_of_total
 FROM leads l
 LEFT JOIN sales_statuses ss
   ON ss.id = l.status_id
@@ -819,7 +1200,9 @@ Example for a parameterized cutoff:
 SELECT
   COALESCE(ss.name, 'No Status') AS status_name,
   COALESCE(CAST(ss.role AS text), 'NO_STATUS') AS status_role,
-  COUNT(*) AS not_updated_lead_count
+  COUNT(*) AS not_updated_lead_count,
+  SUM(COUNT(*)) OVER() AS total_matching_leads,
+  ROUND(COUNT(*) * 100.0 / NULLIF(SUM(COUNT(*)) OVER(), 0), 2) AS percentage_of_total
 FROM leads l
 LEFT JOIN sales_statuses ss
   ON ss.id = l.status_id
@@ -839,6 +1222,7 @@ Use this for "which leads are stale", "show stale leads", or "which leads need a
 
 ```sql
 SELECT
+  COUNT(*) OVER() AS total_matching_rows,
   l.id,
   COALESCE(
     NULLIF(TRIM(l.full_name), ''),
@@ -875,13 +1259,14 @@ ORDER BY
   l.updated_at ASC,
   l.created_at ASC,
   l.id ASC
-LIMIT 50;
+LIMIT 20;
 ```
 
 ## List Leads with No Owner
 
 ```sql
 SELECT
+  COUNT(*) OVER() AS total_matching_rows,
   l.id,
   COALESCE(
     NULLIF(TRIM(l.full_name), ''),
@@ -903,13 +1288,14 @@ WHERE l.clerk_org_id = :org_id
   AND l.is_deleted = false
   AND NULLIF(TRIM(l.assigned_to), '') IS NULL
 ORDER BY l.created_at DESC, l.id ASC
-LIMIT 50;
+LIMIT 20;
 ```
 
 ## List Leads with No Setter
 
 ```sql
 SELECT
+  COUNT(*) OVER() AS total_matching_rows,
   l.id,
   COALESCE(
     NULLIF(TRIM(l.full_name), ''),
@@ -931,7 +1317,7 @@ WHERE l.clerk_org_id = :org_id
   AND l.is_deleted = false
   AND NULLIF(TRIM(l.setter_id), '') IS NULL
 ORDER BY l.created_at DESC, l.id ASC
-LIMIT 50;
+LIMIT 20;
 ```
 
 ## List Leads with Contact Details
@@ -940,6 +1326,7 @@ Use this only when the user explicitly asks for contact details, emails, or phon
 
 ```sql
 SELECT
+  COUNT(*) OVER() AS total_matching_rows,
   l.id,
   COALESCE(
     NULLIF(TRIM(l.full_name), ''),
@@ -962,7 +1349,7 @@ LEFT JOIN sales_statuses ss
 WHERE l.clerk_org_id = :org_id
   AND l.is_deleted = false
 ORDER BY l.created_at DESC, l.id ASC
-LIMIT 50;
+LIMIT 20;
 ```
 
 ## Mistakes To Avoid

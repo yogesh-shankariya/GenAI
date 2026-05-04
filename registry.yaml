@@ -1,0 +1,44 @@
+skills:
+  - name: lead_analytics
+    description: "Use for read-only SQL analytics about leads/prospects/customers: lead counts, active/new leads, lead status and normalized pipeline roles, won/lost/follow-up/no-show lead status, source breakdowns, assignment/owner and setter analysis, missing owner/setter/status/next-touch-point checks, overdue follow-ups, stale or stuck leads, and lead creation trends by date range. Do not use for revenue, contracts, payments, invoices, refunds, subscriptions, appointment/call analytics, appointment no-show rates, Fathom call records, opt-ins, UTM/traffic attribution, form answers, provider integrations, webhook troubleshooting, credentials, or full single-lead 360 summaries."
+    path: modules/lead_analytics.md
+    primary_tables:
+      - leads
+      - sales_statuses
+      - marketing_sources
+
+  - name: appointment_analytics
+    description: "Use for read-only SQL analytics about appointments/booked calls/scheduled calls: appointment counts, upcoming and past appointments, completed or attended calls, appointment no-show rates, no-shows by event type/host/setter/call category/source, appointment outcome breakdowns, appointment source breakdowns, event type analysis, host and setter appointment performance, appointment trends by scheduled date, Fathom coverage for appointments, appointments missing Fathom records, Fathom call summaries/action items/objections, average call duration, AI-suggested Fathom outcomes, and applied Fathom outcomes. Do not use for lead-only counts, lead source breakdowns, stale leads, lead no-show status, missing lead owners/setters, lead creation trends, revenue, contracts, payments, invoices, refunds, subscriptions, opt-ins, UTM/traffic attribution, form answers, provider integration health, webhook troubleshooting, credentials, broad semantic theme discovery across long call text, or full single-lead 360 summaries."
+    path: modules/appointment_analytics.md
+    primary_tables:
+      - appointments
+      - appointment_event_types
+      - sales_statuses
+      - leads
+      - fathom_call_records
+
+  - name: revenue_analytics
+    description: "Use for read-only SQL analytics about revenue and payment operations: collected revenue, gross paid revenue, net revenue after succeeded refunds, signed contract value, contract status/type breakdowns, contract signed rate, closer/setter/program revenue performance, payment status/type/provider breakdowns, pending/failed/overdue/due-soon payments, refunds and refund rate, invoices, payment links, payment proofs, active/past-due/cancelled subscriptions, MRR, subscription checkout links, and unmatched payment reconciliation. Do not use for lead-only counts/status/source/stale lead analysis, appointment/call/no-show/Fathom analytics, opt-ins, UTM/traffic attribution, form answers, provider integration health, webhook troubleshooting, credentials, raw provider payloads, or full single-lead 360 summaries."
+    path: modules/revenue_analytics.md
+    primary_tables:
+      - programs
+      - contracts
+      - contract_subscriptions
+      - subscription_checkout_links
+      - payments
+      - payment_links
+      - payment_proofs
+      - refunds
+      - invoices
+      - unmatched_payments
+      - leads
+
+  - name: acquisition_analytics
+    description: "Use for read-only SQL analytics about acquisition and form-submission data: opt-ins, form submissions, unique leads from opt-ins, opt-in source breakdowns, provider form performance, setter attribution on opt-ins, UTM source/medium/campaign/content/term analysis, landing page and referrer performance, traffic attribution coverage, missing UTM/landing-page/referrer checks, form question inventory, form answer distributions, opt-in trends by date range, and current lead-status conversion by acquisition attributes such as UTM campaign or landing page. Do not use for lead-only counts/status/source/stale lead analysis, normalized marketing source reporting from lead first/last source fields, appointment/call/no-show/Fathom analytics, revenue/contracts/payments/invoices/refunds/subscriptions, provider integration health, webhook troubleshooting, credentials, raw payloads, broad semantic theme discovery across long form answers, or full single-lead 360 summaries."
+    path: modules/acquisition_analytics.md
+    primary_tables:
+      - opt_ins
+      - opt_in_question_answers
+      - traffic_attributions
+      - leads
+      - sales_statuses
